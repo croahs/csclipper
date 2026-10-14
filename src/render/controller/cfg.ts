@@ -34,10 +34,16 @@ export function lookCfg(cs2Exe: string, pov: string): string {
   return ["// generated read-only from the main account's cs2_user_convars_0_slot0.vcfg + cs2_machine_convars.vcfg", ...look.map(([k, v]) => `${k} "${v}"`), ""].join("\n");
 }
 
-// Spectator-only HUD panels blanked in the "full" look (ids from the game's HUD
-// CSS; docs/spikes.md, M1 add-on). TeamLargeCT/T are the ten player cards;
-// their sibling ScoreAndTime (timer, score) stays.
-export const SPECTATOR_PANELS = ["panelId=TeamLargeCT", "panelId=TeamLargeT"];
+// Spectator-only HUD elements blanked in the "full" look, so the frame shows
+// the HUD as in play (docs/hud-reference-inplay.webp; ids decoded from the
+// game's compiled hudteamcounter / hudhealthammocenter layouts, docs/spikes.md).
+// panelId matches the first panel with that id only; panelClassName matches
+// the C++ panel class, so every instance.
+export const SPECTATOR_PANELS = [
+  "panelClassName=Frame", // EquipmentInfo in each of the ten cards: money, weapon, nades, armor
+  "panelId=jsHudSpecplayer__Bg", // bottom bar: observed name, clan, ADR, weapon name, side panels
+  "panelId=HudSpecplayer__Avatar", // centre circle avatar; the team emblem shows instead, as in play
+];
 
 export type JobCfgInput = {
   title: string;
@@ -80,6 +86,7 @@ export function jobCfg(j: JobCfgInput): string {
     "cl_show_observer_crosshair 2", // everyone; the crosshair in frame comes from the demo
     "cl_drawhud 1",
     `cl_draw_only_deathnotices ${j.hud === "bare" ? 1 : 0}`, // "bare": crosshair and killfeed only
+    "cl_radar_square_when_spectating 0", // round, rotating radar as in play (the look cfg sets it true)
     "cl_radar_show_all_players_when_spectating 0",
     "cl_demo_predict 2", // TrueView forced; 1 is disabled for any demo from another build
     "cl_showfps 0",

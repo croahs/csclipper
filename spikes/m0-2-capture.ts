@@ -59,15 +59,15 @@ const WINDOW_TICKS = 2 * TICKRATE;
 // panel") and HudTeamCounter (whole top bar, timer and score included). Run 2 uses
 // ids and classes from the game's hud CSS (teamcounter, healthammocenter).
 const pano = (sel: string, o: number) => `mirv_panorama panelStyle ${sel} opacity=${o}`;
-const NAME = "panelClassName=HudSpecplayer__player-name-contianer"; // Valve's spelling
-const AVATAR = "panelClassName=HudSpecplayer__Avatar";
-const CARDS = ["panelId=TeamLargeCT", "panelId=TeamLargeT"]; // ScoreAndTime is their sibling
+// Run 3 (in-play HUD): ids decoded from the compiled hudteamcounter / hudhealthammocenter
+// layouts (LZ4 in pak01_386.vpk). panelClassName matches the C++ panel class, not CSS classes.
 const PANORAMA: { name: string; set: string; reset: string }[] = [
-  { name: "baseline (full HUD)", set: "", reset: "" },
-  { name: "name container opacity 0", set: pano(NAME, 0), reset: "" },
-  { name: "+ spec avatar opacity 0", set: pano(AVATAR, 0), reset: "" },
-  { name: "+ TeamLargeCT/TeamLargeT opacity 0", set: CARDS.map((c) => pano(c, 0)).join("; "), reset: "" },
-  { name: "all back to opacity 1", set: [NAME, AVATAR, ...CARDS].map((c) => pano(c, 1)).join("; "), reset: "" },
+  { name: "baseline (full HUD, round radar in cfg body)", set: "", reset: "" },
+  { name: "cl_show_equipment_value 0", set: "cl_show_equipment_value 0", reset: "" },
+  { name: "+ EquipmentInfo opacity 0", set: pano("panelId=EquipmentInfo", 0), reset: "" },
+  { name: "+ HealthBarContainer opacity 0", set: pano("panelId=HealthBarContainer", 0), reset: "" },
+  { name: "+ jsHudSpecplayer__Bg opacity 0", set: pano("panelId=jsHudSpecplayer__Bg", 0), reset: "" },
+  { name: "+ HudSpecplayer__Avatar, WeaponName opacity 0", set: [pano("panelId=HudSpecplayer__Avatar", 0), pano("panelId=WeaponName", 0)].join("; "), reset: "" },
 ];
 const SWEEP_CANDIDATES: { name: string; set: string; reset: string }[] = [
   { name: "baseline", set: "", reset: "" },
@@ -280,6 +280,7 @@ const cfg = [
   // Peder accepted crosshair + killfeed only as the fallback.
   // --panorama tests the full HUD from the start, so the panel dump sees it.
   `cl_draw_only_deathnotices ${panoramaMode ? 0 : 1}`,
+  ...(panoramaMode ? ["cl_radar_square_when_spectating 0"] : []), // the look cfg sets it true; in play the radar is round
   "cl_radar_show_all_players_when_spectating 0", // radar as in play, not the spectator's full view
   `cl_demo_predict ${DEMO_PREDICT}`, // TrueView: 1 = auto, 2 = force (see docs/spikes.md)
   "cl_showfps 0",
@@ -316,7 +317,7 @@ const cfg = [
       ...candidateTable.flatMap((w, i) => CANDIDATES[i].set ? [...CANDIDATES[i].set.split("; ").map((c) => at(w.set_tick, c)), ...(CANDIDATES[i].reset ? CANDIDATES[i].reset.split("; ").map((c) => at(w.reset_tick, c)) : [])] : []),
       // Panel tree dump once the spectator HUD exists; where its output lands is part of the test.
       // Run 1 showed the bare dump lists only the Hud root's children; whether it takes a panel id is untested.
-      ...(panoramaMode ? [at(seekTick + 40, "__mirv_panorama_print_children HudTeamCounter"), at(seekTick + 41, "__mirv_panorama_print_children HudBottomCenter")] : []),
+      ...(panoramaMode ? ["TeamLargeCT", "TeamLargeT", "EquipmentInfo", "HealthBarContainer", "jsHudSpecplayer__Bg", "HudBottomCenter"].map((id, i) => at(seekTick + 40 + i, `__mirv_panorama_print_children ${id}`)) : []),
     ] : []),
     ...(testSpecNext ? [at(startTick + 3 * TICKRATE, "spec_next"), at(startTick + 6 * TICKRATE, "spec_next")] : []),
     at(endTick, "mirv_streams record end"),

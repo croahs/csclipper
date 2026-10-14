@@ -716,3 +716,41 @@ in run 2. **Leftover: the observed player's name next to health stays
 visible in the default look.** Frames of that job: cards gone from the first
 frame, timer and score, radar, money, health/armor, ammo, weapon list and
 killfeed present.
+
+### In-play HUD (2026-10-15, two launches)
+
+Target: `docs/hud-reference-inplay.webp`. Panel ids come from the game's
+compiled layouts, decoded offline: `pak01_dir.vpk` gives
+`panorama/layout/hud/hudteamcounter.vxml_c` and `hudhealthammocenter.vxml_c`
+(archive 386), whose body is an LZ4 block; its strings list every `id` and
+`class`. HLAE's `panelClassName` matches the C++ panel class (`Frame`,
+`Label`, …), not CSS classes, which is why run 2's class names were "not
+found"; `panelId` matches only the first panel with that id.
+
+Run 3 (`spikes/out/1-8e8743a8-5669-6437-1792016911153`, `--panorama`, cfg
+body `cl_draw_only_deathnotices 0` and `cl_radar_square_when_spectating 0`):
+dumps `TeamLargeCT` → `Avatar0`…`Avatar9`, `TeamLargeT` → `Avatar10`…`Avatar19`,
+`EquipmentInfo` (a `Frame`) → two (null), `HealthBarContainer` → (null),
+`HealthBar`, (null), `jsHudSpecplayer__Bg` → four (null),
+`AnimBackgroundContainer`, `WeaponName`.
+
+| Window (video s) | Scheduled (cumulative) | Result |
+|---|---|---|
+| 0 (0–2) | baseline | radar round (the cfg-body line works); cards with name, health, money, weapon, armor; bottom bar with name, avatar, weapon name |
+| 1 (2–4) | `cl_show_equipment_value 0` | no visible change |
+| 2 (4–6) | `… panelId=EquipmentInfo opacity=0` | equipment gone from the first card only |
+| 3 (6–8) | `… panelId=HealthBarContainer opacity=0` | first card's health only |
+| 4 (8–10) | `… panelId=jsHudSpecplayer__Bg opacity=0` | observed name and weapon name gone from the bottom bar |
+| 5 (10–12) | `… panelId=HudSpecplayer__Avatar opacity=0` | centre circle shows the team emblem, as in play |
+
+The radar is round, centred and rotates with the view across the run.
+
+Final render (launch 2, `pnpm clip` with the new default,
+`state/render/0805fc4aa60b19f4/1792017026781`): `panelClassName=Frame`,
+`panelId=jsHudSpecplayer__Bg`, `panelId=HudSpecplayer__Avatar`. Frames:
+equipment gone from all ten cards; avatars, dead state, timer, score and
+alive counts present; bottom bar = health, team emblem, ammo; radar round;
+money, weapon list and killfeed present; flashes on frames 180 and 238 as
+expected. Still visible (no id reaches them): names above the card avatars,
+the health number under each card, the marker under the observed player's
+card. The "1 vs 0" line under the score in the 2023 reference is not drawn.

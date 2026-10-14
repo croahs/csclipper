@@ -22,7 +22,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 
 | Path | What |
 |---|---|
-| `config.json` | render settings: `hud` (`full` default, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds` |
+| `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds` |
 | `.env` | identities and tool paths (`.env.example`; M0.2 setup in `docs/spikes.md`) |
 | `src/cli/clip.ts` | the entry; resume check, failure record |
 | `src/parse/clip-facts.ts` | tickrate, demo hash, map, POV slot, round |
@@ -54,13 +54,19 @@ the spectated player (docs/spikes.md, M0.2 open items).
   audio resolved. Limits: a clip needs two such shots (fast sprays alone do
   not qualify); the flash region assumes a right-hand viewmodel; an origin
   error outside the bound is not found.
-- **HUD.** `full` (default): `cl_draw_only_deathnotices 0` and HLAE
-  `mirv_panorama panelStyle panelId=TeamLargeCT|TeamLargeT opacity=0`
-  (`SPECTATOR_PANELS` in `src/render/controller/cfg.ts`) 8 ticks before
-  recording, after `spec_player`: the in-play HUD with the ten spectator
-  cards blanked, timer and score kept. Known leftover: the observed
-  player's name next to health stays (no panel id reaches it; docs/spikes.md,
-  M1 add-on). `bare`: crosshair and killfeed only. `--debug-cmd
+- **HUD.** `full` (default) aims at the HUD as in play
+  (`docs/hud-reference-inplay.webp`): `cl_draw_only_deathnotices 0`,
+  `cl_radar_square_when_spectating 0` in the cfg body (round, rotating
+  radar; the player's look cfg sets it true), and HLAE `mirv_panorama
+  panelStyle … opacity=0` 8 ticks before recording on `SPECTATOR_PANELS`
+  (`src/render/controller/cfg.ts`): `panelClassName=Frame` (the equipment
+  block of all ten cards), `panelId=jsHudSpecplayer__Bg` (observed name,
+  clan, weapon name) and `panelId=HudSpecplayer__Avatar` (so the bottom
+  centre shows the team emblem). `panelId` hits only the first panel with an
+  id; `panelClassName` matches the C++ panel class. Known leftovers, no id
+  reaches them: the player names above the card avatars, the health number
+  under each card, and the marker under the observed player's card. `bare`:
+  crosshair and killfeed only. `--debug-cmd
   "__mirv_panorama_print_children <PanelId>"` schedules a panel dump after
   `spec_player` (output in the job's `console.log`); nothing else is
   accepted, and debug commands are part of the render key.
