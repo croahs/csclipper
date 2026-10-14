@@ -229,6 +229,7 @@ controller, not inherited. On top of that the cfg sets:
 | `cl_showfps 0`, HUD telemetry off, `r_show_build_info 0` | no overlays |
 | `fps_max 0`, `engine_no_focus_sleep 0`, HLAE fixed framerate | capture is frame-locked, not wall-clock |
 | 16:9 output, default 1920x1080 at 60 fps, never inherited from the game's own video settings; FFmpeg at a visually lossless CRF | decided by Peder; sharpness and anti-aliasing, downscale in post if supersampled |
+| `aspect` setting: `native` (capture 16:9) or `stretched` (capture 4:3, e.g. 1440x1080, and scale to 1920x1080 in post ignoring aspect, which is what a stretched monitor shows) | decided by Peder: the final product offers both; the output file is 16:9 either way |
 
 Even with TrueView, Valve says recoil, muzzle flash, blood and
 ragdoll effects land one or two frames later in playback than they
