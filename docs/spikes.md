@@ -532,9 +532,11 @@ ended; ownership by parent pid without the same-snapshot check) are in
 - Resolution (1280×720), 60 fps and x264 crf 18 are spike values, not
   decisions.
 
-## M0.3 Old demo
+## M0.3 Old demo (gate dropped)
 
-**Fail — 2026-10-14, only through the M0.2 crosshair criterion** (the
+Peder dropped this gate from PLAN.md on 2026-10-14, after these runs;
+no verdict. The evidence stays as a data point: one five-month-old
+demo went through the M0.2 path. It shows the same crosshair as M0.2 (the
 full-cfg run `1-0c14eb44-87569-88322-1792004563487` shows the same
 reticle). The old demo itself plays, seeks and records like the
 current one, and TrueView stays available: `cl_demo_predict 1` →
