@@ -219,11 +219,11 @@ controller, not inherited. On top of that the cfg sets:
 
 | Setting | Why |
 |---|---|
-| `cl_demo_predict 1` (TrueView; `2` forces it on older demos) | Valve's Nov 2025 demo mode that re-runs the player's client-side prediction, so first person shows what you saw, not the server's view. Auto for demos recorded after 2025-11-04; disabled by CS2 when the demo is from a different game build, so old demos may lose it |
+| `cl_demo_predict 2` (TrueView forced; `1` is reported disabled for any demo older than the running build, which is every demo by the time it is rendered) | Valve's Nov 2025 demo mode that re-runs the player's client-side prediction, so first person shows what you saw, not the server's view. Auto for demos recorded after 2025-11-04; disabled by CS2 when the demo is from a different game build, so old demos may lose it |
 | `spec_show_xray 0` | never xray; a hard rule from Peder |
-| `cl_show_observer_crosshair 1` plus your own crosshair convars | the crosshair in frame is yours |
-| `cl_drawhud 1`, `cl_draw_only_deathnotices 0` | the full normal HUD, as in play |
-| demo UI closed, spectator panels hidden, `spec_show_lineup 0` | nothing in frame that is not in play (exact commands verified in M0.2) |
+| `cl_show_observer_crosshair 2` | the crosshair in frame is yours; M0.2 showed it comes from the demo itself, not from exec'd convars |
+| `cl_draw_only_deathnotices 1` | Decided by Peder after M0.2: crosshair and killfeed only. No convar hides just the spectator top panel (both teams' cards with health and money), so the full HUD would carry spectator-only elements; the compact-bar alternative (`cl_teamcounter_playercount_instead_of_avatars 1`) keeps the observed name and was turned down |
+| `demo_ui_mode 0` in the cfg body, `cl_spec_show_bindings 0` | no playback panel or spectator hints; `demo_ui_mode` must run before playback starts, a scheduled call does nothing |
 | `cl_showfps 0`, HUD telemetry off, `r_show_build_info 0` | no overlays |
 | `fps_max 0`, `engine_no_focus_sleep 0`, HLAE fixed framerate | capture is frame-locked, not wall-clock |
 | capture at or above output resolution, FFmpeg at a visually lossless CRF | sharpness and anti-aliasing; downscale in post if supersampled |
