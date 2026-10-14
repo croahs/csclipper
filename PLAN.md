@@ -46,7 +46,7 @@ sources ──> ingest ──> parse ──> score ──> clip specs ──> re
 
 ### 1. Ingest
 
-The user-facing entry point is one command, `pnpm fetch`: "I have
+The user-facing entry point is one command, `pnpm grab` (pnpm reserves `fetch`): "I have
 played some games" means running it. It asks every configured source
 for matches newer than the last one it saw, downloads the demos it
 does not have into `demos/inbox/`, and the normal pipeline takes over.
