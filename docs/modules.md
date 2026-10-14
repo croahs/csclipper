@@ -22,7 +22,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 
 | Path | What |
 |---|---|
-| `config.json` | render settings: output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds` |
+| `config.json` | render settings: `hud` (`full` default, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds` |
 | `.env` | identities and tool paths (`.env.example`; M0.2 setup in `docs/spikes.md`) |
 | `src/cli/clip.ts` | the entry; resume check, failure record |
 | `src/parse/clip-facts.ts` | tickrate, demo hash, map, POV slot, round |
@@ -37,28 +37,33 @@ the spectated player (docs/spikes.md, M0.2 open items).
 - **Tick mapping, measured per job.** The capture records `MARGIN_TICKS`
   (32) on each side of the requested ticks. The frame rate is locked (HLAE's
   "Finishing movie … [N frames" line, the demuxed frame count and the WAV
-  length must agree), but where recording starts varies by 0–3 frames per
-  launch (M0.2; the first M1 render started 50 ms late). So post measures
-  the origin from the POV player's isolated shots (`weapon_fire`, >300 ms
-  after the previous shot): every offset in ±150 ms is scored by how many of
-  them have an onset in HLAE's WAV there; at least two must agree, and an
-  equally supported offset more than a frame away means "ambiguous", never a
-  guess. That offset moves frame 0 to its true tick. Then post cuts exactly
-  `round((end − start) · fps / 64)` frames and measures the final file with
-  the same anchors (a check of trim and encode, not of the association);
-  more than 2 frames off fails the job. Limit: clips with fewer than two
-  isolated POV shots, or noisy ones, fail as "tick origin not measurable"
-  (one older capture of the test interval is refused as ambiguous). Audio
-  follows video within 10 ms (M0.2); on the M1 clip the muzzle flashes of
-  the kill shot and a later shot sit on their exact frames.
-- **Aspect.** One setting drives both ends (`captureSize` in
-  `src/config.ts`): `native` captures at the output size; `stretched`
-  captures 4:3 at the output height (1440×1080) and post scales it to the
-  output ignoring aspect, as a stretched monitor shows it. The file is 16:9
-  either way, and both the raw capture and the clip are checked for size.
-  Native 1920×1080 is verified with a launch (the game window fits this
-  1920×1080 desktop at that size); stretched is verified only in post
-  (an existing 4:3 capture scaled to 1920×1080), not yet captured at 1440×1080.
+  length must agree), but where recording starts varies per launch (0–4
+  frames late in M0.2/M1). Post measures it from the POV player's shots
+  (`weapon_fire`): the muzzle flash in the lower-right quarter of the video
+  (`src/post/flash.ts`) decides, the gunshot onsets in HLAE's WAV
+  (`src/post/sync.ts`) cross-check it (more than 1.5 frames apart fails the
+  job) or decide alone when the flash is not measurable. Both search only
+  origin errors in [−5, +1.5] frames (every capture so far: −0.4 to −3.5)
+  and use only POV shots with no other POV shot within that window's width
+  (6.5 frames), so a shot cannot be matched to its neighbour; a second,
+  separate peak makes the result ambiguous and the job fails. Then post
+  cuts exactly `round((end − start) · fps / 64)` frames and measures the
+  final file the same way (shots whose window touches a fade skipped);
+  more than 2 frames off fails the job. On seven captures of this machine
+  the flash resolved all seven and agreed with audio within 0.9 frames where
+  audio resolved. Limits: a clip needs two such shots (fast sprays alone do
+  not qualify); the flash region assumes a right-hand viewmodel; an origin
+  error outside the bound is not found.
+- **HUD.** `full` (default): `cl_draw_only_deathnotices 0` and HLAE
+  `mirv_panorama panelStyle panelId=TeamLargeCT|TeamLargeT opacity=0`
+  (`SPECTATOR_PANELS` in `src/render/controller/cfg.ts`) 8 ticks before
+  recording, after `spec_player`: the in-play HUD with the ten spectator
+  cards blanked, timer and score kept. Known leftover: the observed
+  player's name next to health stays (no panel id reaches it; docs/spikes.md,
+  M1 add-on). `bare`: crosshair and killfeed only. `--debug-cmd
+  "__mirv_panorama_print_children <PanelId>"` schedules a panel dump after
+  `spec_player` (output in the job's `console.log`); nothing else is
+  accepted, and debug commands are part of the render key.
 - **Two encodes.** HLAE writes the intermediate at `captureCrf` 12; post
   re-encodes once at crf 18 (trim and fades need a re-encode anyway).
 - **Clip id** = first 16 hex of sha256(demo sha256, round, start, end).

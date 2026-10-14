@@ -1,14 +1,14 @@
-// pnpm clip <demo.dem> <startTick> <endTick> [--timeout <s>] [--force] [--dry-run]
+// pnpm clip <demo.dem> <startTick> <endTick> [--timeout <s>] [--force] [--dry-run] [--debug-cmd <cmd>]...
 // One clip from a hand-written spec: guarded render → post → library.
 // Exit codes: 0 ok (or already in the library), 1 failed, 2 refused (nothing
 // launched), 3 cleanup not verified (a game process may still run; the lock stays).
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { STATE_DIR, Refusal, loadIdentities, loadSettings } from "../config.ts";
+import { STATE_DIR, Refusal, captureSize, loadIdentities, loadSettings } from "../config.ts";
 import { clipFacts } from "../parse/clip-facts.ts";
 import { MARGIN_TICKS, SETTLE_TICKS, cleanupUnverified, render, validateCapture, type TickMapping } from "../render/controller/index.ts";
-import { lookCfg } from "../render/controller/cfg.ts";
+import { SPECTATOR_PANELS, lookCfg } from "../render/controller/cfg.ts";
 import { RenderLock } from "../render/controller/guards.ts";
 import { toolVersions } from "../render/versions.ts";
 import { measureMapping, post, validateClip } from "../post/index.ts";
@@ -16,15 +16,19 @@ import { clipId, clipPath, clipTmpPath, ensureClipsDir, publish, readIndex, reco
 
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
-const positional = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--timeout");
+const positional = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--timeout" && args[i - 1] !== "--debug-cmd");
+// --debug-cmd <cmd> (repeatable): a quote-free console command scheduled after spec_player, e.g. a panel dump.
+// Only diagnostics are allowed: anything else could leave playback or change the schedule.
+const DEBUG_CMD = /^__mirv_panorama_print_children [A-Za-z][A-Za-z0-9_-]*$/;
+const debugCommands = args.flatMap((a, i) => (a === "--debug-cmd" && args[i + 1] ? [args[i + 1]] : []));
 const [demoArg, startArg, endArg] = positional;
-const usage = "usage: pnpm clip <demo.dem> <startTick> <endTick> [--timeout <s>] [--force] [--dry-run]";
+const usage = "usage: pnpm clip <demo.dem> <startTick> <endTick> [--timeout <s>] [--force] [--dry-run] [--debug-cmd <cmd>]...";
 
 // Written into an attempt's work dir once its raw capture validated: the
 // render stage is done for this render key, and a retry goes straight to post.
 type CaptureRecord = { renderKey: string; mapping: TickMapping; video: string; audio: string };
 
-function completedCapture(id: string, renderKey: string): (CaptureRecord & { workDir: string }) | undefined {
+function completedCapture(id: string, renderKey: string, size: string): (CaptureRecord & { workDir: string }) | undefined {
   const dir = path.join(STATE_DIR, "render", id);
   if (!existsSync(dir)) return undefined;
   for (const attempt of readdirSync(dir).sort().reverse()) {
@@ -35,7 +39,7 @@ function completedCapture(id: string, renderKey: string): (CaptureRecord & { wor
     try {
       c = JSON.parse(readFileSync(file, "utf8")) as CaptureRecord;
       if (c.renderKey !== renderKey) continue;
-      problems = validateCapture(c.video, c.audio, c.mapping.frames, c.mapping.fps);
+      problems = validateCapture(c.video, c.audio, c.mapping.frames, c.mapping.fps, size);
     } catch (e) {
       // FFmpeg missing is a tool problem, not a bad capture: stop instead of launching again.
       if ((e as Error).message.startsWith("ffmpeg did not run")) throw e;
@@ -57,6 +61,8 @@ async function main(): Promise<number> {
   const timeoutS = flag("--timeout") === undefined ? undefined : Number(flag("--timeout"));
   if (timeoutS !== undefined && !(timeoutS > 0)) throw new Error("--timeout must be a positive number of seconds");
 
+  const bad = debugCommands.find((c) => !DEBUG_CMD.test(c));
+  if (bad !== undefined) throw new Error(`--debug-cmd allows only "__mirv_panorama_print_children <PanelId>", got: ${bad}`);
   const settings = loadSettings();
   const ids = loadIdentities();
   const facts = await clipFacts(demo, ids.pov, startTick, endTick);
@@ -65,7 +71,7 @@ async function main(): Promise<number> {
   const look = lookCfg(ids.cs2Exe, ids.pov);
   const versions = toolVersions(ids.cs2Exe, ids.hlaeExe);
   const { node: _node, ...outputVersions } = versions;
-  const renderInputs = { settings, versions: outputVersions, slot: facts.slot, lookCfgSha256: createHash("sha256").update(look).digest("hex"), marginTicks: MARGIN_TICKS, settleTicks: SETTLE_TICKS };
+  const renderInputs = { settings, versions: outputVersions, slot: facts.slot, lookCfgSha256: createHash("sha256").update(look).digest("hex"), marginTicks: MARGIN_TICKS, settleTicks: SETTLE_TICKS, spectatorPanels: SPECTATOR_PANELS, debugCommands };
   // The POV id is part of the key but never stored in the library.
   const renderKey = createHash("sha256").update(JSON.stringify({ ...renderInputs, pov: ids.pov })).digest("hex").slice(0, 16);
   console.log(`clip ${id}: ${title} (slot ${facts.slot}, ${facts.shotTicks.length} POV shots, render key ${renderKey})`);
@@ -99,21 +105,21 @@ async function main(): Promise<number> {
       return code;
     };
 
-    let capture = args.includes("--force") ? undefined : completedCapture(id, renderKey);
+    let capture = args.includes("--force") ? undefined : completedCapture(id, renderKey, `${captureSize(settings).width}x${captureSize(settings).height}`);
     if (capture) {
       workDir = capture.workDir;
       console.log(`render stage already done in ${workDir}; resuming at post`);
     } else {
-      const r = await render({ title, demo, slot: facts.slot, startTick, endTick, workDir, lockFile: path.join(STATE_DIR, ".render.lock"), ids, settings, lookCfg: look, timeoutS });
+      const r = await render({ title, demo, slot: facts.slot, startTick, endTick, workDir, lockFile: path.join(STATE_DIR, ".render.lock"), ids, settings, lookCfg: look, debugCommands, timeoutS });
       if (r.status !== "ok" || !r.mapping || !r.audio || !r.video) return fail(r.reasons, r.cleanupVerified ? 1 : 3);
       capture = { renderKey, mapping: r.mapping, video: r.video, audio: r.audio, workDir };
       writeJsonAtomic(path.join(workDir, "capture.json"), { renderKey, mapping: r.mapping, video: r.video, audio: r.audio });
       console.log(`render ok in ${r.wallSeconds}s`);
     }
 
-    const m = measureMapping(capture.mapping, capture.audio, facts.shotTicks);
+    const m = measureMapping(capture.mapping, capture.video, capture.audio, facts.shotTicks);
     if (typeof m === "string") return fail([m], 1);
-    console.log(`tick origin: frame 0 shows tick ${m.originTick.toFixed(2)} (scheduled ${m.recordStartTick}; shot offsets ${JSON.stringify(m.origin.offsetsMs)} ms)`);
+    console.log(`tick origin: frame 0 shows tick ${m.originTick.toFixed(2)} (scheduled ${m.recordStartTick}; ${m.timing.offsetFrames} frames by ${m.timing.source}; flash ${m.timing.video.offsetFrames}, audio ${(m.timing.audio.offsetMs * m.fps / 1000).toFixed(2)})`);
     ensureClipsDir();
     const tmp = clipTmpPath(id, attempt);
     const p = post(capture.video, capture.audio, m, startTick, endTick, facts.shotTicks, settings, tmp);
@@ -122,9 +128,9 @@ async function main(): Promise<number> {
     publish(tmp, {
       id, file: `clips/${id}.mp4`, title, map: facts.map, demo, demoSha256: facts.demoSha256, round: facts.round,
       startTick, endTick, seconds: p.plan!.seconds, frames: p.plan!.frames, createdAt: new Date().toISOString(),
-      renderKey, render: { ...renderInputs, node: versions.node, mapping: { ...m, origin: m.origin.offsetsMs }, trim: p.plan, landedOffsetMs: p.landed!.offsetMs, workDir },
+      renderKey, render: { ...renderInputs, node: versions.node, mapping: { ...capture.mapping, originTick: m.originTick, offsetFrames: m.timing.offsetFrames, source: m.timing.source }, trim: p.plan, landedOffsetFrames: p.landed!.offsetFrames, workDir },
     });
-    console.log(`ok: ${clipPath(id)} (${p.plan!.frames} frames, ${p.plan!.seconds.toFixed(3)} s; requested ticks land ${p.landed!.offsetMs} ms off)`);
+    console.log(`ok: ${clipPath(id)} (${p.plan!.frames} frames, ${p.plan!.seconds.toFixed(3)} s; requested ticks land ${p.landed!.offsetFrames} frames off by ${p.landed!.source})`);
     return 0;
   } finally {
     clipLock.release();

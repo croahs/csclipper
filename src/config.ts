@@ -16,6 +16,8 @@ export type RenderSettings = {
   // captures at that size; "stretched" captures 4:3 at the same height and
   // post scales it to the output ignoring aspect, as a stretched monitor shows it.
   aspect: "native" | "stretched";
+  // "full": the in-play HUD with the spectator-only panels blanked; "bare": crosshair and killfeed only.
+  hud: "full" | "bare";
   width: number;
   height: number;
   fps: number;
@@ -30,6 +32,7 @@ export function loadSettings(file = path.join(ROOT, "config.json")): RenderSetti
     if (typeof r?.[k] !== "number" || !(r[k] >= 0)) throw new Error(`config.json render.${k} must be a number >= 0`);
   }
   if (r.width % 2 || r.height % 2) throw new Error("config.json render width/height must be even (yuv420p)");
+  if (r.hud !== "full" && r.hud !== "bare") throw new Error('config.json render.hud must be "full" or "bare"');
   if (r.aspect !== "native" && r.aspect !== "stretched") throw new Error('config.json render.aspect must be "native" or "stretched"');
   return r;
 }

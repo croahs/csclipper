@@ -40,6 +40,7 @@ export type RenderJob = {
   ids: Identities;
   settings: RenderSettings;
   lookCfg: string;
+  debugCommands?: string[];
   timeoutS?: number;
 };
 
@@ -68,13 +69,13 @@ let unverified = false;
 export const cleanupUnverified = () => unverified;
 
 /** Reasons the raw capture is unusable; [] when it checks out against HLAE's frame count. */
-export function validateCapture(video: string, wav: string | undefined, frames: number, fps: number, size?: string): string[] {
+export function validateCapture(video: string, wav: string | undefined, frames: number, fps: number, size: string): string[] {
   const reasons: string[] = [];
   const v = existsSync(video) ? probe(video) : undefined;
   if (!v?.video || v.unreadable) reasons.push(`raw video unreadable: ${JSON.stringify(v ?? null)}`);
   else {
     // CS2 may not get the window size it was asked for (e.g. larger than the desktop).
-    if (size && v.size !== size) reasons.push(`raw video is ${v.size}, the game was asked for ${size}`);
+    if (v.size !== size) reasons.push(`raw video is ${v.size}, the game was asked for ${size}`);
     const counted = countFrames(video);
     if (counted !== frames) reasons.push(`raw video has ${counted} frames, HLAE reported ${frames}`);
     const err = decodeProblems(video);
@@ -114,7 +115,7 @@ export async function render(job: RenderJob): Promise<RenderResult> {
     mkdirSync(cap.takeDir, { recursive: true });
     writeFileSync(path.join(usrDir, "cfg", "croclip_look.cfg"), job.lookCfg);
     writeFileSync(path.join(usrDir, "cfg", `${cfgName}.cfg`), jobCfg({
-      title: job.title, lookCfgName: "croclip_look", captureSetup: cap.setup, recordStart: cap.start, recordEnd: cap.end,
+      title: job.title, hud: s.hud, debugCommands: job.debugCommands ?? [], lookCfgName: "croclip_look", captureSetup: cap.setup, recordStart: cap.start, recordEnd: cap.end,
       seekTick, slot: job.slot, recordStartTick, recordEndTick, quitTick,
     }));
     const size = captureSize(s);

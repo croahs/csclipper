@@ -703,3 +703,16 @@ class names from the CSS are not found by `panelClassName` and the panel
 holding the health/name bar is not identified. Next step if wanted (one
 launch): dump the children of the `HudLowerLeft`, `HudBottomCenter` (null)
 children and the healthammocenter panel to find its id.
+
+Follow-up (2026-10-15, one launch, job `state/render/0805fc4aa60b19f4/1792015140673`,
+the new default look plus dumps via `pnpm clip … --debug-cmd`): dumps of
+`HudLowerLeft` → `HudMoney`, `Status`; `HudBottomCenter` → (null),
+`HudVanityLoadout`, (null); `HudBottomRight` → `HudWeaponSelection`.
+`HudHealthAmmoCenter`, `HudSpecplayerParentContainer`, `HudSpecplayer__Bg`,
+`HudSpecplayer` and `HudWeaponPanel` are not panel ids (the dump falls back
+to the `Hud` root). The health/name bar sits under one of `HudBottomCenter`'s
+unnamed panels, which no id reaches, and the CSS class names were not found
+in run 2. **Leftover: the observed player's name next to health stays
+visible in the default look.** Frames of that job: cards gone from the first
+frame, timer and score, radar, money, health/armor, ammo, weapon list and
+killfeed present.

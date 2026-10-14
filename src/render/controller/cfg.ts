@@ -34,8 +34,15 @@ export function lookCfg(cs2Exe: string, pov: string): string {
   return ["// generated read-only from the main account's cs2_user_convars_0_slot0.vcfg + cs2_machine_convars.vcfg", ...look.map(([k, v]) => `${k} "${v}"`), ""].join("\n");
 }
 
+// Spectator-only HUD panels blanked in the "full" look (ids from the game's HUD
+// CSS; docs/spikes.md, M1 add-on). TeamLargeCT/T are the ten player cards;
+// their sibling ScoreAndTime (timer, score) stays.
+export const SPECTATOR_PANELS = ["panelId=TeamLargeCT", "panelId=TeamLargeT"];
+
 export type JobCfgInput = {
   title: string;
+  hud: "full" | "bare";
+  debugCommands: string[]; // scheduled after spec_player, e.g. panel tree dumps
   lookCfgName: string;
   captureSetup: string[]; // capture mode's cfg-body lines (paths allowed here)
   recordStart: string; // quote-free commands, scheduled
@@ -59,7 +66,7 @@ export function jobCfg(j: JobCfgInput): string {
     if (/["\n;]/.test(cmd)) throw new Error(`scheduled command must be quote-free and single: ${cmd}`);
     return `mirv_cmd addAtTick ${tick} ${cmd}`;
   };
-  if (!(FIRST_SCHEDULE < j.seekTick && j.seekTick + 17 < j.recordStartTick && j.recordStartTick < j.recordEndTick && j.recordEndTick < j.quitTick)) {
+  if (!(FIRST_SCHEDULE < j.seekTick && j.seekTick + 24 + j.debugCommands.length < j.recordStartTick - 8 && j.recordStartTick < j.recordEndTick && j.recordEndTick < j.quitTick)) {
     throw new Error("job ticks out of order");
   }
   return [
@@ -72,7 +79,7 @@ export function jobCfg(j: JobCfgInput): string {
     "cl_spec_show_bindings 0", // no "[MOUSE]/[SPACE]" spectator hints
     "cl_show_observer_crosshair 2", // everyone; the crosshair in frame comes from the demo
     "cl_drawhud 1",
-    "cl_draw_only_deathnotices 1", // Peder's decision: crosshair and killfeed only (no spectator HUD)
+    `cl_draw_only_deathnotices ${j.hud === "bare" ? 1 : 0}`, // "bare": crosshair and killfeed only
     "cl_radar_show_all_players_when_spectating 0",
     "cl_demo_predict 2", // TrueView forced; 1 is disabled for any demo from another build
     "cl_showfps 0",
@@ -90,6 +97,9 @@ export function jobCfg(j: JobCfgInput): string {
     // Never on the seek tick itself (CS Demo Manager #1238).
     at(j.seekTick + 16, "spec_mode 1"),
     at(j.seekTick + 17, `spec_player ${j.slot}`),
+    ...j.debugCommands.map((c, i) => at(j.seekTick + 24 + i, c)),
+    // HLAE panel styling needs the HUD to exist, so it runs after spec_player, before recording.
+    ...(j.hud === "full" ? SPECTATOR_PANELS.map((p) => at(j.recordStartTick - 8, `mirv_panorama panelStyle ${p} opacity=0`)) : []),
     at(j.recordStartTick, j.recordStart),
     at(j.recordEndTick, j.recordEnd),
     at(j.quitTick, "quit"),
