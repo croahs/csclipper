@@ -16,7 +16,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
-import type { Identities, RenderSettings } from "../../config.ts";
+import { captureSize, type Identities, type RenderSettings } from "../../config.ts";
 import { TICKRATE } from "../../parse/clip-facts.ts";
 import { countFrames, decodeProblems, probe } from "../../post/ffmpeg.ts";
 import { FINISHED_RE, STARTED_RE, hlaeArgs, hlaeCapture, takeOutputs } from "../capture/hlae.ts";
@@ -68,11 +68,13 @@ let unverified = false;
 export const cleanupUnverified = () => unverified;
 
 /** Reasons the raw capture is unusable; [] when it checks out against HLAE's frame count. */
-export function validateCapture(video: string, wav: string | undefined, frames: number, fps: number): string[] {
+export function validateCapture(video: string, wav: string | undefined, frames: number, fps: number, size?: string): string[] {
   const reasons: string[] = [];
   const v = existsSync(video) ? probe(video) : undefined;
   if (!v?.video || v.unreadable) reasons.push(`raw video unreadable: ${JSON.stringify(v ?? null)}`);
   else {
+    // CS2 may not get the window size it was asked for (e.g. larger than the desktop).
+    if (size && v.size !== size) reasons.push(`raw video is ${v.size}, the game was asked for ${size}`);
     const counted = countFrames(video);
     if (counted !== frames) reasons.push(`raw video has ${counted} frames, HLAE reported ${frames}`);
     const err = decodeProblems(video);
@@ -115,7 +117,8 @@ export async function render(job: RenderJob): Promise<RenderResult> {
       title: job.title, lookCfgName: "croclip_look", captureSetup: cap.setup, recordStart: cap.start, recordEnd: cap.end,
       seekTick, slot: job.slot, recordStartTick, recordEndTick, quitTick,
     }));
-    const csArgs = ["-insecure", "-novid", "-sw", "-width", String(s.width), "-height", String(s.height), "-condebug", "+exec", cfgName, "+playdemo", `"${job.demo}"`];
+    const size = captureSize(s);
+    const csArgs = ["-insecure", "-novid", "-sw", "-width", String(size.width), "-height", String(size.height), "-condebug", "+exec", cfgName, "+playdemo", `"${job.demo}"`];
     args = hlaeArgs(ids.hlaeExe, ids.cs2Exe, csArgs);
     writeFileSync(path.join(job.workDir, "job.json"), JSON.stringify({ title: job.title, demo: job.demo, startTick: job.startTick, endTick: job.endTick, slot: job.slot, recordStartTick, recordEndTick, seekTick, quitTick, settings: s, hlaeExe: ids.hlaeExe, hlaeArgs: args, timeoutS }, null, 2));
     // Re-check right before launch: the account or a running CS2 may have changed.
@@ -274,7 +277,8 @@ export async function render(job: RenderJob): Promise<RenderResult> {
       const frames = Number(finished![1]);
       if (Number(finished![2]) !== s.fps) reasons.push(`HLAE recorded at ${finished![2]} fps, expected ${s.fps}`);
       if (Math.abs(frames - expectedFrames) > 3) reasons.push(`HLAE finished ${frames} frames, expected ${expectedFrames.toFixed(1)}`);
-      reasons.push(...validateCapture(cap.videoPath, wav, frames, s.fps));
+      const size = captureSize(s);
+      reasons.push(...validateCapture(cap.videoPath, wav, frames, s.fps, `${size.width}x${size.height}`));
       mapping = { tickrate: TICKRATE, fps: s.fps, recordStartTick, recordEndTick, frames };
     } catch (e) { reasons.push(`validation error: ${(e as Error).message}`); }
   }

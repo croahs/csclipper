@@ -1,7 +1,8 @@
 {
   "render": {
-    "width": 1152,
-    "height": 864,
+    "aspect": "native",
+    "width": 1920,
+    "height": 1080,
     "fps": 60,
     "captureCrf": 12,
     "crf": 18,

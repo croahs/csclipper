@@ -12,6 +12,10 @@ export const STEAMID64_BASE = 76561197960265728n;
 export class Refusal extends Error {}
 
 export type RenderSettings = {
+  // The output file is always width x height (16:9 by default). "native"
+  // captures at that size; "stretched" captures 4:3 at the same height and
+  // post scales it to the output ignoring aspect, as a stretched monitor shows it.
+  aspect: "native" | "stretched";
   width: number;
   height: number;
   fps: number;
@@ -26,7 +30,14 @@ export function loadSettings(file = path.join(ROOT, "config.json")): RenderSetti
     if (typeof r?.[k] !== "number" || !(r[k] >= 0)) throw new Error(`config.json render.${k} must be a number >= 0`);
   }
   if (r.width % 2 || r.height % 2) throw new Error("config.json render width/height must be even (yuv420p)");
+  if (r.aspect !== "native" && r.aspect !== "stretched") throw new Error('config.json render.aspect must be "native" or "stretched"');
   return r;
+}
+
+/** The game window size the capture runs at, derived from the aspect setting. */
+export function captureSize(s: RenderSettings): { width: number; height: number } {
+  if (s.aspect === "native") return { width: s.width, height: s.height };
+  return { width: Math.round((s.height * 4) / 3 / 2) * 2, height: s.height };
 }
 
 export type Identities = {

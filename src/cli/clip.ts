@@ -85,7 +85,7 @@ async function main(): Promise<number> {
     // validates means the clip is done. A file alone proves nothing.
     const existing = readIndex().clips[id];
     if (existing && existing.renderKey === renderKey && !args.includes("--force") && existsSync(clipPath(id))) {
-      const problems = validateClip(clipPath(id), existing.frames, settings.fps);
+      const problems = validateClip(clipPath(id), existing.frames, settings.fps, `${settings.width}x${settings.height}`);
       if (!problems.length) { console.log(`already in the library: ${clipPath(id)}`); return 0; }
       console.log(`library clip no longer valid, re-making it: ${problems.join("; ")}`);
     }

@@ -22,7 +22,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 
 | Path | What |
 |---|---|
-| `config.json` | render settings: capture size and fps (defaults from the main account's `cs2_video.txt`, 1152×864, and 60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds` |
+| `config.json` | render settings: output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds` |
 | `.env` | identities and tool paths (`.env.example`; M0.2 setup in `docs/spikes.md`) |
 | `src/cli/clip.ts` | the entry; resume check, failure record |
 | `src/parse/clip-facts.ts` | tickrate, demo hash, map, POV slot, round |
@@ -51,6 +51,14 @@ the spectated player (docs/spikes.md, M0.2 open items).
   (one older capture of the test interval is refused as ambiguous). Audio
   follows video within 10 ms (M0.2); on the M1 clip the muzzle flashes of
   the kill shot and a later shot sit on their exact frames.
+- **Aspect.** One setting drives both ends (`captureSize` in
+  `src/config.ts`): `native` captures at the output size; `stretched`
+  captures 4:3 at the output height (1440×1080) and post scales it to the
+  output ignoring aspect, as a stretched monitor shows it. The file is 16:9
+  either way, and both the raw capture and the clip are checked for size.
+  Native 1920×1080 is verified with a launch (the game window fits this
+  1920×1080 desktop at that size); stretched is verified only in post
+  (an existing 4:3 capture scaled to 1920×1080), not yet captured at 1440×1080.
 - **Two encodes.** HLAE writes the intermediate at `captureCrf` 12; post
   re-encodes once at crf 18 (trim and fades need a re-encode anyway).
 - **Clip id** = first 16 hex of sha256(demo sha256, round, start, end).

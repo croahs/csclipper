@@ -2,7 +2,7 @@
 // requested ticks, fade in/out, encode the final clip to a temp path and
 // validate it, including where the requested ticks actually landed.
 import { rmSync } from "node:fs";
-import type { RenderSettings } from "../config.ts";
+import { captureSize, type RenderSettings } from "../config.ts";
 import type { TickMapping } from "../render/controller/index.ts";
 import { countFrames, decodeProblems, ff, probe } from "./ffmpeg.ts";
 import { measureOrigin, type OriginMeasure } from "./sync.ts";
@@ -35,10 +35,11 @@ export function trimPlan(m: MeasuredMapping, startTick: number, endTick: number)
 }
 
 /** Reasons a finished clip is not acceptable; [] when it is. Also used to trust a cached clip. */
-export function validateClip(file: string, frames: number, fps: number): string[] {
+export function validateClip(file: string, frames: number, fps: number, size: string): string[] {
   const reasons: string[] = [];
   const p = probe(file);
   if (!p.video || !p.audio || p.unreadable) return [`clip streams: ${JSON.stringify(p)}`];
+  if (p.size !== size) reasons.push(`clip is ${p.size}, expected ${size}`);
   const counted = countFrames(file);
   if (counted !== frames) reasons.push(`clip has ${counted} frames, expected ${frames}`);
   if (p.duration === null || Math.abs(p.duration - frames / fps) > 2 / fps) reasons.push(`clip duration ${p.duration} vs ${(frames / fps).toFixed(3)}`);
@@ -60,7 +61,10 @@ export function post(video: string, audio: string, m: MeasuredMapping, startTick
     const d = plan.seconds;
     const f = Math.min(s.fadeSeconds, d / 4);
     const fades = f > 0;
-    const vf = `[0:v]trim=start_frame=${plan.startFrame}:end_frame=${plan.startFrame + plan.frames},setpts=PTS-STARTPTS${fades ? `,fade=t=in:st=0:d=${f},fade=t=out:st=${(d - f).toFixed(6)}:d=${f}` : ""}[v]`;
+    // Stretched captures are scaled to the output size ignoring aspect (square pixels after).
+    const cap = captureSize(s);
+    const scale = cap.width !== s.width || cap.height !== s.height ? `,scale=${s.width}:${s.height}:flags=lanczos,setsar=1` : "";
+    const vf = `[0:v]trim=start_frame=${plan.startFrame}:end_frame=${plan.startFrame + plan.frames},setpts=PTS-STARTPTS${scale}${fades ? `,fade=t=in:st=0:d=${f},fade=t=out:st=${(d - f).toFixed(6)}:d=${f}` : ""}[v]`;
     const af = `[1:a]atrim=start=${t0.toFixed(6)}:end=${(t0 + d).toFixed(6)},asetpts=PTS-STARTPTS${fades ? `,afade=t=in:st=0:d=${f},afade=t=out:st=${(d - f).toFixed(6)}:d=${f}` : ""}[a]`;
     const r = ff([
       "-v", "error", "-y", "-i", video, "-i", audio,
@@ -70,7 +74,7 @@ export function post(video: string, audio: string, m: MeasuredMapping, startTick
     ]);
     if (r.status !== 0) reasons.push(`encode failed: ${r.stderr.slice(0, 300)}`);
     else {
-      reasons.push(...validateClip(outTmp, plan.frames, m.fps));
+      reasons.push(...validateClip(outTmp, plan.frames, m.fps, `${s.width}x${s.height}`));
       // Where the requested ticks landed in the final file, by the same measure.
       // The same anchors, so this checks the trim arithmetic and encode, not the association itself.
       landed = measureOrigin(outTmp, "0:a:0", startTick, shotTicks, m.tickrate, m.fps, d);
