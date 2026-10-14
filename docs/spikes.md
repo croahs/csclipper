@@ -138,11 +138,16 @@ same coordinate is M0.2. `demo_listhighlights` was not tried.
 
 ## M0.2 Repeatable unattended capture
 
-**Fail — 2026-10-14. Observed failure: the spectator HUD is drawn** —
-both teams' player cards across the top with names, health and money,
-and the observed player's name next to health at the bottom; live
-first-person play shows neither (see "Looks like real gameplay" below).
-Latest full-cfg run: `spikes/out/1-8e8743a8-5669-6103-1792005302266`.
+**Pass — 2026-10-14, with Peder's HUD fallback; one check outstanding:
+Peder playing the passing clip with sound** (verified here by frame
+sampling, decoding and audio-onset timing only). None of the tested
+settings hides the spectator HUD (team cards, observed name) on its
+own; whether another setting exists is unknown. So the cfg uses
+`cl_draw_only_deathnotices 1`: the frame shows the crosshair and the
+killfeed and no other HUD. Peder set this rule in advance, relayed by
+the parent session: if nothing hides only the panel,
+`cl_draw_only_deathnotices 1` (crosshair plus killfeed, nothing else) is
+the accepted fallback. Passing run: `spikes/out/1-8e8743a8-5669-6103-1792005708650`.
 Still unverified rather than failed: whether TrueView playback matches
 live play, and where the viewmodel comes from. Verified on the final
 controller: correct player first-person
@@ -153,7 +158,7 @@ and the tick coordinate across a seek. Scripts: `spikes/m0-2-capture.ts` (one jo
 guards, cfg, launch, wait, cleanup, mux, validate), `spikes/m0-2-queue.ts`
 (retry around it), `spikes/m0-2-sync.ts` (final clip's audio vs parser
 ticks), `spikes/demo-fileinfo.ts` (tickrate from the demo file).
-Reviewed by GPT-6.1 Sol in five rounds (fail ×3 on guard/cleanup
+Reviewed by GPT-6.1 Sol in seven rounds (fail ×3 on guard/cleanup
 robustness, then "pass after fixes" before the look criteria were added,
 then write-up fixes); all findings are folded in except the residual pid
 race below, which Sol accepted as an open M1 item for a spike.
@@ -304,10 +309,9 @@ exec croclip_look
 demo_ui_mode 0
 spec_show_xray 0
 cl_spec_show_bindings 0
-cl_spec_stats 0
 cl_show_observer_crosshair 2
 cl_drawhud 1
-cl_draw_only_deathnotices 0
+cl_draw_only_deathnotices 1
 cl_radar_show_all_players_when_spectating 0
 cl_demo_predict 2
 cl_showfps 0
@@ -406,20 +410,52 @@ discovery launch and one more render.
 - **No xray:** `spec_show_xray 0`. Frame at 3.0 s of
   `1-8e8743a8-5669-6103-1792004525217`: no outlines or name/health labels
   through walls (the earlier `1792000445442` had them).
-- **HUD:** `cl_drawhud 1`, `cl_draw_only_deathnotices 0`,
+- **HUD (runs before the fallback):** `cl_drawhud 1`,
 `cl_spec_show_bindings 0`, `cl_radar_show_all_players_when_spectating 0`,
   `cl_showfps 0`, telemetry off, `r_show_build_info 0`. The frames show
   the full HUD in Peder's safezone and radar layout, no demo UI.
-- **Spectator HUD — fails.** The top bar shows all ten player cards with
+- **Spectator HUD — no clean hide; fallback chosen.** The top bar shows all ten player cards with
   name, health and money, and the bottom panel shows the observed
   player's name ("croa") next to health. Live play shows neither.
   Tried `cl_spec_stats 0` (job `1792005302266`, frame at 3.0 s): no
-  change. Other candidates from `client.dll`, not tried:
-  `cl_teamcounter_playercount_instead_of_avatars` (sits next to
-  `CSGOHudTeamCounter`; would replace avatars with a count, which is
-  not how live play looks either), `cl_force_spec_hud_color_to_team`
-  (colour only). No convar was found that switches the HUD from the
-  spectator layout to the player layout.
+  change; then the sweep below. `cl_force_spec_hud_color_to_team`
+  (colour only) was not tried. No tested convar switches the HUD from
+  the spectator layout to the player layout.
+
+  Candidate sweep (job `1-8e8743a8-5669-6565-1792005609335`, ticks
+  5669–6565, `--candidates`): one recording, each candidate set at the
+  start of its own 128-tick (2 s) window and reset at its end; the table
+  is in that job's `job.json`. Frames read at the middle of each window:
+
+  | Window (video s) | Candidate | Team cards (top) | Name next to health | Also removed |
+  |---|---|---|---|---|
+  | 0 (0–2) | baseline | shown | shown | — |
+  | 1 (2–4) | `cl_draw_only_deathnotices 1` | gone | gone | radar, health, armor, money, ammo, weapon list; crosshair and killfeed stay |
+  | 2 (4–6) | `cl_hide_avatar_images 1` | shown | shown | nothing visible |
+  | 3 (6–8) | `cl_teamcounter_playercount_instead_of_avatars 1` | replaced by "3 ALIVE · timer · 5 ALIVE" with the score | shown | nothing else |
+  | 4 (8–10) | `cl_drawhud_force_teamid_overhead -1` | shown | shown | nothing visible |
+  | 5 (10–12) | `cl_spec_stats 1` | shown | shown | nothing visible |
+  | 6 (12–14) | baseline | shown | shown | — |
+
+  `cl_hud_playercount_showcount` and `cl_hud_playercount_pos` do not
+  exist in this build. The `find`/`cvarlist` dump in the same run again
+  produced no output in `console.log`, so it gave no candidates for a
+  second sweep (other sources were not searched). The sweep ran on the
+  cfg before the fallback (`cl_draw_only_deathnotices 0`); the mode now
+  forces that baseline itself. No tested candidate removed the cards
+  and the name without the rest of the HUD,
+  so Peder's fallback applies: `cl_draw_only_deathnotices 1`.
+  `cl_teamcounter_playercount_instead_of_avatars 1` is the alternative if
+  the full HUD with a compact top bar (and the name) is preferred.
+
+  Passing run `1792005708650` (interval A, final cfg): 408 frames, ok,
+  cleanup verified, TrueView active for croa; sampled every 0.5 s: the
+  X crosshair at screen centre in every sample, killfeed with croa's
+  kills from 4.4 s, no team cards, no name, no other HUD, no demo UI.
+  Audio track present; isolated shots at −50 and −54 ms against the
+  parser ticks (video side not measurable: the ammo counter is hidden).
+  Repeat, interrupt and tick evidence come from the earlier runs with
+  the full HUD; only this one run uses the fallback cfg.
 - **Frame pacing:** `fps_max 0`, `engine_no_focus_sleep 0`, HLAE
   `mirv_streams record fps 60`.
 - **TrueView:** with `cl_demo_predict 1` the console says "Demo is
@@ -453,9 +489,9 @@ discovery launch and one more render.
 
 ### Launch count
 
-61 job folders in `spikes/out/` hold a config CS2 wrote at launch, i.e.
-61 CS2 launches by this session's controller up to and including job
-`1792005302266` (10 more folders are dry runs and refusals that never
+63 job folders in `spikes/out/` hold a config CS2 wrote at launch, i.e.
+63 CS2 launches by this session's controller up to and including job
+`1792005708650` (10 more folders are dry runs and refusals that never
 launched). The parent session counted 66 windows; the difference is
 unexplained. This log documents the runs that carry evidence; the rest
 were earlier controller and cfg versions.
@@ -519,7 +555,8 @@ with sound yet (frame sampling and decode checks only).
   same coordinate, including after a long seek (96 → 52570). Video and
   audio in the final file agree within 10 ms at both ends of both
   intervals. Each launch's clip sits 0–2 frames (0–36 ms) early against
-  the parser ticks (across all launches in this log), the same at start and end, varying between launches;
+  the parser ticks across the runs measured on video; the fallback run
+  shows −50/−54 ms on audio, the same at start and end, varying between launches;
   frame counts for the same interval vary by ±2. The cause is not
   established. PLAN.md's per-job output-time ↔ tick mapping therefore
   has to be measured per job rather than assumed (an M1 decision).

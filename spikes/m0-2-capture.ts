@@ -46,6 +46,21 @@ const dryRun = args.includes("--dry-run");
 // commands and quit are scheduled (tick 96), so nothing is seeked or recorded.
 // Tested once: the listings' output did not reach console.log (docs/spikes.md).
 const discover = args.includes("--discover");
+// Candidate sweep (HUD discovery while recording): each candidate is set at the
+// start of its own 2 s window of demo time and reset at the end; the table goes
+// into job.json so every frame maps to a candidate. Window 0 and the last are
+// the baseline.
+const candidatesMode = args.includes("--candidates");
+const WINDOW_TICKS = 2 * TICKRATE;
+const CANDIDATES: { name: string; set: string; reset: string }[] = [
+  { name: "baseline", set: "", reset: "" },
+  { name: "cl_draw_only_deathnotices 1", set: "cl_draw_only_deathnotices 1", reset: "cl_draw_only_deathnotices 0" }, // baseline forced to 0 at record start
+  { name: "cl_hide_avatar_images 1", set: "cl_hide_avatar_images 1", reset: "cl_hide_avatar_images 0" },
+  { name: "cl_teamcounter_playercount_instead_of_avatars 1", set: "cl_teamcounter_playercount_instead_of_avatars 1", reset: "cl_teamcounter_playercount_instead_of_avatars 0" },
+  { name: "cl_drawhud_force_teamid_overhead -1", set: "cl_drawhud_force_teamid_overhead -1", reset: "cl_drawhud_force_teamid_overhead 0" },
+  { name: "cl_spec_stats 1", set: "cl_spec_stats 1", reset: "cl_spec_stats 0" },
+  { name: "baseline", set: "", reset: "" },
+];
 // Test hook: issue spec_next (what MOUSE1 does in spectator mode) twice mid-clip,
 // to check the POV lock holds against a stray click on the game window.
 const testSpecNext = args.includes("--test-spec-next");
@@ -161,6 +176,14 @@ const rate = info.playback_ticks / info.playback_time;
 if (Math.round(rate) !== TICKRATE) throw new Error(`demo tickrate ${rate} != ${TICKRATE}`);
 if (endTick > info.playback_ticks) throw new Error("end tick past the end of the demo");
 const seekTick = startTick - SETTLE_TICKS;
+const candidateTable = CANDIDATES.map((c, i) => ({
+  window: i,
+  candidate: c.name,
+  set_tick: startTick + i * WINDOW_TICKS,
+  reset_tick: startTick + (i + 1) * WINDOW_TICKS - 1,
+  video_seconds: [i * 2, (i + 1) * 2],
+}));
+if (candidatesMode && endTick < startTick + CANDIDATES.length * WINDOW_TICKS) throw new Error(`--candidates needs endTick >= ${startTick + CANDIDATES.length * WINDOW_TICKS}`);
 if (seekTick <= FIRST_SCHEDULE + 1) throw new Error("start tick too early for a seek");
 
 // --- refuse before anything is written or launched ------------------------------------
@@ -232,10 +255,11 @@ const cfg = [
   "demo_ui_mode 0", // CS Demo Manager: must be set before playback starts, or the demo UI is drawn
   "spec_show_xray 0", // never xray (hard rule)
   "cl_spec_show_bindings 0", // no "[MOUSE]/[SPACE]" spectator hints
-  "cl_spec_stats 0", // candidate for the spectator stats on the team cards (no help text in client.dll)
   "cl_show_observer_crosshair 2", // game help: 0 = off, 1 = friends and party only, 2 = everyone; 0/1/2 all drew the same reticle (docs/spikes.md)
   "cl_drawhud 1",
-  "cl_draw_only_deathnotices 0",
+  // Spectator HUD (team cards, observed name) cannot be hidden on its own (see docs/spikes.md);
+  // Peder accepted crosshair + killfeed only as the fallback.
+  "cl_draw_only_deathnotices 1",
   "cl_radar_show_all_players_when_spectating 0", // radar as in play, not the spectator's full view
   `cl_demo_predict ${DEMO_PREDICT}`, // TrueView: 1 = auto, 2 = force (see docs/spikes.md)
   "cl_showfps 0",
@@ -265,6 +289,11 @@ const cfg = [
     at(seekTick + 16, "spec_mode 1"),
     at(seekTick + 17, `spec_player ${slot}`),
     at(startTick, "mirv_streams record start"),
+    ...(candidatesMode ? [
+      at(startTick, "cl_draw_only_deathnotices 0"), // the sweep's baseline is the full HUD, whatever the render cfg uses
+      ...["find spec", "find hud", "find observer", "find panel", "find scoreboard", "cvarlist"].map((c) => at(startTick, c)),
+      ...candidateTable.flatMap((w, i) => CANDIDATES[i].set ? [at(w.set_tick, CANDIDATES[i].set), at(w.reset_tick, CANDIDATES[i].reset)] : []),
+    ] : []),
     ...(testSpecNext ? [at(startTick + 3 * TICKRATE, "spec_next"), at(startTick + 6 * TICKRATE, "spec_next")] : []),
     at(endTick, "mirv_streams record end"),
     at(endTick + TICKRATE, "quit"),
@@ -283,7 +312,7 @@ const hlaeArgs = [
   "-cmdLine", csArgs.join(" "),
 ];
 if (!hlaeArgs[hlaeArgs.length - 1].split(" ").includes("-insecure")) throw new Error("refusing: launch without -insecure");
-const job = { jobId, demo, startTick, endTick, seekTick, slot, fps: FPS, size: `${WIDTH}x${HEIGHT}`, outDir, hlaeExe, hlaeArgs };
+const job = { jobId, demo, startTick, endTick, seekTick, slot, ...(candidatesMode ? { candidates: candidateTable } : {}), fps: FPS, size: `${WIDTH}x${HEIGHT}`, outDir, hlaeExe, hlaeArgs };
 writeFileSync(path.join(outDir, "job.json"), JSON.stringify(job, null, 2));
 console.log(JSON.stringify(job, null, 2));
 console.log(cfg);
