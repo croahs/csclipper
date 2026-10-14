@@ -164,7 +164,8 @@ reference for launch options and command sequence. Expected shape:
 
 1. Generate a `.cfg` per job from the clip spec: `playdemo`, jump to
    `start_tick` with `demo_gototick`, lock spectator to your identity,
-   first-person mode, `mirv_streams record start`, and a scheduled stop
+   first-person mode, demo UI and spectator controls hidden (exact
+   commands to verify), `mirv_streams record start`, and a scheduled stop
    at `end_tick` via HLAE's tick scheduling (`mirv_cmd addAtTick`),
    which replaces the VDM files CS2 dropped. Exact commands to verify.
 2. Launch CS2 through HLAE with `-insecure`, `-novid`, fixed window
@@ -278,7 +279,9 @@ not pass.
    source first. Then, from a generated cfg, record a hand-picked
    interval of your demo: correct player, first-person throughout,
    lead-in present, first frames present, audio present and in sync,
-   file finalized and playable. Then: a second, different interval in
+   file finalized and playable, and no demo UI in the frame (no
+   playback panel, no spectator controls, no console; the normal game
+   HUD stays). Then: a second, different interval in
    a fresh launch; a restart and repeat; one job interrupted mid-way
    and recovered by the queue; and the behaviour when CS2 is already
    open. Confirm that parser ticks, `demo_gototick` and HLAE
