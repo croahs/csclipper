@@ -1,0 +1,10 @@
+{
+  "render": {
+    "width": 1152,
+    "height": 864,
+    "fps": 60,
+    "captureCrf": 12,
+    "crf": 18,
+    "fadeSeconds": 0.25
+  }
+}

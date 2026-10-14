@@ -4,9 +4,10 @@ A locally run Allstar.gg alternative: pull in your CS2 demos, find your
 best frags, render them as real in-game footage, and browse the result
 in a local library.
 
-Status: plan, nothing built. Written 2026-10-14 by Fable, reviewed the
-same day by GPT-6 Astra; the review's accepted findings are folded in
-below, so this is the version to build from.
+Status: M0 gates passed, M1 (one clip by hand) built; see `docs/modules.md`
+for the code and the decisions M1 made. Written 2026-10-14 by Fable,
+reviewed the same day by GPT-6 Astra; the review's accepted findings are
+folded in below, so this is the version to build from.
 
 ## Reading of the ask
 
@@ -190,6 +191,7 @@ reference for launch options and command sequence. Expected shape:
    TGA folders (CS Demo Manager warns about 40 GB+ for those).
 4. Record the output-time to demo-tick mapping per job so post can trim
    exactly; the lead-in margin is defined by that mapping, not assumed.
+   M1 measures it from the POV player's gunshots (`docs/modules.md`).
 5. Validate the output, kill the game, next job. One launch per clip is
    the baseline; chaining clips in one launch is an optimization that
    comes after the gate passes.

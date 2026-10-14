@@ -7,7 +7,10 @@
   "engines": {
     "node": ">=22"
   },
-  "scripts": {},
+  "scripts": {
+    "clip": "tsx src/cli/clip.ts",
+    "typecheck": "tsc -p ."
+  },
   "dependencies": {
     "@laihoe/demoparser2": "^0.42.0"
   },
