@@ -8,5 +8,9 @@
     "captureCrf": 12,
     "crf": 18,
     "fadeSeconds": 0.25
+  },
+  "batch": {
+    "topN": 3,
+    "minScore": 40
   }
 }

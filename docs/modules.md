@@ -1,14 +1,26 @@
-# Modules (M1, M2)
+# Modules (M1-M3)
 
 `PLAN.md` is the design; this page is what the code does not say by itself.
 
 ## Running
 
 ```
+pnpm go [--dry-run] [--retry-failed]
 pnpm moments "<demo.dem>"
 pnpm clip "<demo.dem>" --top <n> [--timeout <s>] [--force] [--dry-run]
 pnpm clip "<demo.dem>" <startTick> <endTick> [same options]
 ```
+
+`pnpm go` is the one command: drop demos (`.dem`, or `.zip` / `.bz2` /
+`.gz` / `.zst`) into `demos/inbox/`, run it, come back to clips. It
+ingests the inbox, ranks every registered demo, renders the moments
+`config.json` → `batch` selects (score at least `minScore`, at most `topN`
+per demo) that the library does not hold yet, and rewrites
+`library/index.html` (open it from disk). It refuses to start while CS2 runs
+and stops the whole batch on the first guard refusal (exit 2) or unverified
+cleanup (exit 3); exit 1 means a job or demo failed (`state/failures.json`).
+Run it again to resume: nothing new means no launch. `--dry-run` lists what
+it would render.
 
 `pnpm moments` parses, scores and ranks a demo's moments (no launch;
 `docs/scoring-notes.md`). `pnpm clip --top n` renders the n-th ranked
@@ -31,7 +43,12 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds` |
 | `.env` | identities and tool paths (`.env.example`; M0.2 setup in `docs/spikes.md`) |
 | `scoring.json` | ranking weights; tuning and current picks in `docs/scoring-notes.md` |
-| `src/cli/clip.ts`, `src/cli/moments.ts` | the entries; resume check, failure record |
+| `src/cli/go.ts`, `src/cli/clip.ts`, `src/cli/moments.ts` | the entries |
+| `src/ingest/` | watch folder (`index.ts`) and the source interface for FACEIT / Valve later (`sources.ts`) |
+| `src/queue/` | the batch and its job ledger (`index.ts`); one clip job, shared by `pnpm clip` and the batch (`job.ts`) |
+| `src/library/page.html`, `page.ts` | the library page template and its writer |
+| `demos/` | `inbox/` (drop here), `store/<sha256>.dem` (ingested demos), `ingested/` (originals), `rejected/` (with `.reason.txt`) |
+| `state/demos.json`, `state/queue.json` | demo registry; job ledger |
 | `src/parse/demo.ts` | per-demo extraction, cached in `state/<demo sha256>/parse.json` |
 | `src/parse/clip-facts.ts` | what one render needs: tickrate, demo hash, map, POV slot at the clip's ticks, round |
 | `src/score/index.ts` | round context (1vX), kill clusters, scoring |
@@ -120,3 +137,41 @@ the spectated player (docs/spikes.md, M0.2 open items).
 - **Clip id** for a ranked moment = the same `clipId` over (demo sha256,
   match round, start, end); `pnpm clip --top` refuses if the render's own
   facts give another id.
+
+## Decisions made in M3
+
+- **Ingest.** A file in `demos/inbox/` is taken when its size, mtime and
+  file id held for 2 s; writers must use a temporary name (leading dot,
+  `.part`, `.tmp`, `.crdownload`) and rename when done. `.zip` goes through
+  Windows' own `tar.exe` (listed first; only `.dem` members, no `..`,
+  wildcard, option-like, colon or duplicate names; 20 members, 2 GiB per
+  demo, 6 GiB total); `.bz2` through `seek-bzip` (the one added dependency;
+  Node has no bzip2), `.gz` / `.zst` through Node's zlib, all bounded while
+  unpacking. The result must start with `PBDEMS2`. Demos are hashed and
+  moved to `demos/store/<sha256>.dem`, registered per demo; a store file
+  missing from the registry is registered on the next run. Nothing is
+  deleted: originals go to `ingested/`, bad input to `rejected/`.
+- **Stage keys.** parse.json (demo hash + parser + schema + POV),
+  moments.json (parse key + weights + schema; an empty list is a valid
+  result, a parse error is a failure in `state/failures.json` under
+  `demo:<sha256>`), the library entry and `capture.json` (render key).
+- **Ledger.** `state/queue.json`, keyed by clip id + render key, so a
+  settings or tool change starts a fresh attempt budget. A job is marked
+  running before it may launch; a run that dies mid-job leaves it running
+  and the next run retries it once (two attempts in all, then it is listed
+  as given up until `--retry-failed`). A clip the library holds for the
+  render key is done whatever the ledger says. Only a guard refusal gives
+  the attempt back. Locks (`state/.go.lock`, `.clip.lock`, `.render.lock`)
+  are released on normal exit, errors and signals; a hard-killed run leaves
+  them, to be deleted by hand after checking no cs2.exe / HLAE.exe is left.
+- **Library page.** `src/library/page.html` (committed) with the clip
+  index inlined as JSON, every `<` escaped, so it works from `file://`;
+  videos load by relative path. One static file, plain CSS and JS: filter
+  by map, kill count and score, sort by score or date; rank, title, score,
+  kills, clutch and flags per clip.
+- **Stretched aspect** is wired end to end (`captureSize` sets the game
+  window, post scales); it has been checked in post only, no game capture
+  at 1440x1080 yet.
+- **Test hook.** `pnpm go --test-exit-after <s>` ends the process that many
+  seconds into the first job that may launch, to exercise the interrupted
+  path; not for normal use.

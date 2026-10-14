@@ -26,6 +26,14 @@ export type RenderSettings = {
   fadeSeconds: number;
 };
 
+/** Which moments the batch renders per demo: score >= minScore, at most topN. */
+export type BatchSettings = { topN: number; minScore: number };
+export function loadBatch(file = path.join(ROOT, "config.json")): BatchSettings {
+  const b = JSON.parse(readFileSync(file, "utf8")).batch as BatchSettings;
+  if (!Number.isInteger(b?.topN) || b.topN < 0 || typeof b.minScore !== "number") throw new Error("config.json batch needs topN (integer >= 0) and minScore (number)");
+  return b;
+}
+
 export function loadSettings(file = path.join(ROOT, "config.json")): RenderSettings {
   const r = JSON.parse(readFileSync(file, "utf8")).render as RenderSettings;
   for (const k of ["width", "height", "fps", "captureCrf", "crf", "fadeSeconds"] as const) {

@@ -10,10 +10,12 @@
   "scripts": {
     "clip": "tsx src/cli/clip.ts",
     "typecheck": "tsc -p .",
-    "moments": "tsx src/cli/moments.ts"
+    "moments": "tsx src/cli/moments.ts",
+    "go": "tsx src/cli/go.ts"
   },
   "dependencies": {
-    "@laihoe/demoparser2": "^0.42.0"
+    "@laihoe/demoparser2": "^0.42.0",
+    "seek-bzip": "^2.0.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
