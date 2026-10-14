@@ -1,8 +1,10 @@
 node_modules/
-state/
-library/
-demos/
-!demos/inbox/.gitkeep
+/state/
+/library/
+/demos/*
+!/demos/inbox/
+/demos/inbox/*
+!/demos/inbox/.gitkeep
 .env
 *.log
 spikes/out/

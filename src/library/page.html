@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>croclipper library</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #101113;
+    --surface: #17191c;
+    --surface-2: #1f2226;
+    --line: #2b2f34;
+    --text: #e9eaec;
+    --muted: #9da3ab;
+    --accent: #3fcf9e;
+    --accent-ink: #0b1f18;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0;
+    font: 15px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    min-height: 100dvh;
+  }
+  .wrap { max-width: 1440px; margin: 0 auto; padding: 28px 24px 64px; }
+  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
+  h1 { font-size: 26px; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
+  .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .controls {
+    display: grid; gap: 14px; align-items: end;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    padding: 14px 16px; margin-bottom: 24px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  }
+  .field { display: grid; gap: 6px; }
+  .field label { font-size: 13px; color: var(--muted); }
+  select, input[type="range"] { width: 100%; }
+  select {
+    appearance: none; font: inherit; color: var(--text);
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 8px 32px 8px 10px;
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 16px) 55%, calc(100% - 11px) 55%;
+    background-size: 5px 5px; background-repeat: no-repeat;
+  }
+  select:focus-visible, input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input[type="range"] { accent-color: var(--accent); }
+  .range-value { color: var(--text); font-variant-numeric: tabular-nums; }
+  .grid { display: grid; gap: 22px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr)); }
+  article {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    overflow: hidden; display: grid; grid-template-rows: auto 1fr;
+  }
+  video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #0a0b0c; }
+  .meta { padding: 12px 14px 14px; display: grid; gap: 8px; }
+  .title-row { display: flex; gap: 10px; align-items: flex-start; }
+  .rank {
+    flex: none; min-width: 34px; text-align: center; font-weight: 700; font-size: 13px;
+    padding: 2px 7px; border-radius: var(--radius);
+    background: var(--accent); color: var(--accent-ink); font-variant-numeric: tabular-nums;
+  }
+  .title { font-weight: 600; line-height: 1.35; }
+  .facts { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .facts b { color: var(--text); font-weight: 600; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--line); color: var(--text); }
+  .empty { padding: 48px 24px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: var(--radius); }
+  .empty code { color: var(--text); }
+  footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
+  @media (max-width: 640px) { .wrap { padding: 20px 16px 48px; } }
+  @media (prefers-reduced-motion: no-preference) {
+    article { transition: border-color .2s ease; }
+    article:hover { border-color: #3a4048; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Clips</h1>
+    <span class="count" id="count"></span>
+  </header>
+
+  <section class="controls" aria-label="Filter and sort">
+    <div class="field">
+      <label for="map">Map</label>
+      <select id="map"><option value="">All maps</option></select>
+    </div>
+    <div class="field">
+      <label for="kills">Kills</label>
+      <select id="kills">
+        <option value="0">Any</option>
+        <option value="2">2 or more</option>
+        <option value="3">3 or more</option>
+        <option value="4">4 or more</option>
+        <option value="5">5</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="score">Score at least <span class="range-value" id="scoreValue">0</span></label>
+      <input id="score" type="range" min="0" max="200" step="5" value="0">
+    </div>
+    <div class="field">
+      <label for="sort">Sort</label>
+      <select id="sort">
+        <option value="score">Highest score</option>
+        <option value="date">Newest first</option>
+      </select>
+    </div>
+  </section>
+
+  <main id="grid" class="grid" aria-live="polite"></main>
+  <footer id="generated"></footer>
+</div>
+
+<script type="application/json" id="clips">/*__CLIPS__*/[]</script>
+<script>
+  "use strict";
+  const data = JSON.parse(document.getElementById("clips").textContent);
+  const clips = data.clips;
+  const $ = (id) => document.getElementById(id);
+  const maps = [...new Set(clips.map((c) => c.map).filter(Boolean))].sort();
+  for (const m of maps) $("map").add(new Option(m.replace(/^de_/, ""), m));
+  const maxScore = Math.max(0, ...clips.map((c) => c.score ?? 0));
+  $("score").max = String(Math.max(50, Math.ceil(maxScore / 10) * 10));
+  $("generated").textContent = "Generated " + new Date(data.generatedAt).toLocaleString();
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function card(c) {
+    const a = el("article");
+    const v = el("video");
+    v.controls = true;
+    v.preload = "metadata";
+    v.src = c.file;
+    // Clips fade in from black: show a frame just past the fade until first play, then start at 0.
+    v.addEventListener("loadedmetadata", () => { if (!v.played.length) v.currentTime = Math.min(0.6, v.duration / 2); }, { once: true });
+    v.addEventListener("play", () => { if (v.currentTime <= 0.65 && v.played.length <= 1) v.currentTime = 0; }, { once: true });
+    a.append(v);
+    const meta = el("div", "meta");
+    const row = el("div", "title-row");
+    if (c.rank) row.append(el("span", "rank", "#" + c.rank));
+    row.append(el("span", "title", c.title));
+    meta.append(row);
+    const facts = el("div", "facts");
+    const fact = (label, value) => { const s = el("span"); s.append(label + " "); s.append(el("b", "", value)); facts.append(s); };
+    if (c.score !== undefined) fact("Score", String(c.score));
+    if (c.kills) fact("Kills", String(c.kills));
+    fact("Length", c.seconds.toFixed(1) + " s");
+    fact("Added", new Date(c.createdAt).toLocaleDateString());
+    meta.append(facts);
+    const tags = [...(c.clutch ? ["1v" + c.clutch.vs + (c.clutch.won ? " clutch" : " clutch lost")] : []), ...(c.flags || [])];
+    if (tags.length) {
+      const t = el("div", "tags");
+      for (const x of tags) t.append(el("span", "tag", x));
+      meta.append(t);
+    }
+    a.append(meta);
+    return a;
+  }
+  function render() {
+    const map = $("map").value, kills = Number($("kills").value), score = Number($("score").value), sort = $("sort").value;
+    $("scoreValue").textContent = String(score);
+    const shown = clips
+      .filter((c) => (!map || c.map === map) && (c.kills ?? 0) >= kills && (c.score ?? 0) >= score)
+      .sort((a, b) => sort === "date" ? b.createdAt.localeCompare(a.createdAt) : (b.score ?? -1) - (a.score ?? -1));
+    $("count").textContent = shown.length === clips.length ? clips.length + " clips" : shown.length + " of " + clips.length + " clips";
+    const grid = $("grid");
+    grid.replaceChildren();
+    if (!clips.length) {
+      const e = el("div", "empty");
+      e.append("No clips yet. Drop demos into ");
+      e.append(el("code", "", "demos/inbox"));
+      e.append(" and run ");
+      e.append(el("code", "", "pnpm go"));
+      e.append(".");
+      grid.append(e);
+    } else if (!shown.length) {
+      grid.append(el("div", "empty", "No clips match these filters."));
+    } else for (const c of shown) grid.append(card(c));
+  }
+  for (const id of ["map", "kills", "score", "sort"]) $(id).addEventListener("input", render);
+  render();
+</script>
+</body>
+</html>
