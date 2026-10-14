@@ -45,6 +45,15 @@ sources ──> ingest ──> parse ──> score ──> clip specs ──> re
 
 ### 1. Ingest
 
+The user-facing entry point is one command, `pnpm fetch`: "I have
+played some games" means running it. It asks every configured source
+for matches newer than the last one it saw, downloads the demos it
+does not have into `demos/inbox/`, and the normal pipeline takes over.
+State per source (last FACEIT match id, last Valve share code) lives
+in `state/`. It runs on demand, not on a schedule, because the Valve
+route needs a Steam session on the alt and must not collide with
+rendering or with Peder playing.
+
 - **Watch folder** is the baseline: drop a `.dem` (or the `.bz2`/`.zip`
   Valve hands out) in `demos/inbox/`. Ingest waits until the file has
   stopped growing, unpacks with path and size limits, hashes the
@@ -53,13 +62,20 @@ sources ──> ingest ──> parse ──> score ──> clip specs ──> re
   player ID. Poll recent matches, download new ones. Needs a free
   FACEIT API key in a local `.env` (never committed). After the render
   gate (see milestones).
-- **Valve matchmaking**: no clean path. Demos live ~30 days and the
-  official route is the in-game Watch tab. The workable automation is
-  the Game Coordinator route (`@akiver/boiler-writter` or
-  `cs-demo-downloader`), which needs your match-history auth code and
-  a share code to start from. Last milestone. Until then: click
-  download in-game, point the watch folder at where Steam puts it
-  (location to confirm on this machine).
+- **Valve matchmaking**: demos live ~30 days; the official route is
+  the in-game Watch tab. The automation is two steps. (a) The Steam
+  Web API `GetNextMatchSharingCode` walks forward from the last known
+  share code, using your main account's match-history auth code and a
+  Steam Web API key (both in `.env`; the auth code grants read access
+  to match history and replays, nothing else, and can be revoked
+  in-game). (b) Each share code is resolved to a download URL through
+  the Game Coordinator, which needs a Steam login that "launches" CS2:
+  the alt account, via `node-steam-user` + `globaloffensive` (what
+  `cs-demo-downloader` and `boiler-writter` do). That login kicks any
+  other Steam session on the alt for its duration, so fetch never runs
+  while a render runs. Last milestone. Until then: click download
+  in-game, point the watch folder at where Steam puts it (location to
+  confirm on this machine).
 
 ### 2. Parse
 
@@ -192,6 +208,29 @@ HLAE's tick scheduling the stop has to be wall-clock. Whether that
 works without HLAE is unknown until tested; it is a documented option,
 not a promise.
 
+**Looks like real gameplay.** The alt account has none of your
+settings, and a demo is drawn with the spectator's config, not the
+player's. So every render job starts by executing a cfg generated
+from your main account's `cs2_user_convars.vcfg` (crosshair, viewmodel,
+HUD scale and colour, radar) found under Steam `userdata/<your account
+id>/730/local/cfg/` (or `remote/`; which one is live on this machine is
+unknown until M0.2 checks). Video quality is set explicitly by the
+controller, not inherited. On top of that the cfg sets:
+
+| Setting | Why |
+|---|---|
+| `spec_show_xray 0` | never xray; a hard rule from Peder |
+| `cl_show_observer_crosshair 1` plus your own crosshair convars | the crosshair in frame is yours |
+| `cl_drawhud 1`, `cl_draw_only_deathnotices 0` | the full normal HUD, as in play |
+| demo UI closed, spectator panels hidden, `spec_show_lineup 0` | nothing in frame that is not in play (exact commands verified in M0.2) |
+| `cl_showfps 0`, HUD telemetry off, `r_show_build_info 0` | no overlays |
+| `fps_max 0`, `engine_no_focus_sleep 0`, HLAE fixed framerate | capture is frame-locked, not wall-clock |
+| capture at or above output resolution, FFmpeg at a visually lossless CRF | sharpness and anti-aliasing; downscale in post if supersampled |
+
+Whether CS2 first-person demo playback reproduces viewmodel recoil and
+aim punch exactly as played is unknown; M0.2 compares a recorded
+moment against how it looks in-game and notes the difference.
+
 Known risks, decided up front:
 
 - **HLAE breaks on CS2 updates.** Every render records the CS2 build,
@@ -279,9 +318,10 @@ not pass.
    source first. Then, from a generated cfg, record a hand-picked
    interval of your demo: correct player, first-person throughout,
    lead-in present, first frames present, audio present and in sync,
-   file finalized and playable, and no demo UI in the frame (no
-   playback panel, no spectator controls, no console; the normal game
-   HUD stays). Then: a second, different interval in
+   file finalized and playable, no xray, and no demo UI in the frame
+   (no playback panel, no spectator controls, no console; the normal
+   game HUD stays), with your crosshair and viewmodel from the main
+   account's config. Then: a second, different interval in
    a fresh launch; a restart and repeat; one job interrupted mid-way
    and recovered by the queue; and the behaviour when CS2 is already
    open. Confirm that parser ticks, `demo_gototick` and HLAE
