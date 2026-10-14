@@ -534,4 +534,49 @@ ended; ownership by parent pid without the same-snapshot check) are in
 
 ## M0.3 Old demo
 
-Not run.
+**Fail — 2026-10-14, only through the M0.2 crosshair criterion** (the
+full-cfg run `1-0c14eb44-87569-88322-1792004563487` shows the same
+reticle). The old demo itself plays, seeks and records like the
+current one, and TrueView stays available: `cl_demo_predict 1` →
+"TrueView is DISABLED", `cl_demo_predict 2` → "Demo is version 14160,
+client is version 14190. TrueView is ENABLED as per cl_demo_predict=2"
+and "Added TrueView prediction for player slot 10 (croa)". No xray, no
+demo UI in that run.
+
+Demo 0c14eb44 (de_cache, FACEIT, file date
+2026-05-13, five months old; demo `patch_version` 14160). The
+measurements below are from run `1792003744767`: the final M0.2
+controller, before the look settings were added (`cl_demo_predict`
+unset, i.e. 1; no look cfg). The full-cfg run is `1792004563487` (above).
+
+```
+pnpm exec tsx spikes/m0-2-capture.ts "C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\csgo\1-0c14eb44-2f46-4523-a286-583a65f3477d-1-1.dem" 87569 88322 --timeout 300
+pnpm exec tsx spikes/m0-2-sync.ts spikes/out/1-0c14eb44-87569-88322-1792003744767
+```
+
+Interval: round 12 Glock 4k (kills at ticks 87761–88162), 87569–88322,
+11.77 s. POV `spec_player 11` (user_id 10 + 1).
+
+- CS2 loads it: console "Demo is version 14160, client is version
+  14190. TrueView is DISABLED as per cl_demo_predict=1" — a warning, no
+  failure. The map loaded from the current install.
+- Seek: "Demo Skipping finished at tick 87441" = the scheduled seek
+  target. Record: 705 frames @ 60 against 706 expected.
+- `result.json`: ok, `cleanup_verified` true (owned tree HLAE → cs2 →
+  ffmpeg + conhost), `clip.mp4` 11.75 s, video and audio streams,
+  decodes clean. Wall time 38 s; no cs2.exe/HLAE.exe/ffmpeg.exe left afterwards.
+- Audio (final clip) vs parser shots: isolated-shot offsets −53, −33,
+  −31, −24, +12 ms (one more matched another sound at +402 ms).
+- Frames sampled every 0.5 s across the clip: first-person on the POV
+  player throughout (Glock, then knife),
+  the 4k in the killfeed and the round-win banner at the end, no
+  demo playback panel or spectator hints.
+
+An earlier run of this interval (1792001366897, previous controller
+version) is void: Peder clicked
+the CS2 window during it, and the camera left the POV player (see M0.2,
+stray input).
+
+Covers one old demo, as the gate asks. The other two May demos (patch
+14164) were not rendered. Demos older than five months, or from before
+a map change, are untested.
