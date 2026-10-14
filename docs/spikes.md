@@ -652,3 +652,54 @@ stray input).
 Covers one old demo, as the gate asks. The other two May demos (patch
 14164) were not rendered. Demos older than five months, or from before
 a map change, are untested.
+
+## M1 add-on: spectator HUD via `mirv_panorama` (2026-10-14)
+
+Goal: the full in-play HUD with only the spectator-only elements blanked
+(the ten player cards; the observed player's name next to health). Two
+launches, the add-on's whole budget; the default clip look is unchanged
+(`cl_draw_only_deathnotices 1`). Script: `spikes/m0-2-capture.ts
+--panorama` (cfg body `cl_draw_only_deathnotices 0`, cumulative 2 s
+windows, tick table in `job.json`, frames read mid-window). Same versions
+as M0.2; interval A extended to fill the windows.
+
+```
+pnpm exec tsx spikes/m0-2-capture.ts "<demo>" 5669 6181 --panorama --timeout 240   # run 1
+pnpm exec tsx spikes/m0-2-capture.ts "<demo>" 5669 6309 --panorama --timeout 240   # run 2
+```
+
+HLAE output (`mirv_panorama` errors, `__mirv_panorama_print_children`)
+lands in `console.log` under `-condebug`. The dump without an argument
+lists the `Hud` root's direct children; with a panel id
+(`__mirv_panorama_print_children HudTeamCounter`) it lists that panel's
+children. Panel ids and classes came from the game's hud CSS in the VPKs
+(teamcounter, healthammocenter).
+
+Run 1 (`1-8e8743a8-5669-6181-1792008667208`):
+
+| Window (video s) | Command (scheduled, cumulative) | Result |
+|---|---|---|
+| 0 (0–2) | baseline, full HUD | cards, timer, score, radar, money, health, name, ammo, weapons |
+| 1 (2–4) | `mirv_panorama panelStyle panelId=HudSpecplayerRoot opacity=0` | "Could not find panel HudSpecplayerRoot"; no change (it is a CSS class) |
+| 2 (4–6) | `mirv_panorama panelStyle panelId=HudTeamCounter opacity=0` | whole top bar gone: cards, round timer and score; everything else stays |
+| 3 (6–8) | both `opacity=1` | top bar back |
+
+Run 2 (`1-8e8743a8-5669-6309-1792009023984`):
+
+| Window (video s) | Command (scheduled, cumulative) | Result |
+|---|---|---|
+| 0 (0–2) | baseline, full HUD | as above |
+| 1 (2–4) | `mirv_panorama panelStyle panelClassName=HudSpecplayer__player-name-contianer opacity=0` | "Could not find panels with className …"; name stays |
+| 2 (4–6) | `mirv_panorama panelStyle panelClassName=HudSpecplayer__Avatar opacity=0` | same error; no change |
+| 3 (6–8) | `mirv_panorama panelStyle panelId=TeamLargeCT opacity=0` and `… panelId=TeamLargeT opacity=0` | **the ten cards gone; round timer and score stay**; nothing else lost |
+| 4 (8–10) | all four `opacity=1` | cards back |
+
+Dumps in run 2: `HudTeamCounter` → `TeamCounterBG`; `HudBottomCenter` →
+(null), `HudVanityLoadout`, (null).
+
+Result: the cards have a clean hide (`TeamLargeCT` + `TeamLargeT`,
+scheduled after `spec_player`). The name next to health does not: the
+class names from the CSS are not found by `panelClassName` and the panel
+holding the health/name bar is not identified. Next step if wanted (one
+launch): dump the children of the `HudLowerLeft`, `HudBottomCenter` (null)
+children and the healthammocenter panel to find its id.

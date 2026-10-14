@@ -50,9 +50,26 @@ const discover = args.includes("--discover");
 // start of its own 2 s window of demo time and reset at the end; the table goes
 // into job.json so every frame maps to a candidate. Window 0 and the last are
 // the baseline.
-const candidatesMode = args.includes("--candidates");
+// --panorama: same window machinery, for HLAE's mirv_panorama panelStyle on the
+// full HUD; windows are cumulative (no reset) and the last restores opacity 1.
+const panoramaMode = args.includes("--panorama");
+const candidatesMode = args.includes("--candidates") || panoramaMode;
 const WINDOW_TICKS = 2 * TICKRATE;
-const CANDIDATES: { name: string; set: string; reset: string }[] = [
+// Run 1 (job 1792008667208) used HudSpecplayerRoot (not a panel id: "Could not find
+// panel") and HudTeamCounter (whole top bar, timer and score included). Run 2 uses
+// ids and classes from the game's hud CSS (teamcounter, healthammocenter).
+const pano = (sel: string, o: number) => `mirv_panorama panelStyle ${sel} opacity=${o}`;
+const NAME = "panelClassName=HudSpecplayer__player-name-contianer"; // Valve's spelling
+const AVATAR = "panelClassName=HudSpecplayer__Avatar";
+const CARDS = ["panelId=TeamLargeCT", "panelId=TeamLargeT"]; // ScoreAndTime is their sibling
+const PANORAMA: { name: string; set: string; reset: string }[] = [
+  { name: "baseline (full HUD)", set: "", reset: "" },
+  { name: "name container opacity 0", set: pano(NAME, 0), reset: "" },
+  { name: "+ spec avatar opacity 0", set: pano(AVATAR, 0), reset: "" },
+  { name: "+ TeamLargeCT/TeamLargeT opacity 0", set: CARDS.map((c) => pano(c, 0)).join("; "), reset: "" },
+  { name: "all back to opacity 1", set: [NAME, AVATAR, ...CARDS].map((c) => pano(c, 1)).join("; "), reset: "" },
+];
+const SWEEP_CANDIDATES: { name: string; set: string; reset: string }[] = [
   { name: "baseline", set: "", reset: "" },
   { name: "cl_draw_only_deathnotices 1", set: "cl_draw_only_deathnotices 1", reset: "cl_draw_only_deathnotices 0" },
   { name: "cl_teamcounter_playercount_instead_of_avatars 1", set: "cl_teamcounter_playercount_instead_of_avatars 1", reset: "cl_teamcounter_playercount_instead_of_avatars 0" },
@@ -62,6 +79,7 @@ const CANDIDATES: { name: string; set: string; reset: string }[] = [
   { name: "cl_drawhud_force_teamid_overhead -1", set: "cl_drawhud_force_teamid_overhead -1", reset: "cl_drawhud_force_teamid_overhead 0" },
   { name: "baseline", set: "", reset: "" },
 ];
+const CANDIDATES = panoramaMode ? PANORAMA : SWEEP_CANDIDATES;
 // Test hook: issue spec_next (what MOUSE1 does in spectator mode) twice mid-clip,
 // to check the POV lock holds against a stray click on the game window.
 const testSpecNext = args.includes("--test-spec-next");
@@ -260,7 +278,8 @@ const cfg = [
   "cl_drawhud 1",
   // Spectator HUD (team cards, observed name) cannot be hidden on its own (see docs/spikes.md);
   // Peder accepted crosshair + killfeed only as the fallback.
-  "cl_draw_only_deathnotices 1",
+  // --panorama tests the full HUD from the start, so the panel dump sees it.
+  `cl_draw_only_deathnotices ${panoramaMode ? 0 : 1}`,
   "cl_radar_show_all_players_when_spectating 0", // radar as in play, not the spectator's full view
   `cl_demo_predict ${DEMO_PREDICT}`, // TrueView: 1 = auto, 2 = force (see docs/spikes.md)
   "cl_showfps 0",
@@ -292,9 +311,12 @@ const cfg = [
     at(startTick, "mirv_streams record start"),
     ...(candidatesMode ? [
       // The sweep's baseline is the full spectator HUD, whatever the render cfg uses.
-      at(startTick, "cl_draw_only_deathnotices 0"), at(startTick, "cl_spec_show_bindings 1"), at(startTick, "cl_spec_stats 1"),
+      ...(panoramaMode ? [] : [at(startTick, "cl_draw_only_deathnotices 0"), at(startTick, "cl_spec_show_bindings 1"), at(startTick, "cl_spec_stats 1")]),
       // ";" would end the mirv_cmd line in the cfg, so each part is scheduled on its own.
-      ...candidateTable.flatMap((w, i) => CANDIDATES[i].set ? [...CANDIDATES[i].set.split("; ").map((c) => at(w.set_tick, c)), ...CANDIDATES[i].reset.split("; ").map((c) => at(w.reset_tick, c))] : []),
+      ...candidateTable.flatMap((w, i) => CANDIDATES[i].set ? [...CANDIDATES[i].set.split("; ").map((c) => at(w.set_tick, c)), ...(CANDIDATES[i].reset ? CANDIDATES[i].reset.split("; ").map((c) => at(w.reset_tick, c)) : [])] : []),
+      // Panel tree dump once the spectator HUD exists; where its output lands is part of the test.
+      // Run 1 showed the bare dump lists only the Hud root's children; whether it takes a panel id is untested.
+      ...(panoramaMode ? [at(seekTick + 40, "__mirv_panorama_print_children HudTeamCounter"), at(seekTick + 41, "__mirv_panorama_print_children HudBottomCenter")] : []),
     ] : []),
     ...(testSpecNext ? [at(startTick + 3 * TICKRATE, "spec_next"), at(startTick + 6 * TICKRATE, "spec_next")] : []),
     at(endTick, "mirv_streams record end"),
