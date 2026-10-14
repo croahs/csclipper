@@ -9,7 +9,8 @@
   },
   "scripts": {
     "clip": "tsx src/cli/clip.ts",
-    "typecheck": "tsc -p ."
+    "typecheck": "tsc -p .",
+    "moments": "tsx src/cli/moments.ts"
   },
   "dependencies": {
     "@laihoe/demoparser2": "^0.42.0"

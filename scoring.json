@@ -1,0 +1,18 @@
+{
+  "_about": "Weights for src/score. How to tune: docs/scoring-notes.md. Every change gets a line in _changes with its reason.",
+  "_changes": [
+    "2026-10-15 first weights (M2), from PLAN.md's first-ranking signals",
+    "2026-10-15 clusterGapSeconds 6 -> 12: the hand-picked round-8 3k on the October de_inferno demo (M0 interval B) has kills 11.5 s and 9.0 s apart and fell apart into three single kills at 6",
+    "2026-10-15 includeOvertime false: PLAN.md section 3 excludes overtime rounds; set true to rank them"
+  ],
+  "clusterGapSeconds": 12,
+  "killBase": { "1": 10, "2": 30, "3": 55, "4": 80, "5": 110 },
+  "speed": { "referenceSeconds": 3, "pointsPerSecondFaster": 4, "max": 12 },
+  "clutch": { "perEnemy": 15, "wonBonus": 20, "lostFactor": 0.3 },
+  "flags": { "headshot": 2, "wallbang": 8, "noscope": 10, "thrusmoke": 8, "attackerblind": 8 },
+  "weaponMultiplier": { "pistol": 1.25, "deagle": 1.35, "scout": 1.2, "smg": 1.1, "shotgun": 1.0, "rifle": 1.0, "awp": 0.9, "knife": 1.6, "other": 1.0 },
+  "roundWon": 8,
+  "lowHp": { "threshold": 30, "penaltyPerKill": 6 },
+  "threshold": 30,
+  "includeOvertime": false
+}

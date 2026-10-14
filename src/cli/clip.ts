@@ -1,5 +1,6 @@
 // pnpm clip <demo.dem> <startTick> <endTick> [--timeout <s>] [--force] [--dry-run] [--debug-cmd <cmd>]...
-// One clip from a hand-written spec: guarded render → post → library.
+// pnpm clip <demo.dem> --top <n> [same options]: the demo's n-th ranked moment (pnpm moments).
+// One clip, guarded render → post → library.
 // Exit codes: 0 ok (or already in the library), 1 failed, 2 refused (nothing
 // launched), 3 cleanup not verified (a game process may still run; the lock stays).
 import { createHash } from "node:crypto";
@@ -12,17 +13,19 @@ import { SPECTATOR_PANELS, lookCfg } from "../render/controller/cfg.ts";
 import { RenderLock } from "../render/controller/guards.ts";
 import { toolVersions } from "../render/versions.ts";
 import { measureMapping, post, validateClip } from "../post/index.ts";
+import { buildMoments } from "../clip/moments.ts";
+import type { ClipSpec } from "../clip/index.ts";
 import { clipId, clipPath, clipTmpPath, ensureClipsDir, publish, readIndex, recordFailure, writeJsonAtomic } from "../library/index.ts";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
-const positional = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--timeout" && args[i - 1] !== "--debug-cmd");
+const positional = args.filter((a, i) => !a.startsWith("--") && !["--timeout", "--debug-cmd", "--top"].includes(args[i - 1]));
 // --debug-cmd <cmd> (repeatable): a quote-free console command scheduled after spec_player, e.g. a panel dump.
 // Only diagnostics are allowed: anything else could leave playback or change the schedule.
 const DEBUG_CMD = /^__mirv_panorama_print_children [A-Za-z][A-Za-z0-9_-]*$/;
 const debugCommands = args.flatMap((a, i) => (a === "--debug-cmd" && args[i + 1] ? [args[i + 1]] : []));
 const [demoArg, startArg, endArg] = positional;
-const usage = "usage: pnpm clip <demo.dem> <startTick> <endTick> [--timeout <s>] [--force] [--dry-run] [--debug-cmd <cmd>]...";
+const usage = "usage: pnpm clip <demo.dem> (<startTick> <endTick> | --top <n>) [--timeout <s>] [--force] [--dry-run] [--debug-cmd <cmd>]...";
 
 // Written into an attempt's work dir once its raw capture validated: the
 // render stage is done for this render key, and a retry goes straight to post.
@@ -54,9 +57,18 @@ function completedCapture(id: string, renderKey: string, size: string): (Capture
 async function main(): Promise<number> {
   if (!demoArg) { console.error(usage); return 1; }
   const demo = path.resolve(demoArg);
-  const startTick = Number(startArg);
-  const endTick = Number(endArg);
   if (!existsSync(demo)) throw new Error(`demo not found: ${demo}`);
+  // --top n: the spec comes from the ranked moments (parse → score → clip specs).
+  let spec: ClipSpec | undefined;
+  if (flag("--top") !== undefined) {
+    const n = Number(flag("--top"));
+    const { specs } = await buildMoments(demo, loadIdentities().pov);
+    spec = specs.find((s) => s.rank === n);
+    if (!Number.isInteger(n) || !spec) throw new Error(`no moment ranked ${flag("--top")} (this demo has ${specs.length})`);
+    console.log(`moment #${n}: ${spec.title} (score ${spec.score}, ticks ${spec.startTick}-${spec.endTick})`);
+  }
+  const startTick = spec ? spec.startTick : Number(startArg);
+  const endTick = spec ? spec.endTick : Number(endArg);
   if (!Number.isInteger(startTick) || !Number.isInteger(endTick) || endTick <= startTick) throw new Error(`bad tick range\n${usage}`);
   const timeoutS = flag("--timeout") === undefined ? undefined : Number(flag("--timeout"));
   if (timeoutS !== undefined && !(timeoutS > 0)) throw new Error("--timeout must be a positive number of seconds");
@@ -66,8 +78,11 @@ async function main(): Promise<number> {
   const settings = loadSettings();
   const ids = loadIdentities();
   const facts = await clipFacts(demo, ids.pov, startTick, endTick);
-  const id = clipId(facts.demoSha256, facts.round, startTick, endTick);
-  const title = `${facts.map} · R${facts.round} · ticks ${startTick}-${endTick}`;
+  // A moment carries the match round (pre-match rounds excluded) and its own title.
+  const round = spec ? spec.round : facts.round;
+  const id = clipId(facts.demoSha256, round, startTick, endTick);
+  if (spec && id !== spec.id) throw new Error(`clip id ${id} differs from the moment's ${spec.id}`);
+  const title = spec ? spec.title : `${facts.map} · R${facts.round} · ticks ${startTick}-${endTick}`;
   const look = lookCfg(ids.cs2Exe, ids.pov);
   const versions = toolVersions(ids.cs2Exe, ids.hlaeExe);
   const { node: _node, ...outputVersions } = versions;
@@ -126,7 +141,8 @@ async function main(): Promise<number> {
     if (p.status !== "ok") return fail(p.reasons, 1);
 
     publish(tmp, {
-      id, file: `clips/${id}.mp4`, title, map: facts.map, demo, demoSha256: facts.demoSha256, round: facts.round,
+      id, file: `clips/${id}.mp4`, title, map: facts.map, demo, demoSha256: facts.demoSha256, round,
+      ...(spec ? { moment: { rank: spec.rank, score: spec.score, breakdown: spec.breakdown, kills: spec.kills, killTicks: spec.killTicks, weapons: spec.weapons, flags: spec.flags, ...(spec.clutch ? { clutch: { vs: spec.clutch.vs, won: spec.clutch.won } } : {}) } } : {}),
       startTick, endTick, seconds: p.plan!.seconds, frames: p.plan!.frames, createdAt: new Date().toISOString(),
       renderKey, render: { ...renderInputs, node: versions.node, mapping: { ...capture.mapping, originTick: m.originTick, offsetFrames: m.timing.offsetFrames, source: m.timing.source }, trim: p.plan, landedOffsetFrames: p.landed!.offsetFrames, workDir },
     });

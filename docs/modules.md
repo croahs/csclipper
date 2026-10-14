@@ -1,15 +1,21 @@
-# Modules (M1)
+# Modules (M1, M2)
 
 `PLAN.md` is the design; this page is what the code does not say by itself.
 
 ## Running
 
 ```
-pnpm clip "<demo.dem>" <startTick> <endTick> [--timeout <s>] [--force] [--dry-run]
+pnpm moments "<demo.dem>"
+pnpm clip "<demo.dem>" --top <n> [--timeout <s>] [--force] [--dry-run]
+pnpm clip "<demo.dem>" <startTick> <endTick> [same options]
 ```
 
-One clip from a hand-written spec, no hands after the command: guarded
-render → post → `library/clips/<id>.mp4` + `library/index.json`.
+`pnpm moments` parses, scores and ranks a demo's moments (no launch;
+`docs/scoring-notes.md`). `pnpm clip --top n` renders the n-th ranked
+moment, `pnpm clip <start> <end>` a hand-written tick range; either way no
+hands after the command: guarded render → post → `library/clips/<id>.mp4`
++ `library/index.json` (a ranked clip's entry carries its `moment`: rank,
+score, breakdown, kills, flags).
 Exit codes: 0 ok or already in the library, 1 failed (recorded in
 `state/failures.json`), 2 refused (nothing launched), 3 cleanup not
 verified (a game process may still run; `state/.render.lock` stays and is
@@ -24,8 +30,12 @@ the spectated player (docs/spikes.md, M0.2 open items).
 |---|---|
 | `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds` |
 | `.env` | identities and tool paths (`.env.example`; M0.2 setup in `docs/spikes.md`) |
-| `src/cli/clip.ts` | the entry; resume check, failure record |
-| `src/parse/clip-facts.ts` | tickrate, demo hash, map, POV slot, round |
+| `scoring.json` | ranking weights; tuning and current picks in `docs/scoring-notes.md` |
+| `src/cli/clip.ts`, `src/cli/moments.ts` | the entries; resume check, failure record |
+| `src/parse/demo.ts` | per-demo extraction, cached in `state/<demo sha256>/parse.json` |
+| `src/parse/clip-facts.ts` | what one render needs: tickrate, demo hash, map, POV slot at the clip's ticks, round |
+| `src/score/index.ts` | round context (1vX), kill clusters, scoring |
+| `src/clip/` | clip specs (`index.ts`: boundaries, merge, 30 s cap, id, title); `moments.ts` writes `moments.json` / `moments.txt` |
 | `src/render/controller/` | `index.ts` state machine, `guards.ts`, `processes.ts`, `cfg.ts` |
 | `src/render/capture/hlae.ts` | HLAE launch arguments and `mirv_streams` lines |
 | `src/post/` | trim and fade (`index.ts`), FFmpeg probes (`ffmpeg.ts`) |
@@ -91,3 +101,22 @@ the spectated player (docs/spikes.md, M0.2 open items).
   CS2 install each launch; the job cfg has a per-launch name
   (`croclip_<ms>`), and the log counts as this launch's only when its
   `[CommandLine]` line carries that name.
+
+## Decisions made in M2
+
+- **Match rounds.** A round is a `round_end` with a winner after the last
+  `begin_new_match` (FACEIT's warmup and knife restarts come before it; a
+  demo without it is refused). Rounds are numbered 1…n from there; above 24
+  is overtime. A knife round is one where every shot fired was a knife.
+- **Alive state** is every player's team and alive flag at each round's
+  freeze end and round end, plus the deaths in between, instead of a full
+  per-tick table: that is what 1vX needs. A round where someone alive at
+  freeze end neither died nor was alive on the same team at round end
+  (disconnect, team change) is `rosterChanged` and gets no clutch.
+- **Events** belong to the round whose start they follow, up to the next
+  round's start; scoring ignores anything after the round end.
+- **Parse cache key** = demo sha256 + demoparser2 version + schema version
+  + POV; a mismatch re-parses. Temp file per writer, then rename.
+- **Clip id** for a ranked moment = the same `clipId` over (demo sha256,
+  match round, start, end); `pnpm clip --top` refuses if the render's own
+  facts give another id.
