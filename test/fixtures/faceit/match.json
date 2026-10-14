@@ -1,0 +1,11 @@
+{
+  "match_id": "1-0000000c-0000-4000-8000-00000000000c",
+  "game": "cs2",
+  "region": "EU",
+  "status": "FINISHED",
+  "started_at": 1791996000,
+  "finished_at": 1791998400,
+  "demo_url": [
+    "https://demos-europe-central-faceit-cdn.s3.amazonaws.com/cs2/1-0000000c-0000-4000-8000-00000000000c-1-1.dem.gz"
+  ]
+}

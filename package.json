@@ -11,7 +11,9 @@
     "clip": "tsx src/cli/clip.ts",
     "typecheck": "tsc -p .",
     "moments": "tsx src/cli/moments.ts",
-    "go": "tsx src/cli/go.ts"
+    "go": "tsx src/cli/go.ts",
+    "test": "tsx --test test/*.test.ts",
+    "grab": "tsx src/cli/grab.ts"
   },
   "dependencies": {
     "@laihoe/demoparser2": "^0.42.0",

@@ -1,8 +1,8 @@
-// Ingest (PLAN.md §1, watch-folder baseline): every source drops files into
-// demos/inbox/; ingest waits until a file has stopped growing, unpacks
-// archives with name, count and size limits enforced while unpacking, checks
-// the result is a CS2 demo, hashes it, moves it to demos/store/<sha256>.dem and
-// registers it in state/demos.json (committed after each demo). Originals go
+// Ingest (PLAN.md §1, watch-folder baseline): files dropped into demos/inbox/
+// by hand or by a source (pnpm grab, sources.ts) are taken here. Ingest
+// waits until a file has stopped growing, unpacks archives with name, count
+// and size limits enforced while unpacking, checks the result is a CS2 demo,
+// hashes it, moves it to demos/store/<sha256>.dem and registers it in state/demos.json (committed after each demo). Originals go
 // to demos/ingested/, anything unusable to demos/rejected/ with a
 // .reason.txt beside it; nothing is deleted. A store file that is not in the
 // registry (a run died between the move and the commit) is registered on the
@@ -17,7 +17,6 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { ROOT, STATE_DIR } from "../config.ts";
 import { sha256File } from "../parse/clip-facts.ts";
-import { SOURCES } from "./sources.ts";
 
 const require = createRequire(import.meta.url);
 const Bunzip = require("seek-bzip");
@@ -169,7 +168,6 @@ async function reconcileStore(registry: Registry, report: IngestReport) {
 
 export async function ingest(): Promise<IngestReport> {
   mkdirSync(INBOX, { recursive: true });
-  for (const s of SOURCES) await s.fetch(INBOX);
   const report: IngestReport = { added: [], duplicates: [], rejected: [], waiting: [] };
   const registry = readRegistry();
   await reconcileStore(registry, report);

@@ -1,0 +1,14 @@
+{
+  "player_id": "9f2c1e3a-0000-4000-8000-000000000001",
+  "nickname": "example_player",
+  "country": "no",
+  "games": {
+    "cs2": {
+      "game_player_id": "76561190000000001",
+      "game_player_name": "example_player",
+      "region": "EU",
+      "skill_level": 8,
+      "faceit_elo": 1700
+    }
+  }
+}

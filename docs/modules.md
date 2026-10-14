@@ -1,15 +1,21 @@
-# Modules (M1-M3)
+# Modules (M1-M4a)
 
 `PLAN.md` is the design; this page is what the code does not say by itself.
 
 ## Running
 
 ```
+pnpm grab [--dry-run]
 pnpm go [--dry-run] [--retry-failed]
 pnpm moments "<demo.dem>"
 pnpm clip "<demo.dem>" --top <n> [--timeout <s>] [--force] [--dry-run]
 pnpm clip "<demo.dem>" <startTick> <endTick> [same options]
 ```
+
+`pnpm grab` is PLAN.md's `pnpm fetch` (pnpm's own `fetch` command takes
+that name): it runs the demo sources (FACEIT now, `docs/faceit-api.md`),
+each writing new demos into `demos/inbox/`, then ingests the inbox; it
+renders nothing. Without `FACEIT_API_KEY` in `.env` it says so and exits 0.
 
 `pnpm go` is the one command: drop demos (`.dem`, or `.zip` / `.bz2` /
 `.gz` / `.zst`) into `demos/inbox/`, run it, come back to clips. It
@@ -44,11 +50,12 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `.env` | identities and tool paths (`.env.example`; M0.2 setup in `docs/spikes.md`) |
 | `scoring.json` | ranking weights; tuning and current picks in `docs/scoring-notes.md` |
 | `src/cli/go.ts`, `src/cli/clip.ts`, `src/cli/moments.ts` | the entries |
-| `src/ingest/` | watch folder (`index.ts`) and the source interface for FACEIT / Valve later (`sources.ts`) |
+| `src/ingest/` | watch folder (`index.ts`), the source contract (`sources.ts`), sources (`sources/faceit.ts`; Valve matchmaking later, same shape) |
+| `test/` | `pnpm test`: FACEIT source against recorded fixtures (`test/fixtures/faceit/`), no network |
 | `src/queue/` | the batch and its job ledger (`index.ts`); one clip job, shared by `pnpm clip` and the batch (`job.ts`) |
 | `src/library/page.html`, `page.ts` | the library page template and its writer |
 | `demos/` | `inbox/` (drop here), `store/<sha256>.dem` (ingested demos), `ingested/` (originals), `rejected/` (with `.reason.txt`) |
-| `state/demos.json`, `state/queue.json` | demo registry; job ledger |
+| `state/demos.json`, `state/queue.json`, `state/sources/<name>.json` | demo registry; job ledger; each source's progress |
 | `src/parse/demo.ts` | per-demo extraction, cached in `state/<demo sha256>/parse.json` |
 | `src/parse/clip-facts.ts` | what one render needs: tickrate, demo hash, map, POV slot at the clip's ticks, round |
 | `src/score/index.ts` | round context (1vX), kill clusters, scoring |

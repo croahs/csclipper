@@ -1,13 +1,28 @@
 // Demo sources (PLAN.md §1). A source fetches what is new since its last run
-// and drops the files into demos/inbox/; ingest does the rest (wait until
-// stable, unpack, hash, register). Its own state (last FACEIT match, last
-// share code) belongs in state/sources/<name>.json. The watch folder itself
-// needs no source: files dropped into demos/inbox/ by hand are ingested as
-// they are. FACEIT and Valve matchmaking are later milestones.
-export type Source = {
-  name: string;
-  /** Download anything new into `inbox`; return the files written. */
-  fetch(inbox: string): Promise<string[]>;
+// and writes the files into demos/inbox/ under a temporary name (leading dot,
+// or .part), renaming each when complete, so ingest only ever sees finished
+// files. Its own progress (last FACEIT match, last share code) lives in
+// state/sources/<name>.json. `pnpm grab` runs every source, then ingest;
+// `pnpm go` does not fetch. FACEIT is src/ingest/sources/faceit.ts; Valve
+// matchmaking (Game Coordinator via the alt account) will be a second module
+// with this same shape.
+export type SourceContext = {
+  inbox: string;
+  stateFile: string; // this source's own state, e.g. state/sources/faceit.json
+  dryRun: boolean; // list what would be fetched, write nothing
+  log: (line: string) => void;
 };
 
-export const SOURCES: Source[] = [];
+export type SourceResult = {
+  /** Files renamed into the inbox, complete. */
+  fetched: string[];
+  /** Items left for the next run, with why (download failed, not ready yet). */
+  pending: { item: string; reason: string }[];
+  /** Set when the source cannot run at all (no API key): a message, not a failure. */
+  skipped?: string;
+};
+
+export type Source = {
+  name: string;
+  fetch(ctx: SourceContext): Promise<SourceResult>;
+};

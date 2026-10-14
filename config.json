@@ -12,5 +12,10 @@
   "batch": {
     "topN": 3,
     "minScore": 40
+  },
+  "sources": {
+    "faceit": {
+      "maxMatchesPerRun": 5
+    }
   }
 }
