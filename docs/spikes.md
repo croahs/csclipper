@@ -419,32 +419,38 @@ discovery launch and one more render.
   player's name ("croa") next to health. Live play shows neither.
   Tried `cl_spec_stats 0` (job `1792005302266`, frame at 3.0 s): no
   change; then the sweep below. `cl_force_spec_hud_color_to_team`
-  (colour only) was not tried. No tested convar switches the HUD from
+  (colour only) was tried in the sweep below. No tested convar switches the HUD from
   the spectator layout to the player layout.
 
-  Candidate sweep (job `1-8e8743a8-5669-6565-1792005609335`, ticks
-  5669–6565, `--candidates`): one recording, each candidate set at the
-  start of its own 128-tick (2 s) window and reset at its end; the table
-  is in that job's `job.json`. Frames read at the middle of each window:
+  Candidate sweeps, one recording each (`--candidates`): each candidate
+  is set at the start of its own 128-tick (2 s) window and reset at its
+  end; the tick table is in each job's `job.json`. The full list ran in
+  job `1-8e8743a8-5669-6693-1792005976349` (ticks 5669–6693; baseline
+  forced to `cl_draw_only_deathnotices 0`, `cl_spec_show_bindings 1`,
+  `cl_spec_stats 1` at record start). Frames read at mid-window:
 
   | Window (video s) | Candidate | Team cards (top) | Name next to health | Also removed |
   |---|---|---|---|---|
   | 0 (0–2) | baseline | shown | shown | — |
   | 1 (2–4) | `cl_draw_only_deathnotices 1` | gone | gone | radar, health, armor, money, ammo, weapon list; crosshair and killfeed stay |
-  | 2 (4–6) | `cl_hide_avatar_images 1` | shown | shown | nothing visible |
-  | 3 (6–8) | `cl_teamcounter_playercount_instead_of_avatars 1` | replaced by "3 ALIVE · timer · 5 ALIVE" with the score | shown | nothing else |
-  | 4 (8–10) | `cl_drawhud_force_teamid_overhead -1` | shown | shown | nothing visible |
-  | 5 (10–12) | `cl_spec_stats 1` | shown | shown | nothing visible |
-  | 6 (12–14) | baseline | shown | shown | — |
+  | 2 (4–6) | `cl_teamcounter_playercount_instead_of_avatars 1` | replaced by "3 ALIVE · timer · 5 ALIVE" with the score | shown | nothing else |
+  | 3 (6–8) | `cl_hide_avatar_images 1` | shown | shown | nothing visible |
+  | 4 (8–10) | `cl_spec_show_bindings 0` + `cl_spec_stats 0` | shown | shown | nothing visible |
+  | 5 (10–12) | `cl_force_spec_hud_color_to_team 1` | shown | shown | nothing visible |
+  | 6 (12–14) | `cl_drawhud_force_teamid_overhead -1` | shown | shown | nothing visible |
+  | 7 (14–16) | baseline | shown | shown | — |
 
+  An earlier sweep (`1-8e8743a8-5669-6565-1792005609335`, on the cfg
+  before the fallback) agrees for the candidates it shared, plus
+  `cl_spec_stats 1` alone (no change).
   `cl_hud_playercount_showcount` and `cl_hud_playercount_pos` do not
-  exist in this build. The `find`/`cvarlist` dump in the same run again
-  produced no output in `console.log`, so it gave no candidates for a
-  second sweep (other sources were not searched). The sweep ran on the
-  cfg before the fallback (`cl_draw_only_deathnotices 0`); the mode now
-  forces that baseline itself. No tested candidate removed the cards
-  and the name without the rest of the HUD,
-  so Peder's fallback applies: `cl_draw_only_deathnotices 1`.
+  exist in this build. Strings in `client.dll` containing
+  `teamcounter`, `spectator_hud` or `spec_hud` that are convars:
+  `cl_teamcounter_playercount_instead_of_avatars` and
+  `cl_force_spec_hud_color_to_team`, both tested. The `find`/`cvarlist`
+  dumps produced no output in `console.log`. No tested candidate removed
+  the cards and the name without the rest of the HUD, so Peder's
+  fallback applies: `cl_draw_only_deathnotices 1`.
   `cl_teamcounter_playercount_instead_of_avatars 1` is the alternative if
   the full HUD with a compact top bar (and the name) is preferred.
 
@@ -489,9 +495,9 @@ discovery launch and one more render.
 
 ### Launch count
 
-63 job folders in `spikes/out/` hold a config CS2 wrote at launch, i.e.
-63 CS2 launches by this session's controller up to and including job
-`1792005708650` (10 more folders are dry runs and refusals that never
+64 job folders in `spikes/out/` hold a config CS2 wrote at launch, i.e.
+64 CS2 launches by this session's controller up to and including job
+`1792005976349`, the last launch for M0 (10 more folders are dry runs and refusals that never
 launched). The parent session counted 66 windows; the difference is
 unexplained. This log documents the runs that carry evidence; the rest
 were earlier controller and cfg versions.

@@ -54,11 +54,12 @@ const candidatesMode = args.includes("--candidates");
 const WINDOW_TICKS = 2 * TICKRATE;
 const CANDIDATES: { name: string; set: string; reset: string }[] = [
   { name: "baseline", set: "", reset: "" },
-  { name: "cl_draw_only_deathnotices 1", set: "cl_draw_only_deathnotices 1", reset: "cl_draw_only_deathnotices 0" }, // baseline forced to 0 at record start
-  { name: "cl_hide_avatar_images 1", set: "cl_hide_avatar_images 1", reset: "cl_hide_avatar_images 0" },
+  { name: "cl_draw_only_deathnotices 1", set: "cl_draw_only_deathnotices 1", reset: "cl_draw_only_deathnotices 0" },
   { name: "cl_teamcounter_playercount_instead_of_avatars 1", set: "cl_teamcounter_playercount_instead_of_avatars 1", reset: "cl_teamcounter_playercount_instead_of_avatars 0" },
+  { name: "cl_hide_avatar_images 1", set: "cl_hide_avatar_images 1", reset: "cl_hide_avatar_images 0" },
+  { name: "cl_spec_show_bindings 0 + cl_spec_stats 0", set: "cl_spec_show_bindings 0; cl_spec_stats 0", reset: "cl_spec_show_bindings 1; cl_spec_stats 1" },
+  { name: "cl_force_spec_hud_color_to_team 1", set: "cl_force_spec_hud_color_to_team 1", reset: "cl_force_spec_hud_color_to_team 0" },
   { name: "cl_drawhud_force_teamid_overhead -1", set: "cl_drawhud_force_teamid_overhead -1", reset: "cl_drawhud_force_teamid_overhead 0" },
-  { name: "cl_spec_stats 1", set: "cl_spec_stats 1", reset: "cl_spec_stats 0" },
   { name: "baseline", set: "", reset: "" },
 ];
 // Test hook: issue spec_next (what MOUSE1 does in spectator mode) twice mid-clip,
@@ -290,9 +291,10 @@ const cfg = [
     at(seekTick + 17, `spec_player ${slot}`),
     at(startTick, "mirv_streams record start"),
     ...(candidatesMode ? [
-      at(startTick, "cl_draw_only_deathnotices 0"), // the sweep's baseline is the full HUD, whatever the render cfg uses
-      ...["find spec", "find hud", "find observer", "find panel", "find scoreboard", "cvarlist"].map((c) => at(startTick, c)),
-      ...candidateTable.flatMap((w, i) => CANDIDATES[i].set ? [at(w.set_tick, CANDIDATES[i].set), at(w.reset_tick, CANDIDATES[i].reset)] : []),
+      // The sweep's baseline is the full spectator HUD, whatever the render cfg uses.
+      at(startTick, "cl_draw_only_deathnotices 0"), at(startTick, "cl_spec_show_bindings 1"), at(startTick, "cl_spec_stats 1"),
+      // ";" would end the mirv_cmd line in the cfg, so each part is scheduled on its own.
+      ...candidateTable.flatMap((w, i) => CANDIDATES[i].set ? [...CANDIDATES[i].set.split("; ").map((c) => at(w.set_tick, c)), ...CANDIDATES[i].reset.split("; ").map((c) => at(w.reset_tick, c))] : []),
     ] : []),
     ...(testSpecNext ? [at(startTick + 3 * TICKRATE, "spec_next"), at(startTick + 6 * TICKRATE, "spec_next")] : []),
     at(endTick, "mirv_streams record end"),
