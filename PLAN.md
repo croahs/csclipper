@@ -219,6 +219,7 @@ controller, not inherited. On top of that the cfg sets:
 
 | Setting | Why |
 |---|---|
+| `cl_demo_predict 1` (TrueView; `2` forces it on older demos) | Valve's Nov 2025 demo mode that re-runs the player's client-side prediction, so first person shows what you saw, not the server's view. Auto for demos recorded after 2025-11-04; disabled by CS2 when the demo is from a different game build, so old demos may lose it |
 | `spec_show_xray 0` | never xray; a hard rule from Peder |
 | `cl_show_observer_crosshair 1` plus your own crosshair convars | the crosshair in frame is yours |
 | `cl_drawhud 1`, `cl_draw_only_deathnotices 0` | the full normal HUD, as in play |
@@ -227,9 +228,12 @@ controller, not inherited. On top of that the cfg sets:
 | `fps_max 0`, `engine_no_focus_sleep 0`, HLAE fixed framerate | capture is frame-locked, not wall-clock |
 | capture at or above output resolution, FFmpeg at a visually lossless CRF | sharpness and anti-aliasing; downscale in post if supersampled |
 
-Whether CS2 first-person demo playback reproduces viewmodel recoil and
-aim punch exactly as played is unknown; M0.2 compares a recorded
-moment against how it looks in-game and notes the difference.
+Even with TrueView, Valve says recoil, muzzle flash, blood and
+ragdoll effects land one or two frames later in playback than they
+did live, and frame timings are not reconstructed. Hit frames are
+accurate. M0.2 records a moment with TrueView on and notes what still
+differs from live play; M0.3 records whether TrueView stays on for a
+months-old demo.
 
 Known risks, decided up front:
 
