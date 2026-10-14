@@ -232,8 +232,9 @@ Even with TrueView, Valve says recoil, muzzle flash, blood and
 ragdoll effects land one or two frames later in playback than they
 did live, and frame timings are not reconstructed. Hit frames are
 accurate. M0.2 records a moment with TrueView on and notes what still
-differs from live play. Whether TrueView stays on for months-old demos
-is unknown.
+differs from live play. TrueView is reported disabled at the default value
+for any demo older than the current build, and enabled with `2` on
+both a current and a five-month-old demo.
 
 Known risks, decided up front:
 
@@ -330,10 +331,12 @@ not pass.
    and recovered by the queue; and the behaviour when CS2 is already
    open. Confirm that parser ticks, `demo_gototick` and HLAE
    scheduling agree on the tick coordinate, including across a seek.
-Dropped by Peder on 2026-10-14: a separate old-demo gate. Whether
-demos from months ago replay on the current build is unknown until a
-real one goes through the pipeline; the library makes no promise about
-history until then.
+Dropped by Peder on 2026-10-14: a separate old-demo gate. Before the
+drop, one five-month-old FACEIT demo (patch 14160 on client 14190)
+replayed, seeked and recorded through the M0.2 path with TrueView
+forced on (`cl_demo_predict 2`); see `docs/spikes.md`. Older demos and
+demos from before a map change are untested, and old demos are out of
+scope for now.
 
 **M1. One clip, by hand.** Clip spec written by hand → controller →
 capture → post → file in `library/`. Proves the seams before scoring
