@@ -42,6 +42,10 @@ const flag = (name: string) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 const dryRun = args.includes("--dry-run");
+// Discovery mode: same guarded launch, cfg and cleanup, but only the listing
+// commands and quit are scheduled (tick 96), so nothing is seeked or recorded.
+// Tested once: the listings' output did not reach console.log (docs/spikes.md).
+const discover = args.includes("--discover");
 // Test hook: issue spec_next (what MOUSE1 does in spectator mode) twice mid-clip,
 // to check the POV lock holds against a stray click on the game window.
 const testSpecNext = args.includes("--test-spec-next");
@@ -227,7 +231,8 @@ const cfg = [
   // Fixed render settings (PLAN.md, "Looks like real gameplay"); after the look so they win.
   "demo_ui_mode 0", // CS Demo Manager: must be set before playback starts, or the demo UI is drawn
   "spec_show_xray 0", // never xray (hard rule)
-  "spec_show_bindings 0", // no "[MOUSE]/[SPACE]" spectator hints
+  "cl_spec_show_bindings 0", // no "[MOUSE]/[SPACE]" spectator hints
+  "cl_spec_stats 0", // candidate for the spectator stats on the team cards (no help text in client.dll)
   "cl_show_observer_crosshair 2", // game help: 0 = off, 1 = friends and party only, 2 = everyone; 0/1/2 all drew the same reticle (docs/spikes.md)
   "cl_drawhud 1",
   "cl_draw_only_deathnotices 0",
@@ -243,21 +248,27 @@ const cfg = [
   "cl_hud_telemetry_serverrecvmargin_graph_show 0",
   "cl_trueview_show_status 0",
   "r_show_build_info 0",
-  // The game's own help text for each setting lands in console.log (name check).
-  ...["spec_show_xray", "spec_show_bindings", "cl_show_observer_crosshair", "cl_drawhud", "cl_draw_only_deathnotices", "cl_demo_predict", "cl_radar_show_all_players_when_spectating", "engine_no_focus_sleep", "fps_max", "demo_ui_mode"].map((c) => `help ${c}`),
+  // help output was expected in console.log; in the one test it did not appear.
+  ...["spec_show_xray", "cl_spec_show_bindings", "cl_show_observer_crosshair", "cl_drawhud", "cl_draw_only_deathnotices", "cl_demo_predict", "cl_radar_show_all_players_when_spectating", "engine_no_focus_sleep", "fps_max", "demo_ui_mode"].map((c) => `help ${c}`),
   `mirv_streams record name "${q(takeDir)}"`,
   "mirv_streams record startMovieWav 1",
   `mirv_streams settings add ffmpeg croclip "-c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p {QUOTE}${q(videoPath)}{QUOTE}"`,
   "mirv_streams record screen settings croclip",
   "mirv_streams record screen enabled 1",
   `mirv_streams record fps ${FPS}`,
-  at(FIRST_SCHEDULE, `demo_gototick ${seekTick}`),
-  at(seekTick + 16, "spec_mode 1"),
-  at(seekTick + 17, `spec_player ${slot}`),
-  at(startTick, "mirv_streams record start"),
-  ...(testSpecNext ? [at(startTick + 3 * TICKRATE, "spec_next"), at(startTick + 6 * TICKRATE, "spec_next")] : []),
-  at(endTick, "mirv_streams record end"),
-  at(endTick + TICKRATE, "quit"),
+  ...(!discover ? [] : [
+    ...["find spec", "find hud", "find observer", "find panel", "find scoreboard", "find teamcounter", "help cl_spec_stats", "help cl_teamcounter_playercount_instead_of_avatars", "help cl_show_observer_crosshair", "help spec_show_xray", "help cl_spec_show_bindings", "help cl_demo_predict", "cvarlist"].map((c) => at(FIRST_SCHEDULE, c)),
+    at(FIRST_SCHEDULE, "quit"),
+  ]),
+  ...(discover ? [] : [
+    at(FIRST_SCHEDULE, `demo_gototick ${seekTick}`),
+    at(seekTick + 16, "spec_mode 1"),
+    at(seekTick + 17, `spec_player ${slot}`),
+    at(startTick, "mirv_streams record start"),
+    ...(testSpecNext ? [at(startTick + 3 * TICKRATE, "spec_next"), at(startTick + 6 * TICKRATE, "spec_next")] : []),
+    at(endTick, "mirv_streams record end"),
+    at(endTick + TICKRATE, "quit"),
+  ]),
   "mirv_cmd print",
   "",
 ].join("\n");
@@ -406,6 +417,13 @@ console.log(cleanOk
   : `CLEANUP NOT VERIFIED after ${Math.round((Date.now() - t0) / 1000)}s; owned processes: ${ownedList.join(",") || "none"}`);
 const gameDir = path.resolve(path.dirname(cs2Exe), "..", "..", "csgo");
 try { copyFileSync(path.join(gameDir, "console.log"), path.join(outDir, "console.log")); } catch {}
+
+if (discover) {
+  const r = { jobId, mode: "discover", interrupted: interrupted ?? null, cleanup_verified: cleanOk, owned_processes: ownedList, status: cleanOk && !interrupted ? "ok" : "failed" };
+  writeFileSync(path.join(outDir, "result.json"), JSON.stringify(r, null, 2));
+  console.log(JSON.stringify(r, null, 2));
+  process.exit(!cleanOk ? 3 : r.status === "ok" ? 0 : 1);
+}
 
 // --- finalize: validate inputs, mux to a temp file, validate, rename -------------------
 function ff(args: string[]) {

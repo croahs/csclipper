@@ -138,8 +138,11 @@ same coordinate is M0.2. `demo_listhighlights` was not tried.
 
 ## M0.2 Repeatable unattended capture
 
-**Fail — 2026-10-14. Observed failure: the crosshair in frame does not
-match Peder's saved settings** (see "Looks like real gameplay" below).
+**Fail — 2026-10-14. Observed failure: the spectator HUD is drawn** —
+both teams' player cards across the top with names, health and money,
+and the observed player's name next to health at the bottom; live
+first-person play shows neither (see "Looks like real gameplay" below).
+Latest full-cfg run: `spikes/out/1-8e8743a8-5669-6103-1792005302266`.
 Still unverified rather than failed: whether TrueView playback matches
 live play, and where the viewmodel comes from. Verified on the final
 controller: correct player first-person
@@ -300,7 +303,8 @@ sv_cheats 1
 exec croclip_look
 demo_ui_mode 0
 spec_show_xray 0
-spec_show_bindings 0
+cl_spec_show_bindings 0
+cl_spec_stats 0
 cl_show_observer_crosshair 2
 cl_drawhud 1
 cl_draw_only_deathnotices 0
@@ -317,7 +321,7 @@ cl_hud_telemetry_serverrecvmargin_graph_show 0
 cl_trueview_show_status 0
 r_show_build_info 0
 help spec_show_xray
-help spec_show_bindings
+help cl_spec_show_bindings
 help cl_show_observer_crosshair
 help cl_drawhud
 help cl_draw_only_deathnotices
@@ -371,7 +375,8 @@ What came out of this:
 ### Looks like real gameplay (PLAN.md render settings)
 
 Added after the runs below, in four launches on the final controller
-(the capture path is unchanged; only cfg lines were added).
+(the capture path is unchanged; only cfg lines were added), plus one
+discovery launch and one more render.
 
 - **Player's own look, read only.** `croclip_look.cfg` is generated per
   job from the main account's
@@ -388,17 +393,33 @@ Added after the runs below, in four launches on the final controller
   written to either account's userdata. The job cfg execs it first,
   then the fixed settings, so those win.
 - **Convar names** checked against `client.dll` / `engine2.dll` strings:
-  all present except `spec_show_lineup`, which does not exist in this
-  build (the only `spec_show*` convars are `spec_show_xray` and
-  `spec_show_bindings`). No "Unknown command" in any console log.
-  `help <convar>` output, like `echo`, does not reach `console.log`.
+  all present as exact names except `spec_show_lineup`, which does not
+  exist in this build. The spectator-hints convar is
+  `cl_spec_show_bindings` ("Toggle the visibility of the spectator
+  bindings."); an earlier cfg used `spec_show_bindings`, which is not a
+  convar. In the runs tested, console command output did not reach
+  `console.log` under `-condebug`: `echo`, `help`, `find` and `cvarlist` were run from
+  `mirv_cmd` after load in a discovery launch (`--discover`, job
+  `1-8e8743a8-5669-6103-1792005255770`, no recording) and only HLAE's
+  own listing appeared. So a missing "Unknown command" line proves
+  nothing; names were checked against the binaries instead.
 - **No xray:** `spec_show_xray 0`. Frame at 3.0 s of
   `1-8e8743a8-5669-6103-1792004525217`: no outlines or name/health labels
   through walls (the earlier `1792000445442` had them).
 - **HUD:** `cl_drawhud 1`, `cl_draw_only_deathnotices 0`,
-  `spec_show_bindings 0`, `cl_radar_show_all_players_when_spectating 0`,
+`cl_spec_show_bindings 0`, `cl_radar_show_all_players_when_spectating 0`,
   `cl_showfps 0`, telemetry off, `r_show_build_info 0`. The frames show
   the full HUD in Peder's safezone and radar layout, no demo UI.
+- **Spectator HUD — fails.** The top bar shows all ten player cards with
+  name, health and money, and the bottom panel shows the observed
+  player's name ("croa") next to health. Live play shows neither.
+  Tried `cl_spec_stats 0` (job `1792005302266`, frame at 3.0 s): no
+  change. Other candidates from `client.dll`, not tried:
+  `cl_teamcounter_playercount_instead_of_avatars` (sits next to
+  `CSGOHudTeamCounter`; would replace avatars with a count, which is
+  not how live play looks either), `cl_force_spec_hud_color_to_team`
+  (colour only). No convar was found that switches the HUD from the
+  spectator layout to the player layout.
 - **Frame pacing:** `fps_max 0`, `engine_no_focus_sleep 0`, HLAE
   `mirv_streams record fps 60`.
 - **TrueView:** with `cl_demo_predict 1` the console says "Demo is
@@ -406,29 +427,38 @@ Added after the runs below, in four launches on the final controller
   cl_demo_predict=1" (and the same for the May demo, 14160). With
   `cl_demo_predict 2`: "TrueView is ENABLED as per cl_demo_predict=2"
   and "Added TrueView prediction for player slot 5 (croa)" on the
-  October demo; slot 10 (croa) on the May demo. The cfg uses 2.
+  October demo; slot 10 (croa) on the May demo. The cfg uses 2. Run
+  `1792005302266` logs "TrueView active for slot 5" (croa) plus 532
+  lines of "TrueView can't determine last executed command number on
+  server from command lookahead"; what that costs visually is unknown.
   What visibly changes with TrueView, and whether recoil, viewmodel
   kick and aim punch look like live play: **unknown** (no side-by-side
   with live footage was made; Valve's note that recoil, muzzle flash,
   blood and ragdolls land one or two frames late in playback is not
   checked here).
-- **Crosshair — fails.** The game's own description:
+- **Crosshair — passes, from the demo.** The game's own description:
   "cl_show_observer_crosshair: Show the crosshair of the player being
   observed. 0 = off, 1 = friends and party only, 2 = everyone". Runs
-  with 1 (`1792004525217`), 2 (`1792004711895`) and 0 (`1792004771260`),
-  all with the main account's crosshair convars exec'd, show the same
-  small white X-shaped reticle (four diagonal ticks) at screen centre
-  in every sampled frame, and so do the earlier clips without those
-  convars. So the crosshair in frame does not match Peder's saved
-  settings and does not respond to the observer-crosshair setting; what
-  crosshair the demo recorded for him is unknown. Peder's saved crosshair:
-  `cl_crosshairstyle 9`, size 2, gap 3, thickness 0.5, white, outline.
-  Cause unknown; not yet tried: whether the reticle is HLAE's or CS2's,
-  `crosshair 1` after the spectator target is set, and the crosshair
-  share code.
+  with 1 (`1792004525217`), 2 (`1792004711895`) and 0 (`1792004771260`)
+  all show the same small white X-shaped crosshair, also present in
+  clips without the main account's crosshair convars. Peder confirmed
+  (via the parent session) that this X is his crosshair, so the
+  crosshair in frame passes. Where it comes from is unknown: it does
+  not follow the vcfg crosshair convars or the observer-crosshair value
+  (0, "off", still drew it); plausibly the demo carries it. The cfg uses
+  2 (everyone); whether that holds for other demos is unknown.
 - **Viewmodel:** looks identical with and without the main account's
   `viewmodel_*` convars (frame 120 of A); plausibly the demo's own
   player viewmodel is drawn, i.e. Peder's at match time. Not proven.
+
+### Launch count
+
+61 job folders in `spikes/out/` hold a config CS2 wrote at launch, i.e.
+61 CS2 launches by this session's controller up to and including job
+`1792005302266` (10 more folders are dry runs and refusals that never
+launched). The parent session counted 66 windows; the difference is
+unexplained. This log documents the runs that carry evidence; the rest
+were earlier controller and cfg versions.
 
 ### Runs (final controller)
 
@@ -526,9 +556,6 @@ ended; ownership by parent pid without the same-snapshot check) are in
 - The 0–2 frame per-launch offset is measured, not explained.
 - `-condebug` writes into the CS2 install folder; `con_logfile` to a
   job path was not tried.
-- The bottom HUD prints the observed player's name next to health (a
-  spectator-HUD element, not a control). Whether that counts as demo UI
-  under the criterion is Peder's call; no command to hide it was tried.
 - Resolution (1280×720), 60 fps and x264 crf 18 are spike values, not
   decisions.
 
@@ -536,9 +563,9 @@ ended; ownership by parent pid without the same-snapshot check) are in
 
 Peder dropped this gate from PLAN.md on 2026-10-14, after these runs;
 no verdict. The evidence stays as a data point: one five-month-old
-demo went through the M0.2 path. It shows the same crosshair as M0.2 (the
-full-cfg run `1-0c14eb44-87569-88322-1792004563487` shows the same
-reticle). The old demo itself plays, seeks and records like the
+demo went through the M0.2 path. Its full-cfg run
+`1-0c14eb44-87569-88322-1792004563487` shows the same X crosshair (later
+confirmed as Peder's) and the same spectator HUD as M0.2. The old demo itself plays, seeks and records like the
 current one, and TrueView stays available: `cl_demo_predict 1` →
 "TrueView is DISABLED", `cl_demo_predict 2` → "Demo is version 14160,
 client is version 14190. TrueView is ENABLED as per cl_demo_predict=2"
