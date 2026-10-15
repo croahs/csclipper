@@ -7,7 +7,8 @@
     "2026-10-15 per-round moments (Peder): all of his kills in a round are one moment, so clusterGapSeconds is gone; quick succession is a scoring signal instead",
     "2026-10-15 tightness: the most kills inside any windowSeconds (6 s) earn perKillInWindow each beyond the first, all kills within allWithinSeconds earn allWithinBonus, and speed now scores the tightest run, so a 3k in 4 s beats a 3k over 40 s by about 30 points (Peder: quick succession is worth more)",
     "2026-10-15 light signals (Peder: a small bonus each, never enough to lift a weak round over a strong one): noscope moved from flags into light, airborne (attackerinair), one-bullet kills, flicks (yaw turned in the 100-200 ms before the kill shot above minDegrees); capped together at maxPerMoment, below the 20-point gap between kill counts",
-    "2026-10-15 recalibrated (Peder: keep minScore 40; anchor: the moments that scored about 40 in the 46-moment batch must land about 40 again, and a plain 2k must not gain a flat 18): tightness pays only from the third kill in the 6 s window (perKillBeyondTwo 15), allWithin bonus removed; a 2k scores as before (its pace is in speed), a 3k in 4 s still beats a 3k over 40 s by about 19"
+    "2026-10-15 recalibrated (Peder: keep minScore 40; anchor: the moments that scored about 40 in the 46-moment batch must land about 40 again, and a plain 2k must not gain a flat 18): tightness pays only from the third kill in the 6 s window (perKillBeyondTwo 15), allWithin bonus removed; a 2k scores as before (its pace is in speed), a 3k in 4 s still beats a 3k over 40 s by about 19",
+    "2026-10-15 style as per-kill multipliers (Peder): the capped flat light bonuses are replaced by factors on each kill's share of the kill base: one-bullet kill 1.5, flick over 25 degrees 1.5, no-scope 1.4, airborne 1.3, stacking on the kill. Two one-tap flicks in a 2k score about double a plain 2k (kills 30 -> 67.5); a single kill with every style is about 41, below any strong 3k; plain kills keep factor 1, so the minScore 40 anchor holds"
   ],
   "killBase": {
     "1": 10,
@@ -38,17 +39,13 @@
     "thrusmoke": 8,
     "attackerblind": 8
   },
-  "light": {
-    "_note": "small bonuses, capped together at maxPerMoment; kill count, pace, clutch and outcome stay the backbone",
-    "noscope": 3,
-    "airborne": 3,
-    "oneBulletKill": 2,
-    "flick": {
-      "minDegrees": 25,
-      "pointsPer10Degrees": 1,
-      "maxPerKill": 2
-    },
-    "maxPerMoment": 8
+  "style": {
+    "_note": "per-kill multipliers on that kill's share of the kill base; they stack on the kill (a one-tap flick is 1.5 x 1.5 = 2.25). A kill with none is 1.0, so plain rounds keep their scores",
+    "oneBulletKill": 1.5,
+    "flick": 1.5,
+    "flickMinDegrees": 25,
+    "noscope": 1.4,
+    "airborne": 1.3
   },
   "weaponMultiplier": {
     "pistol": 1.25,

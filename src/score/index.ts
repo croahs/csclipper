@@ -1,8 +1,8 @@
 // Scoring (PLAN.md §3): one moment per round with all of the POV's kills in it,
 // scored with the weights in scoring.json: kill count, pace (the tightest run
 // inside the round), clutch, outcome, flags and weapon as the backbone, and
-// small capped bonuses for no-scopes, airborne kills, one-bullet kills and
-// flicks. Trades and "saved a teammate" are deferred.
+// per-kill style multipliers for one-bullet kills, flicks, no-scopes and
+// airborne kills. Trades and "saved a teammate" are deferred.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { ROOT } from "../config.ts";
@@ -14,7 +14,7 @@ export type Weights = {
   tightness: { windowSeconds: number; perKillBeyondTwo: number };
   clutch: { perEnemy: number; wonBonus: number; lostFactor: number };
   flags: { headshot: number; wallbang: number; thrusmoke: number; attackerblind: number };
-  light: { noscope: number; airborne: number; oneBulletKill: number; flick: { minDegrees: number; pointsPer10Degrees: number; maxPerKill: number }; maxPerMoment: number };
+  style: { oneBulletKill: number; flick: number; flickMinDegrees: number; noscope: number; airborne: number };
   weaponMultiplier: Record<WeaponClass, number>;
   roundWon: number;
   lowHp: { threshold: number; penaltyPerKill: number };
@@ -122,20 +122,22 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
   if (clutch) b.clutch = clutch.vs * w.clutch.perEnemy * (clutch.won ? 1 : w.clutch.lostFactor) + (clutch.won ? w.clutch.wonBonus : 0);
   const f = w.flags;
   b.flags = kills.reduce((s, k) => s + (k.headshot ? f.headshot : 0) + (k.penetrated ? f.wallbang : 0) + (k.thrusmoke ? f.thrusmoke : 0) + (k.attackerblind ? f.attackerblind : 0), 0);
-  // Light signals: a small bonus each, capped together so they never outweigh the backbone.
-  const l = w.light;
+  // Style: per-kill multipliers on that kill's share of the kill base (one-bullet, flick, no-scope,
+  // airborne), stacking on the kill. A kill with none counts 1, so a plain round scores as before.
+  const st = w.style;
   const me = p.identity.steamid;
-  let light = 0;
-  for (const [i, k] of kills.entries()) {
-    if (k.noscope) light += l.noscope;
-    if (k.airborne) light += l.airborne;
+  const factor = kills.map((k, i) => {
+    let f = 1;
+    if (k.noscope) f *= st.noscope;
+    if (k.airborne) f *= st.airborne;
     const from = i > 0 ? kills[i - 1].tick : k.tick - ENGAGE_S * tickrate;
     const bullets = p.fires.filter((x) => x.player === me && x.round === k.round && x.tick > from && x.tick <= k.tick && !NOT_A_GUN.test(x.weapon)).length;
-    if (bullets === 1 && !NOT_A_GUN.test(k.weapon)) light += l.oneBulletKill;
-    const flick = p.flicks.find((x) => x.killTick === k.tick)?.yawDegrees ?? 0;
-    if (flick > l.flick.minDegrees) light += Math.min(l.flick.maxPerKill, ((flick - l.flick.minDegrees) / 10) * l.flick.pointsPer10Degrees);
-  }
-  if (light) b.light = Math.round(Math.min(l.maxPerMoment, light) * 10) / 10;
+    if (bullets === 1 && !NOT_A_GUN.test(k.weapon)) f *= st.oneBulletKill;
+    if ((p.flicks.find((x) => x.killTick === k.tick)?.yawDegrees ?? 0) > st.flickMinDegrees) f *= st.flick;
+    return f;
+  });
+  const extra = factor.reduce((a, f) => a + (f - 1), 0) / n; // the average factor beyond 1
+  if (extra > 0) b.style = Math.round(b.kills * extra * 10) / 10;
   if (roundWon) b.roundWon = w.roundWon;
   const low = kills.filter((k) => k.victimHpBefore <= w.lowHp.threshold).length;
   if (low) b.lowHp = -low * w.lowHp.penaltyPerKill;

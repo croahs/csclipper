@@ -35,13 +35,13 @@ the round end do not count. A moment needs at least one POV kill.
 | tight | `tightness` | each kill beyond the second inside the best `windowSeconds` (6 s) window (ties: the fastest) earns `perKillBeyondTwo`; a 2k's pace is already in `speed`. A 3k in 4 s gets about 19 more than a 3k over 40 s, and both stay one clip |
 | clutch | `clutch` | vs × perEnemy, + wonBonus when won; × lostFactor when lost |
 | flags | `flags` | per kill: headshot, wallbang, through smoke, while blind |
-| light | `light` | small bonuses, capped together at `maxPerMoment` (8: well below the 20+ base points between kill counts, though with weapon multipliers a capped round can pass one with a kill more by a few points, e.g. a spread knife 2k with an airborne kill over a spread AWP 3k): per kill a no-scope, an airborne kill (`attackerinair`), a one-bullet kill (POV gun `weapon_fire` count since the previous kill, or 5 s before the first, is 1), and a flick on a gun kill (the largest POV yaw turn from 100–200 ms before the kill shot, his last gunshot within 1 s, to the shot, wrapped; none without a gunshot; above `flick.minDegrees` 25°, `pointsPer10Degrees` up to `maxPerKill`) |
+| style | `style` | per-kill multipliers on that kill's share of the kill base, stacking on the kill: a one-bullet kill (POV gun `weapon_fire` count since the previous kill, or 5 s before the first, is 1) 1.5, a flick (the largest POV yaw turn from 100–200 ms before the kill gunshot to the shot, wrapped, over `flickMinDegrees` 25°) 1.5, a no-scope 1.4, an airborne kill (`attackerinair`) 1.3. `style` in the breakdown is what they add: the kill part times (average factor − 1). Two one-tap flicks in a 2k score about double a plain 2k; a single kill with every style (about 41) stays below any strong 3k; a kill with none counts 1, so the calibration anchor holds |
 | roundWon | `roundWon` | the POV's team won the round |
 | lowHp | `lowHp` | − penaltyPerKill for each victim at or below threshold HP before the killing hit |
 
-Known confounders of the flick signal: recoil (a spray pulls the view, though
+Measured on the 29 stored demos (2026-10-15): of 531 gun kills, the yaw turn into the kill shot has median 1.3°, p99 15°, max 35°; 2 pass 25°, 8 would pass 15°. Known confounders of the flick signal: recoil (a spray pulls the view, though
 mostly in pitch) and strafing while turning both add yaw that is not a
-flick; the threshold and the small cap keep their effect minor.
+flick; the 25° threshold keeps most of them out, and a flick multiplies only its own kill's share.
 
 `threshold` marks moments as `aboveThreshold` in `moments.json`.
 
@@ -70,7 +70,7 @@ Fast-forward).
 ## What the current weights pick (2026-10-15, one moment per round)
 
 Top three per demo, from `pnpm moments` after the per-round rule and the
-tightness and light signals:
+tightness signal (the light signals were later replaced by style multipliers):
 
 - **de_inferno, October (`1-8e8743a8…`)**, the render test demo: #1 R1 3k
   Glock in a lost 1v2 (104.7; the two hand-picked R1 kills and a third now

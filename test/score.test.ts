@@ -9,7 +9,7 @@ const ME = "me";
 const w = loadWeights();
 const kill = (tick: number, o: Partial<Death> = {}): Death => ({
   tick, round: 1, attacker: ME, victim: `v${tick}`, assister: null, weapon: "ak47", headshot: false, penetrated: false,
-  noscope: false, thrusmoke: false, attackerblind: false, distance: 10, victimHpBefore: 100, airborne: false, ...o,
+  noscope: false, thrusmoke: false, attackerblind: false, distance: 10, victimHpBefore: 100, airborne: false, attackerName: "me", victimName: `v${tick}`, ...o,
 });
 const demo = (o: { fires?: number[]; flicks?: { killTick: number; yawDegrees: number }[] } = {}) => ({
   demo: { tickrate: 64 }, identity: { steamid: ME },
@@ -46,27 +46,33 @@ test("a 3k in 4 s beats a 3k over 40 s by a visible margin; a quick 2k gains onl
   assert.equal(scoreKills(demo(), [kill(0), kill(128)], undefined, false, w).breakdown.tight, undefined);
 });
 
-test("light signals are capped below the gap between kill counts", () => {
+test("style multiplies each kill's share: two one-tap flicks about double a plain 2k; a fully stylish 1k stays below a 3k", () => {
+  const plain = scoreKills(demo(), [kill(0), kill(2000)], undefined, false, w).score;
+  const flicks = [0, 2000].map((t) => ({ killTick: t, yawDegrees: 90 }));
+  const stylish = scoreKills(demo({ fires: [0, 2000], flicks }), [kill(0), kill(2000)], undefined, false, w);
+  assert.equal(stylish.breakdown.style, Math.round(w.killBase["2"] * (w.style.oneBulletKill * w.style.flick - 1) * 10) / 10);
+  assert.ok(stylish.score >= 1.8 * plain, `stylish ${stylish.score} vs plain ${plain}`);
+  // One stylish kill among plain ones: half the kill part gets its factor (the weapon multiplier is the moment's).
+  const mixed = scoreKills(demo({ fires: [2000] }), [kill(0), kill(2000)], undefined, false, w);
+  assert.equal(mixed.breakdown.style, Math.round(mixed.breakdown.kills * (w.style.oneBulletKill - 1) / 2 * 10) / 10);
   const all = { noscope: true, airborne: true };
-  const ks = [kill(0, all), kill(2000, all)];
-  const flicks = ks.map((k) => ({ killTick: k.tick, yawDegrees: 90 }));
-  const s = scoreKills(demo({ fires: [0, 2000], flicks }), ks, undefined, false, w);
-  assert.equal(s.breakdown.light, w.light.maxPerMoment);
-  assert.ok(w.light.maxPerMoment < w.killBase["3"] - w.killBase["2"], "the cap stays well below the base gap between kill counts");
+  const one = scoreKills(demo({ fires: [0], flicks: [{ killTick: 0, yawDegrees: 90 }] }), [kill(0, all)], undefined, false, w).score;
+  const three = scoreKills(demo(), [kill(0), kill(1280), kill(2560)], undefined, false, w).score;
+  assert.ok(one < three, `stylish 1k ${one} vs spread 3k ${three}`);
 });
 
 test("grenade throws and knife swings are not bullets; an inferno kill is not a one-bullet kill", () => {
   const p = { ...demo(), fires: [{ tick: 50, round: 1, player: ME, weapon: "hegrenade" }, { tick: 100, round: 1, player: ME, weapon: "ak47" }] } as unknown as ParsedDemo;
-  assert.equal(scoreKills(p, [kill(100)], undefined, false, w).breakdown.light, w.light.oneBulletKill, "the grenade does not count");
-  assert.equal(scoreKills(demo({ fires: [100] }), [kill(100, { weapon: "inferno" })], undefined, false, w).breakdown.light, undefined);
+  assert.equal(scoreKills(p, [kill(100)], undefined, false, w).breakdown.style, Math.round(w.killBase["1"] * (w.style.oneBulletKill - 1) * 10) / 10, "the grenade does not count");
+  assert.equal(scoreKills(demo({ fires: [100] }), [kill(100, { weapon: "inferno" })], undefined, false, w).breakdown.style, undefined);
 });
 
-test("one-bullet kills count guns only; flicks below the threshold score nothing", () => {
-  const one = scoreKills(demo({ fires: [100] }), [kill(100)], undefined, false, w).breakdown.light;
-  const three = scoreKills(demo({ fires: [60, 80, 100] }), [kill(100)], undefined, false, w).breakdown.light;
-  const knife = scoreKills(demo({ fires: [100] }), [kill(100, { weapon: "knife" })], undefined, false, w).breakdown.light;
-  const smallFlick = scoreKills(demo({ flicks: [{ killTick: 100, yawDegrees: 20 }] }), [kill(100)], undefined, false, w).breakdown.light;
-  assert.equal(one, w.light.oneBulletKill);
+test("one-bullet kills count guns only; flicks below the threshold multiply nothing", () => {
+  const one = scoreKills(demo({ fires: [100] }), [kill(100)], undefined, false, w).breakdown.style;
+  const three = scoreKills(demo({ fires: [60, 80, 100] }), [kill(100)], undefined, false, w).breakdown.style;
+  const knife = scoreKills(demo({ fires: [100] }), [kill(100, { weapon: "knife" })], undefined, false, w).breakdown.style;
+  const smallFlick = scoreKills(demo({ flicks: [{ killTick: 100, yawDegrees: 20 }] }), [kill(100)], undefined, false, w).breakdown.style;
+  assert.equal(one, Math.round(w.killBase["1"] * (w.style.oneBulletKill - 1) * 10) / 10);
   assert.equal(three, undefined);
   assert.equal(knife, undefined);
   assert.equal(smallFlick, undefined);
