@@ -319,3 +319,88 @@ test("another 403 from the download endpoint is a normal failure, not the scope 
 test("the download endpoint is /download/v2/demos/download", () => {
   assert.equal(DOWNLOAD_API, "https://open.faceit.com/download/v2/demos/download");
 });
+
+// --- demo providers (the browser path plugs in here; no browser in tests) --------------
+import type { DemoProvider } from "../src/ingest/sources/faceit.ts";
+import { NOT_LOGGED_IN } from "../src/ingest/sources/faceit-browser.ts";
+
+function fakeProvider(plan: (id: string) => "file" | "bad" | "notYet" | "blocked" | "throw"): DemoProvider & { closed: number; asked: string[] } {
+  const p = {
+    label: "fake session", closed: 0, asked: [] as string[],
+    async get(m: { matchId: string }, c: SourceContext) {
+      p.asked.push(m.matchId);
+      const what = plan(m.matchId);
+      if (c.dryRun) return { kind: "dry" as const };
+      if (what === "blocked") return { kind: "blocked" as const, message: NOT_LOGGED_IN, pendingReason: "waiting for pnpm grab --login" };
+      if (what === "notYet") return { kind: "notYet" as const, reason: "no Watch demo button yet" };
+      if (what === "throw") throw new Error("no download started (page …, screenshot …)");
+      const name = `faceit-${m.matchId}.dem.zst`;
+      const part = path.join(c.inbox, `.${name}.part`);
+      writeFileSync(part, what === "bad" ? Buffer.from("<html>") : zlib.zstdCompressSync(Buffer.concat([Buffer.from("PBDEMS2\0", "latin1"), Buffer.alloc(64)])));
+      return { kind: "file" as const, part, name };
+    },
+    async close() { p.closed++; },
+  };
+  return p;
+}
+
+test("browser provider: files are checked, renamed and advance the checkpoint, oldest first", async () => {
+  const c = ctx(); mk(c);
+  const p = fakeProvider(() => "file");
+  const r = await faceitSource(opts(fakeTransport(), { demos: p })).fetch(c);
+  assert.deepEqual(p.asked, [ids[3], ids[2], ids[1], ids[0]]);
+  assert.deepEqual(readdirSync(c.inbox).sort(), ids.map((i) => `faceit-${i}.dem.zst`).sort());
+  assert.equal(JSON.parse(readFileSync(c.stateFile, "utf8")).lastMatchId, ids[0]);
+  assert.equal(p.closed, 1);
+  assert.equal(r.fetched.length, 4);
+});
+
+test("browser provider logged out: every new match pending with the login message, checkpoint stays", async () => {
+  const c = ctx(); mk(c);
+  const p = fakeProvider(() => "blocked");
+  const r = await faceitSource(opts(fakeTransport(), { demos: p })).fetch(c);
+  assert.equal(r.blocked, NOT_LOGGED_IN);
+  assert.deepEqual(r.pending.map((x) => x.item), [ids[3], ids[2], ids[1], ids[0]]);
+  assert.ok(r.pending.every((x) => x.reason === "waiting for pnpm grab --login"));
+  assert.equal(JSON.parse(readFileSync(c.stateFile, "utf8")).lastMatchId, "(start)");
+  assert.equal(p.asked.length, 1, "stops at the first blocked match, no retry loop");
+  assert.equal(r.failed, undefined, "logged out is pending, not a failure");
+});
+
+test("browser provider: a failure stops the run, keeps the checkpoint before it, and closes the browser", async () => {
+  const c = ctx(); mk(c);
+  const p = fakeProvider((id) => (id === ids[2] ? "throw" : "file"));
+  const r = await faceitSource(opts(fakeTransport(), { demos: p })).fetch(c);
+  assert.deepEqual(r.fetched.map((f) => path.basename(f)), [`faceit-${ids[3]}.dem.zst`]);
+  assert.match(r.pending[0].reason, /screenshot/);
+  assert.equal(r.failed, true, "a real failure is reported as one (exit 1)");
+  assert.equal(JSON.parse(readFileSync(c.stateFile, "utf8")).lastMatchId, ids[3]);
+  assert.equal(p.closed, 1);
+});
+
+test("browser provider: a file that is not a demo is removed and stops the run", async () => {
+  const c = ctx(); mk(c);
+  const p = fakeProvider(() => "bad");
+  const r = await faceitSource(opts(fakeTransport(), { demos: p })).fetch(c);
+  assert.match(r.pending[0].reason, /not a CS2 demo/);
+  assert.equal(readdirSync(c.inbox).length, 0);
+});
+
+test("browser provider: no demo button yet waits; a day later the match is skipped", async () => {
+  const c = ctx(); mk(c);
+  const young = await faceitSource(opts(fakeTransport({ history: [ids[3]] }), { demos: fakeProvider(() => "notYet"), now: () => (finishedOf(ids[3]) + 600) * 1000 })).fetch(c);
+  assert.match(young.pending[0].reason, /no Watch demo button/);
+  const c2 = ctx(); mk(c2);
+  const old = await faceitSource(opts(fakeTransport({ history: [ids[3]] }), { demos: fakeProvider(() => "notYet"), now: () => (finishedOf(ids[3]) + 30 * 3600) * 1000 })).fetch(c2);
+  assert.deepEqual(old.pending, []);
+  assert.equal(JSON.parse(readFileSync(c2.stateFile, "utf8")).lastMatchId, ids[3]);
+});
+
+test("browser provider dry run: lists, opens nothing, writes nothing", async () => {
+  const c = ctx(true); mk(c);
+  const p = fakeProvider(() => "file");
+  const r = await faceitSource(opts(fakeTransport(), { demos: p })).fetch(c);
+  assert.equal(r.fetched.length, 0);
+  assert.equal(readdirSync(c.inbox).length, 0);
+  assert.equal(c.lines.filter((l) => l.includes("would download") && l.includes("fake session")).length, 4);
+});

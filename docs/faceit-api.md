@@ -1,4 +1,4 @@
-# FACEIT API shapes relied on
+# FACEIT: API shapes and the browser path relied on
 
 `src/ingest/sources/faceit.ts` uses the calls below and only the fields
 listed. Checked against the live API on 2026-10-15 with Peder's key: the
@@ -33,6 +33,53 @@ leaves the checkpoint where it is and exits 0. Once the scope is granted,
 the next `pnpm grab` fetches them. Until then the folders source (CS2's
 `game/csgo/`, where the FACEIT client's "Watch demo" saves demos, and
 `~/Downloads`) is the way in.
+
+## The browser path (what works today)
+
+FACEIT declined the Downloads API for non-commercial use, so demos come
+through Peder's own logged-in FACEIT session instead, doing the click he
+would make in the match room. The match list still comes from the Data API
+above (only `FACEIT_API_KEY`'s player and history calls are needed).
+
+- `pnpm grab --login` starts the installed Google Chrome (else Microsoft
+  Edge) as a plain process, not automated, with
+  `--user-data-dir=state/browser-profile` on https://www.faceit.com/en. Peder
+  signs in there himself (cookie dialog, any human check: his own clicks)
+  and closes the window; the command waits for that. No credentials are
+  handled or stored by croclipper; the session lives in that profile
+  (gitignored with all of `state/`). A Playwright-launched browser does not
+  get past FACEIT's Cloudflare check on the login page, which is why login
+  is a plain launch.
+- `pnpm grab --browser` (or `config.json` → `sources.faceit.via:
+  "browser"`) opens that profile with Playwright (`channel` chrome, else
+  msedge; started minimized, or headless with `sources.faceit.headless`) and,
+  one match at a time with a 4 s pause, opens
+  `https://www.faceit.com/en/cs2/room/<match_id>` and clicks the demo button.
+- Locators relied on (checked live 2026-10-15): the room's button with role
+  `button` and name **"Watch demo"**; the header's button named
+  **"Profile"** as the logged-in signal. Clicking "Watch demo" makes the page
+  call `POST https://www.faceit.com/api/download/v2/demos/download-url`
+  (FACEIT's own site API) and start a browser download named
+  `<match_id>-1-1.dem.zst` from FACEIT's demo storage. If FACEIT renames the
+  button, change the locator in `src/ingest/sources/faceit-browser.ts` and
+  here.
+- Stops, without retrying: a human-verification page ("verifying you are
+  human" / "just a moment") or a logged-out page makes every new match
+  pending with a message to run `pnpm grab --login` again; nothing ever
+  answers a verification. Any other failure (no download within 5 min, a
+  download that is not this match's demo, a save error) stops the run with
+  the page URL and a screenshot in `state/browser-failures/`.
+- Limits: the size cap (2 GiB) is checked when the download is complete
+  (Playwright exposes no byte stream before that), with a 20-minute deadline
+  on the whole transfer. A file whose contents are not a CS2 demo is
+  reported by the shared check without a page screenshot (the page plays no
+  part in that check).
+- The download is saved as `demos/inbox/.faceit-<match_id>.dem.zst.part`,
+  checked to be a CS2 demo (decompressed to the end), renamed, and only then
+  does the checkpoint advance, exactly as for the API path.
+- First live run (2026-10-15): the 5 pending matches downloaded
+  (230-394 MB each), no verification shown; 4 ingested, 1 already in the
+  store from a Downloads copy.
 
 ## Behaviour the code adds on top
 

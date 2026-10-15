@@ -5,7 +5,8 @@
 ## Running
 
 ```
-pnpm grab [--dry-run]
+pnpm grab [--dry-run] [--browser]
+pnpm grab --login
 pnpm go [--dry-run] [--retry-failed]
 pnpm moments "<demo.dem>"
 pnpm clip "<demo.dem>" --top <n> [--timeout <s>] [--force] [--dry-run]
@@ -19,9 +20,11 @@ demos, read-only, from watched folders (default CS2's `game/csgo/`, where
 the FACEIT client's "Watch demo" and manual downloads land, and
 `~/Downloads`; `config.json` → `sources.folders.dirs` overrides), skipping
 any whose content is already in the store; **faceit** (with
-`FACEIT_API_KEY`) lists new FACEIT matches and downloads their demos once
-the key has FACEIT's Downloads API scope; until then they are listed as
-pending (`docs/faceit-api.md`). Pending items are not failures; exit 1
+`FACEIT_API_KEY`) lists new FACEIT matches and downloads their demos, by
+the Downloads API (needs a scope FACEIT did not grant) or, with `--browser`
+(or `config.json` → `sources.faceit.via: "browser"`), through Peder's
+logged-in FACEIT session in the installed Chrome or Edge, signed in once
+with `pnpm grab --login` (`docs/faceit-api.md`). Pending items are not failures; exit 1
 means a source failed or ingest rejected a file.
 
 `pnpm go` is the one command: drop demos (`.dem`, or `.zip` / `.bz2` /
@@ -57,7 +60,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `.env` | identities and tool paths (`.env.example`; M0.2 setup in `docs/spikes.md`) |
 | `scoring.json` | ranking weights; tuning and current picks in `docs/scoring-notes.md` |
 | `src/cli/go.ts`, `src/cli/clip.ts`, `src/cli/moments.ts` | the entries |
-| `src/ingest/` | watch folder (`index.ts`), the source contract (`sources.ts`), sources (`sources/folders.ts`, `sources/faceit.ts`; Valve matchmaking later, same shape) |
+| `src/ingest/` | watch folder (`index.ts`), the source contract (`sources.ts`), sources (`sources/folders.ts`, `sources/faceit.ts` with its browser path `sources/faceit-browser.ts`; Valve matchmaking later, same shape) |
 | `test/` | `pnpm test`: FACEIT source against recorded fixtures (`test/fixtures/faceit/`) and the folders source on temp folders; no network |
 | `src/queue/` | the batch and its job ledger (`index.ts`); one clip job, shared by `pnpm clip` and the batch (`job.ts`) |
 | `src/library/page.html`, `page.ts` | the library page template and its writer |

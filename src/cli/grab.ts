@@ -1,13 +1,16 @@
-// pnpm grab [--dry-run] (PLAN.md's "pnpm fetch"; pnpm's own fetch command takes that name):
+// pnpm grab [--dry-run] [--browser] | pnpm grab --login   (PLAN.md's "pnpm fetch"; pnpm's own fetch command takes that name):
 // "I have played some games". Runs the demo sources, each writing new demos
 // into demos/inbox/, then ingests the inbox. Renders nothing; pnpm go does that.
 //   folders  copies new demos from watched folders, read-only (default: CS2's
 //            game/csgo, where the FACEIT client's "Watch demo" saves them, and
 //            ~/Downloads; config.json sources.folders.dirs)
-//   faceit   with FACEIT_API_KEY: new matches from the FACEIT API; demos need
-//            the Downloads API scope (docs/faceit-api.md), else they wait as pending
-// Pending items (a missing scope, a demo not uploaded yet) are listed, not failures.
-// Exit codes: 0 ok, 1 a source failed or ingest rejected a file, 2 another pnpm grab is running.
+//   faceit   with FACEIT_API_KEY: new matches from the FACEIT Data API; demos via the
+//            Downloads API (needs its scope), or with --browser (or config.json
+//            sources.faceit.via "browser") through Peder's logged-in FACEIT session in
+//            the installed Chrome/Edge, profile state/browser-profile (docs/faceit-api.md)
+//   --login  opens that profile in a plain browser window to sign in; waits until it is closed
+// Pending items (a missing scope, a logged-out browser, a demo not uploaded yet) are listed, not failures.
+// Exit codes: 0 ok, 1 a source or a download failed or ingest rejected a file, 2 another pnpm grab is running.
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { parseEnv } from "node:util";
@@ -17,9 +20,12 @@ import { INBOX, ingest, readRegistry } from "../ingest/index.ts";
 import type { Source } from "../ingest/sources.ts";
 import { NO_KEY, faceitSource } from "../ingest/sources/faceit.ts";
 import { foldersSource } from "../ingest/sources/folders.ts";
+import { browserDemos, findBrowser, login } from "../ingest/sources/faceit-browser.ts";
 import { RenderLock } from "../render/controller/guards.ts";
 
 const dryRun = process.argv.includes("--dry-run");
+const loginOnly = process.argv.includes("--login");
+const viaBrowserFlag = process.argv.includes("--browser");
 
 function sources(): Source[] {
   const env = existsSync(path.join(ROOT, ".env")) ? parseEnv(readFileSync(path.join(ROOT, ".env"), "utf8")) : {};
@@ -30,18 +36,35 @@ function sources(): Source[] {
   const dirs: string[] = Array.isArray(conf.folders?.dirs) ? conf.folders.dirs.map((d: string) => d.replace(/^~(?=$|[\\/])/, homedir())) : defaults;
   const out: Source[] = [foldersSource({ dirs, knownHashes: () => new Set(Object.keys(readRegistry())) })];
   const faceitKey = env.FACEIT_API_KEY?.trim();
-  if (faceitKey) out.push(faceitSource({ apiKey: faceitKey, steamId64: loadIdentities().pov, maxMatchesPerRun: conf.faceit?.maxMatchesPerRun ?? 5 }));
+  // Demos via the Downloads API, or via the logged-in browser session (--browser, or sources.faceit.via "browser").
+  const viaBrowser = viaBrowserFlag || conf.faceit?.via === "browser";
+  let demos;
+  if (faceitKey && viaBrowser) {
+    const b = findBrowser();
+    if (!b) throw new Error("--browser needs Google Chrome or Microsoft Edge installed");
+    demos = browserDemos({ browser: b, headless: conf.faceit?.headless === true });
+  }
+  if (faceitKey) out.push(faceitSource({ apiKey: faceitKey, steamId64: loadIdentities().pov, maxMatchesPerRun: conf.faceit?.maxMatchesPerRun ?? 5, demos }));
   else console.log(`faceit: skipped. ${NO_KEY}`);
   return out;
 }
 
 async function main(): Promise<number> {
-  // One grab at a time: sources read and advance their state across a whole run.
+  // One grab at a time, --login included: sources advance their state across a
+  // whole run, and the browser profile can only be open once.
   const lock = new RenderLock(path.join(STATE_DIR, ".grab.lock"));
   lock.acquire();
   const release = () => lock.release();
   process.on("exit", release);
   try {
+    if (loginOnly) {
+      // A plain browser process, not automated: Peder logs in and passes FACEIT's checks himself.
+      const b = findBrowser();
+      if (!b) { console.error("Neither Google Chrome nor Microsoft Edge is installed; the browser path needs one of them."); return 1; }
+      await login(b);
+      console.log("Window closed. The FACEIT session is kept in the croclipper profile; run pnpm grab --browser to fetch demos.");
+      return 0;
+    }
     let code = 0;
     for (const s of sources()) {
       try {
@@ -50,6 +73,7 @@ async function main(): Promise<number> {
         console.log(`${s.name}: ${r.fetched.length} demo(s) fetched${dryRun ? " (dry run: nothing written)" : ""}`);
         if (r.blocked) console.log(`${s.name}: ${r.blocked}`);
         for (const p of r.pending) console.log(`${s.name}: pending ${p.item}: ${p.reason}`);
+        if (r.failed) code = 1;
       } catch (e) {
         console.error(`${s.name} FAILED: ${(e as Error).message}`);
         code = 1;

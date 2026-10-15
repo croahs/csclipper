@@ -61,7 +61,11 @@ export const httpTransport: Transport = {
 };
 
 export type FaceitState = { playerId?: string; steamIdHash?: string; lastMatchId?: string; lastFinishedAt?: number; updatedAt?: string };
-export type FaceitOptions = { apiKey?: string; steamId64: string; maxMatchesPerRun: number; transport?: Transport; now?: () => number };
+export type FaceitOptions = {
+  apiKey?: string; steamId64: string; maxMatchesPerRun: number; transport?: Transport; now?: () => number;
+  /** How demos are obtained; default the Downloads API. The match list always comes from the Data API. */
+  demos?: DemoProvider;
+};
 // A match still without a demo this long after it finished never gets one (cancelled, not recorded): skip it.
 const NO_DEMO_GIVE_UP_S = 24 * 3600;
 
@@ -210,74 +214,110 @@ export function faceitSource(o: FaceitOptions): Source {
       const todo = [...fresh].reverse().slice(0, o.maxMatchesPerRun);
       ctx.log(`faceit: ${fresh.length} new match(es)${fresh.length > todo.length ? `, taking the oldest ${todo.length} this run` : ""}`);
 
-      for (const m of todo) {
-        // A cancelled or aborted match never gets a demo: skipped. Any other
-        // unfinished state is waited on, never stepped over.
-        if (m.status && TERMINAL.has(m.status.toLowerCase())) {
-          ctx.log(`faceit: match ${m.matchId} is ${m.status}; skipped`);
-          if (!ctx.dryRun) { state.lastMatchId = m.matchId; save(); }
-          continue;
-        }
-        if (m.status && m.status.toLowerCase() !== "finished") {
-          result.pending.push({ item: m.matchId, reason: `match status "${m.status}", not finished yet` });
-          break;
-        }
-        try {
-          // 3. The match's demo resource URL.
-          const mr = await t.getJson(`${API}/matches/${encodeURIComponent(m.matchId)}`, key);
-          const match = obj(check(mr.status, mr.body, `match ${m.matchId}`), `match ${m.matchId}`);
-          const urls = match.demo_url;
-          // Missing, null or an empty list means not uploaded; anything else must be a list of URLs.
-          if (urls !== undefined && urls !== null && (!Array.isArray(urls) || urls.some((u) => typeof u !== "string" || !u))) {
-            throw new Error(`FACEIT match ${m.matchId}: field "demo_url" is not a list of URLs`);
+      const provider = o.demos ?? apiDemos(t, key);
+      try {
+        for (const m of todo) {
+          // A cancelled or aborted match never gets a demo: skipped. Any other
+          // unfinished state is waited on, never stepped over.
+          if (m.status && TERMINAL.has(m.status.toLowerCase())) {
+            ctx.log(`faceit: match ${m.matchId} is ${m.status}; skipped`);
+            if (!ctx.dryRun) { state.lastMatchId = m.matchId; save(); }
+            continue;
           }
-          if (!urls || !(urls as string[]).length) {
-            // Missing or empty: not uploaded yet, or never will be.
-            const age = m.finishedAt ? (o.now ?? Date.now)() / 1000 - m.finishedAt : 0;
-            if (age > NO_DEMO_GIVE_UP_S) {
-              ctx.log(`faceit: match ${m.matchId} has no demo ${Math.round(age / 3600)} h after it finished; skipped`);
-              if (!ctx.dryRun) { state.lastMatchId = m.matchId; save(); }
-              continue;
-            }
-            result.pending.push({ item: m.matchId, reason: "no demo_url yet (demo not uploaded)" });
+          if (m.status && m.status.toLowerCase() !== "finished") {
+            result.pending.push({ item: m.matchId, reason: `match status "${m.status}", not finished yet` });
             break;
           }
-          // 4. A signed download URL for it (FACEIT Downloads API).
-          const dr = await t.postJson(DOWNLOAD_API, key, { resource_url: (urls as string[])[0] });
-          if (dr.status === 403 && errorCode(dr.body) === "err_f0") {
-            // No Downloads API scope: this and every later new match wait, the checkpoint stays.
-            result.blocked = NO_DOWNLOAD_SCOPE;
-            const rest = [...fresh].reverse();
-            for (const x of rest.slice(rest.findIndex((y) => y.matchId === m.matchId))) result.pending.push({ item: x.matchId, reason: "waiting for the Downloads API scope" });
-            break;
-          }
-          const dl = obj(check(dr.status, dr.body, "demo download"), "demo download");
-          const signed = str(obj(dl.payload, "demo download payload"), "download_url", "demo download payload");
-          const name = demoFileName(m.matchId, signed);
-          if (ctx.dryRun) { ctx.log(`faceit: would download match ${m.matchId} → ${name}`); continue; }
-          // 5. Download under a temporary name; check it holds a CS2 demo; rename; then advance.
-          const part = path.join(ctx.inbox, `.${name}.part`);
+          let part: string | undefined;
           try {
-            await t.download(signed, part, MAX_DEMO_BYTES);
+            // 3-5. The demo, by API download or the browser session (provider).
+            const got = await provider.get(m, ctx);
+            if (got.kind === "dry") { ctx.log(`faceit: would download match ${m.matchId} (${provider.label})`); continue; }
+            if (got.kind === "notYet") {
+              // Not uploaded yet, or never will be.
+              const age = m.finishedAt ? (o.now ?? Date.now)() / 1000 - m.finishedAt : 0;
+              if (age > NO_DEMO_GIVE_UP_S) {
+                ctx.log(`faceit: match ${m.matchId} has no demo ${Math.round(age / 3600)} h after it finished; skipped`);
+                if (!ctx.dryRun) { state.lastMatchId = m.matchId; save(); }
+                continue;
+              }
+              result.pending.push({ item: m.matchId, reason: got.reason });
+              break;
+            }
+            if (got.kind === "blocked") {
+              // A known external stop (no API scope, logged out, a verification page): this and every
+              // later new match wait, the checkpoint stays.
+              result.blocked = got.message;
+              const rest = [...fresh].reverse();
+              for (const x of rest.slice(rest.findIndex((y) => y.matchId === m.matchId))) result.pending.push({ item: x.matchId, reason: got.pendingReason });
+              break;
+            }
+            // Check it holds a CS2 demo; rename; then advance.
+            part = got.part;
             const header = await demoHeader(part);
-            if (header !== "PBDEMS2\0") throw new Error(`downloaded file is not a CS2 demo (${name})`);
+            if (header !== "PBDEMS2\0") throw new Error(`downloaded file is not a CS2 demo (${got.name})`);
+            const final = path.join(ctx.inbox, got.name);
+            renameSync(part, final);
+            part = undefined;
+            result.fetched.push(final);
+            state.lastMatchId = m.matchId;
+            if (m.finishedAt) state.lastFinishedAt = m.finishedAt;
+            save();
+            ctx.log(`faceit: downloaded match ${m.matchId} → ${got.name}`);
           } catch (e) {
-            rmSync(part, { force: true });
-            throw e;
+            if (part) rmSync(part, { force: true });
+            result.pending.push({ item: m.matchId, reason: (e as Error).message });
+            result.failed = true;
+            break; // stop here: later matches wait, so none is skipped
           }
-          const final = path.join(ctx.inbox, name);
-          renameSync(part, final);
-          result.fetched.push(final);
-          state.lastMatchId = m.matchId;
-          if (m.finishedAt) state.lastFinishedAt = m.finishedAt;
-          save();
-          ctx.log(`faceit: downloaded match ${m.matchId} → ${name}`);
-        } catch (e) {
-          result.pending.push({ item: m.matchId, reason: (e as Error).message });
-          break; // stop here: later matches wait, so none is skipped
         }
+      } finally {
+        await provider.close?.();
       }
       return result;
+    },
+  };
+}
+
+/** How one match's demo is obtained: the Downloads API (default) or the browser session (faceit-browser.ts). */
+export type DemoOutcome =
+  | { kind: "file"; part: string; name: string } // written to part (a .part path in the inbox); final name
+  | { kind: "notYet"; reason: string }
+  | { kind: "blocked"; message: string; pendingReason: string }
+  | { kind: "dry" };
+export type DemoProvider = {
+  label: string;
+  get(m: { matchId: string; finishedAt?: number }, ctx: SourceContext): Promise<DemoOutcome>;
+  close?(): Promise<void>;
+};
+
+/** The Downloads API: match → demo_url → signed URL → streamed download. */
+export function apiDemos(t: Transport, key: string): DemoProvider {
+  return {
+    label: "Downloads API",
+    async get(m, ctx) {
+      const mr = await t.getJson(`${API}/matches/${encodeURIComponent(m.matchId)}`, key);
+      const match = obj(check(mr.status, mr.body, `match ${m.matchId}`), `match ${m.matchId}`);
+      const urls = match.demo_url;
+      // Missing, null or an empty list means not uploaded; anything else must be a list of URLs.
+      if (urls !== undefined && urls !== null && (!Array.isArray(urls) || urls.some((u) => typeof u !== "string" || !u))) {
+        throw new Error(`FACEIT match ${m.matchId}: field "demo_url" is not a list of URLs`);
+      }
+      if (!urls || !(urls as string[]).length) return { kind: "notYet", reason: "no demo_url yet (demo not uploaded)" };
+      const dr = await t.postJson(DOWNLOAD_API, key, { resource_url: (urls as string[])[0] });
+      if (dr.status === 403 && errorCode(dr.body) === "err_f0") return { kind: "blocked", message: NO_DOWNLOAD_SCOPE, pendingReason: "waiting for the Downloads API scope" };
+      const dl = obj(check(dr.status, dr.body, "demo download"), "demo download");
+      const signed = str(obj(dl.payload, "demo download payload"), "download_url", "demo download payload");
+      const name = demoFileName(m.matchId, signed);
+      if (ctx.dryRun) return { kind: "dry" };
+      const part = path.join(ctx.inbox, `.${name}.part`);
+      try {
+        await t.download(signed, part, MAX_DEMO_BYTES);
+      } catch (e) {
+        rmSync(part, { force: true });
+        throw e;
+      }
+      return { kind: "file", part, name };
     },
   };
 }
