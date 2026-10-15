@@ -48,6 +48,8 @@ export type BatchOptions = {
   testExitAfterS?: number;
   /** --settle-existing: mark every registered demo as processed (state/settled.json) and render nothing. */
   settleExisting?: boolean;
+  /** --no-reels: highlights only for this run, whatever config.json reels says. */
+  noReels?: boolean;
 };
 export type BatchReport = {
   ingested: number; demos: number; selected: number;
@@ -116,7 +118,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   const ledger = readLedger();
   // One launch per demo (chained takes): its jobs are gated one by one, then rendered together.
   const reels = loadReels();
-  const kinds = (["deaths", "kills"] as const).filter((k) => reels[k].enabled);
+  const kinds = o.noReels ? [] : (["deaths", "kills"] as const).filter((k) => reels[k].enabled);
   demos: for (const [sha256, file] of demoFiles) {
     const items = queue.filter((q) => q.sha256 === sha256);
     type Ready = { unit: RenderUnit; key: string; prevStatus?: "running" | "done" | "failed"; attempts: number };

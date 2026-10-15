@@ -1,4 +1,4 @@
-// pnpm go [--dry-run] [--retry-failed] [--repost] [--settle-existing] [--timeout <s>] [--test-exit-after <s>]: the whole pipeline in
+// pnpm go [--dry-run] [--retry-failed] [--repost] [--settle-existing] [--no-reels] [--timeout <s>] [--test-exit-after <s>]: the whole pipeline in
 // one command. Ingest demos/inbox/, parse and rank every registered demo,
 // render the selected moments (config.json batch: every one with score >= minScore,
 // else the best one when none reaches it and fallbackBest) that are not in the library yet, rewrite library/index.html.
@@ -6,6 +6,7 @@
 // only, for jobs whose capture is complete (e.g. after a post change): no launch.
 // --settle-existing marks every registered demo processed (state/settled.json) and renders
 // nothing; later runs skip settled demos, so new rules apply from the next new demo.
+// --no-reels: highlights only for this run (config.json reels stays the default).
 // Exit codes: 0 ok, 1 a job or demo failed, 2 refused (CS2 running, a guard,
 // or another pnpm go), 3 cleanup not verified (the batch stopped; check for cs2.exe by hand).
 import path from "node:path";
@@ -28,7 +29,7 @@ async function main(): Promise<number> {
   try {
     const testExit = flag("--test-exit-after");
     const { report: r, code } = await runBatch({
-      dryRun: args.includes("--dry-run"), retryFailed: args.includes("--retry-failed"), repostOnly: args.includes("--repost"), settleExisting: args.includes("--settle-existing"), timeoutS,
+      dryRun: args.includes("--dry-run"), retryFailed: args.includes("--retry-failed"), repostOnly: args.includes("--repost"), settleExisting: args.includes("--settle-existing"), noReels: args.includes("--no-reels"), timeoutS,
       testExitAfterS: testExit === undefined ? undefined : Number(testExit),
     });
     if (r.settledNow !== undefined) {

@@ -7,7 +7,7 @@
 ```
 pnpm grab [--dry-run] [--browser] [--last <n>]
 pnpm grab --login
-pnpm go [--dry-run] [--retry-failed] [--repost] [--settle-existing]
+pnpm go [--dry-run] [--retry-failed] [--repost] [--settle-existing] [--no-reels]
 pnpm moments "<demo.dem>"
 pnpm clip "<demo.dem>" --top <n> [--timeout <s>] [--dry-run]
 pnpm clip "<demo.dem>" <startTick> <endTick> [same options]
@@ -21,7 +21,8 @@ pnpm trash --empty
 
 **Reels** (`src/reel/`). `pnpm go` makes two reels for every new demo, in
 the same launch as its highlights (`config.json` → `reels`, each with
-`enabled`, `beforeSeconds`, `afterSeconds`): **deaths**, every death of
+`enabled`, `beforeSeconds`, `afterSeconds`; `--no-reels` skips them for
+one run): **deaths**, every death of
 his from his killer's first person (7 s before, 4 s after; a suicide or a
 world death from his own view), and **kills**, every kill of his from the
 victim's first person (7 s before, 2 s after; after the death the game
