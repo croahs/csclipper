@@ -154,7 +154,8 @@ For each moment above a threshold (or top N per demo):
 
 - `start_tick` = first engagement signal in that round within 5 s
   before the first kill (your first `weapon_fire`, or damage dealt or
-  taken), minus 2 s of lead-in.
+  taken), minus 4 s of lead-in (raised from 2 s by Peder, 2026-10-15).
+  A re-render may override the lead-in per clip.
 - `end_tick` = the moment's outcome event, not just its last kill: the
   last kill + 5.5 s (Peder raised it from 2.5 s on 2026-10-15: clips
   ended too abruptly), or the defuse/plant/round end that resolves a
