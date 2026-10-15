@@ -13,6 +13,7 @@ import { RenderLock } from "../render/controller/guards.ts";
 import { toolVersions } from "../render/versions.ts";
 import { post } from "../post/index.ts";
 import type { ClipSpec } from "../clip/index.ts";
+import { writeLibraryPage } from "../library/page.ts";
 import { clipId, clipPath, clipTmpPath, ensureClipsDir, publish, readIndex, recordFailure, writeJsonAtomic, type ClipEntry } from "../library/index.ts";
 
 export type JobInput = {
@@ -26,6 +27,8 @@ export type JobInput = {
   debugCommands?: string[];
   /** Post only (pnpm go --repost): without a completed capture the job refuses; it never renders. */
   postOnly?: boolean;
+  /** Part of a pnpm go run: the page rewritten after this clip says the run is still going. */
+  inBatch?: boolean;
   /** pnpm clip --rerender: the library clip this one replaces (moved to library/replaced/ on publish). */
   replaces?: string;
 };
@@ -174,9 +177,11 @@ export async function runJob(prep: PreparedJob): Promise<JobResult> {
       ...(spec ? { moment: { rank: spec.rank, score: spec.score, breakdown: spec.breakdown, kills: spec.kills, killTicks: spec.killTicks, weapons: spec.weapons, flags: spec.flags, ...(spec.clutch ? { clutch: { vs: spec.clutch.vs, won: spec.clutch.won } } : {}) } } : {}),
       startTick, endTick, seconds: p.plan!.seconds, frames: p.plan!.frames, createdAt: new Date().toISOString(),
       renderKey, render: { ...renderInputs, node: versions.node, mapping: capture.mapping, trim: p.plan, segments: p.segments!.map(({ startTick, endTick, speed, outSeconds }) => ({ startTick, endTick, speed, outSeconds })), workDir },
-      timing: "scheduled",
+      kind: "highlight", timing: "scheduled",
       crosshair: { source: crosshair, demoPatch: facts.patch, cutoff: cutoff ?? null },
     }, o.replaces);
+    // The page shows each clip as it lands; inside a pnpm go run it says the run is still going.
+    try { writeLibraryPage({ running: !!o.inBatch }); } catch (e) { console.error(`library page not rewritten: ${(e as Error).message}`); }
     const ff = p.segments!.filter((x) => x.speed !== 1);
     console.log(`ok: ${clipPath(id)} (${p.plan!.seconds.toFixed(1)} s from ${((endTick - startTick) / capture.mapping.tickrate).toFixed(1)} s of play${ff.length ? `, ${ff.length} stretch(es) fast-forwarded` : ""}; trimmed by the scheduled record start)`);
     return { status: "done", id, title, clip: clipPath(id) };

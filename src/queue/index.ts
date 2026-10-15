@@ -91,7 +91,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
     let prep: PreparedJob;
     let done: boolean;
     try {
-      prep = await prepareJob({ demo, spec, timeoutS: o.timeoutS, postOnly: o.repostOnly });
+      prep = await prepareJob({ demo, spec, timeoutS: o.timeoutS, postOnly: o.repostOnly, inBatch: true });
       done = prep.inLibrary();
     } catch (e) {
       // Nothing was launched: record it and go on with the next job.

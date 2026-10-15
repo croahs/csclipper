@@ -6,201 +6,289 @@
 <title>croclipper library</title>
 <style>
   :root {
+    --bg: #0e0f11;
+    --surface: #15171a;
+    --surface-2: #1c1f23;
+    --line: #272a30;
+    --text: #e6e8eb;
+    --muted: #979da6;
+    --accent: #f0a63a;
+    --accent-ink: #1a1306;
+    --radius: 6px;
     color-scheme: dark;
-    --bg: #101113;
-    --surface: #17191c;
-    --surface-2: #1f2226;
-    --line: #2b2f34;
-    --text: #e9eaec;
-    --muted: #9da3ab;
-    --accent: #3fcf9e;
-    --accent-ink: #0b1f18;
-    --radius: 10px;
   }
   * { box-sizing: border-box; }
-  html { background: var(--bg); }
+  html, body { height: 100%; }
   body {
-    margin: 0;
-    font: 15px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-    color: var(--text);
-    background: var(--bg);
-    min-height: 100dvh;
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 1440px; margin: 0 auto; padding: 28px 24px 64px; }
-  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
-  h1 { font-size: 26px; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
-  .count { color: var(--muted); font-variant-numeric: tabular-nums; }
-  .controls {
-    display: grid; gap: 14px; align-items: end;
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-    padding: 14px 16px; margin-bottom: 24px;
-    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  button, input, select { font: inherit; color: inherit; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* Layout: sidebar | player | list; the list drops under the player on narrow windows. */
+  .app {
+    display: grid; height: 100dvh;
+    grid-template-columns: 232px minmax(0, 1fr) 340px;
+    grid-template-areas: "side main list";
   }
-  .field { display: grid; gap: 6px; }
-  .field label { font-size: 13px; color: var(--muted); }
-  select, input[type="range"], input[type="search"] { width: 100%; }
-  input[type="search"] {
-    font: inherit; color: var(--text); background: var(--surface-2);
-    border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px;
+  aside.side { grid-area: side; border-right: 1px solid var(--line); background: var(--surface); overflow-y: auto; padding: 16px 14px 24px; }
+  main.main { grid-area: main; display: flex; flex-direction: column; min-width: 0; padding: 16px 20px; overflow: hidden; }
+  section.list { grid-area: list; border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  @media (max-width: 1180px) {
+    .app { grid-template-columns: 220px minmax(0, 1fr); grid-template-areas: "side main" "side list"; grid-template-rows: auto minmax(0, 1fr); }
+    section.list { border-left: 0; border-top: 1px solid var(--line); }
+    main.main { height: 64vh; } /* the player sizes itself to its area (size containment), so the area needs a height */
   }
-  select {
-    appearance: none; font: inherit; color: var(--text);
-    background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius);
-    padding: 8px 32px 8px 10px;
-    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
-    background-position: calc(100% - 16px) 55%, calc(100% - 11px) 55%;
-    background-size: 5px 5px; background-repeat: no-repeat;
+  @media (max-width: 720px) {
+    .app { display: block; height: auto; }
+    aside.side { border-right: 0; border-bottom: 1px solid var(--line); }
+    section.list { max-height: none; }
   }
-  select:focus-visible, input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  input[type="range"] { accent-color: var(--accent); }
-  .range-value { color: var(--text); font-variant-numeric: tabular-nums; }
-  .grid { display: grid; gap: 22px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr)); }
-  article {
-    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-    overflow: hidden; display: grid; grid-template-rows: auto 1fr;
+
+  /* Sidebar */
+  h1 { font-size: 15px; font-weight: 650; margin: 0 0 4px; letter-spacing: 0.01em; }
+  .run { font-size: 12px; color: var(--accent); margin: 0 0 12px; }
+  .run[hidden] { display: none; }
+  .stamp { font-size: 12px; color: var(--muted); margin: 0 0 14px; }
+  label.field { display: grid; gap: 6px; font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+  input[type="search"], select {
+    width: 100%; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 7px 9px; color: var(--text);
   }
-  video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #0a0b0c; }
-  .meta { padding: 12px 14px 14px; display: grid; gap: 8px; }
-  .title-row { display: flex; gap: 10px; align-items: flex-start; }
-  .no {
-    flex: none; min-width: 34px; text-align: center; font-weight: 700; font-size: 13px;
-    padding: 2px 7px; border-radius: var(--radius);
-    background: var(--accent); color: var(--accent-ink); font-variant-numeric: tabular-nums;
+  input[type="search"]::placeholder { color: #7d838c; }
+  input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .group { margin: 18px 0 0; }
+  .group h2 { font-size: 12px; font-weight: 600; color: var(--muted); margin: 0 0 6px; }
+  .facet { display: grid; gap: 1px; }
+  .facet button {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+    width: 100%; text-align: left; background: none; border: 0; border-radius: var(--radius);
+    padding: 5px 8px; cursor: pointer; color: var(--text);
   }
-  .title { font-weight: 600; line-height: 1.35; }
-  .facts { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
-  .facts b { color: var(--text); font-weight: 600; }
-  .tags { display: flex; flex-wrap: wrap; gap: 6px; }
-  .tag { font-size: 12px; padding: 2px 8px; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--line); color: var(--text); }
-  .empty { padding: 48px 24px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: var(--radius); }
+  .facet button:hover { background: var(--surface-2); }
+  .facet button[aria-pressed="true"] { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
+  .facet .count { color: var(--muted); font-size: 12px; }
+  .facet .sub { color: var(--muted); font-size: 12px; }
+
+  /* Player */
+  .stage { flex: 1; min-height: 0; display: flex; align-items: flex-start; justify-content: center; }
+  /* The player is as large as the area allows at 16:9, leaving room for the title line under it. */
+  .col { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+  .frame { width: 100%; aspect-ratio: 16 / 9; background: #08090a; border-radius: var(--radius); overflow: hidden; }
+  .frame video { display: block; width: 100%; height: 100%; background: #08090a; }
+  @supports (width: 1cqw) {
+    .stage { container-type: size; }
+    .col { width: min(100cqw, calc((100cqh - 56px) * 16 / 9)); }
+  }
+  @media (max-width: 720px) { main.main { height: auto; } .stage { display: block; container-type: normal; } .col { width: 100%; } }
+  .now { display: flex; align-items: baseline; gap: 12px; min-height: 44px; }
+  .now .no { flex: none; font-weight: 700; font-size: 13px; padding: 2px 8px; border-radius: var(--radius); background: var(--accent); color: var(--accent-ink); }
+  .now .title { font-weight: 600; font-size: 16px; }
+  .now .facts { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .hint { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; }
+  @media (max-width: 1180px) { .hint { display: none; } }
+
+  /* Clip list */
+  .list-head { display: flex; justify-content: space-between; align-items: baseline; padding: 14px 14px 8px; color: var(--muted); font-size: 12px; }
+  ol.rows { list-style: none; margin: 0; padding: 0 6px 16px; overflow-y: auto; flex: 1; min-height: 0; }
+  ol.rows li button {
+    display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 2px 10px; align-items: baseline;
+    width: 100%; text-align: left; background: none; border: 0; border-radius: var(--radius); padding: 7px 8px; cursor: pointer; color: var(--text);
+  }
+  ol.rows li button:hover { background: var(--surface-2); }
+  ol.rows li button[aria-current="true"] { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
+  ol.rows .n { color: var(--muted); font-size: 12px; text-align: right; }
+  ol.rows li button[aria-current="true"] .n { color: var(--accent); font-weight: 650; }
+  ol.rows .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  ol.rows .m { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }
+  .empty { padding: 28px 16px; color: var(--muted); }
   .empty code { color: var(--text); }
-  footer { margin-top: 40px; color: var(--muted); font-size: 13px; }
-  @media (max-width: 640px) { .wrap { padding: 20px 16px 48px; } }
+  .empty button { margin-top: 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 12px; cursor: pointer; }
   @media (prefers-reduced-motion: no-preference) {
-    article { transition: border-color .2s ease; }
-    article:hover { border-color: #3a4048; }
+    .facet button, ol.rows li button { transition: background-color .15s ease; }
   }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
+<div class="app">
+  <aside class="side" aria-label="Filters">
     <h1>Clips</h1>
-    <span class="count" id="count"></span>
-  </header>
-
-  <section class="controls" aria-label="Filter and sort">
-    <div class="field">
-      <label for="find">Find</label>
+    <p class="run" id="run" hidden></p>
+    <p class="stamp" id="stamp"></p>
+    <label class="field">Find
       <input id="find" type="search" placeholder="Clip number or title" autocomplete="off">
-    </div>
-    <div class="field">
-      <label for="map">Map</label>
-      <select id="map"><option value="">All maps</option></select>
-    </div>
-    <div class="field">
-      <label for="kills">Kills</label>
-      <select id="kills">
-        <option value="0">Any</option>
-        <option value="2">2 or more</option>
-        <option value="3">3 or more</option>
-        <option value="4">4 or more</option>
-        <option value="5">5</option>
-      </select>
-    </div>
-    <div class="field">
-      <label for="score">Score at least <span class="range-value" id="scoreValue">0</span></label>
-      <input id="score" type="range" min="0" max="200" step="5" value="0">
-    </div>
-    <div class="field">
-      <label for="sort">Sort</label>
-      <select id="sort">
+    </label>
+    <label class="field">Sort
+      <select id="sort" autocomplete="off">
         <option value="score">Highest score</option>
-        <option value="date">Newest first</option>
+        <option value="match">Newest match</option>
+        <option value="no">Clip number</option>
       </select>
-    </div>
-  </section>
+    </label>
+    <div class="group"><h2>Kind</h2><div class="facet" id="kinds"></div></div>
+    <div class="group"><h2>Map</h2><div class="facet" id="maps"></div></div>
+    <div class="group"><h2>Match</h2><div class="facet" id="matches"></div></div>
+  </aside>
 
-  <main id="grid" class="grid" aria-live="polite"></main>
-  <footer id="generated"></footer>
+  <main class="main">
+    <div class="stage">
+      <div class="col">
+        <div class="frame"><video id="player" controls playsinline preload="metadata"></video></div>
+        <div class="now" id="now"></div>
+      </div>
+    </div>
+  </main>
+
+  <section class="list" aria-label="Clips">
+    <div class="list-head"><span id="count"></span><span>Score / length</span></div>
+    <ol class="rows" id="rows"></ol>
+  </section>
 </div>
 
 <script type="application/json" id="clips">/*__CLIPS__*/[]</script>
 <script>
   "use strict";
   const data = JSON.parse(document.getElementById("clips").textContent);
-  const clips = data.clips;
+  const clips = data.clips || [];
   const $ = (id) => document.getElementById(id);
-  const maps = [...new Set(clips.map((c) => c.map).filter(Boolean))].sort();
-  for (const m of maps) $("map").add(new Option(m.replace(/^de_/, ""), m));
-  const maxScore = Math.max(0, ...clips.map((c) => c.score ?? 0));
-  $("score").max = String(Math.max(50, Math.ceil(maxScore / 10) * 10));
-  $("generated").textContent = "Generated " + new Date(data.generatedAt).toLocaleString();
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const KINDS = [["highlight", "Highlights"], ["deaths", "Deaths"], ["kills", "Kills"]];
+  const mapName = (m) => (m || "unknown").replace(/^de_/, "");
+  const dateOf = (c) => c.matchDate || c.createdAt;
+  const day = (iso) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 
-  function el(tag, cls, text) {
-    const e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (text !== undefined) e.textContent = text;
-    return e;
+  // Matches: one per demo, newest first, labelled by date and map.
+  const matches = new Map();
+  for (const c of clips) {
+    const m = matches.get(c.match) || { key: c.match, date: c.matchDate, map: c.map, n: 0 };
+    m.n++; matches.set(c.match, m);
   }
-  function card(c) {
-    const a = el("article");
-    const v = el("video");
-    v.controls = true;
-    v.preload = "metadata";
-    v.src = c.file;
-    // Clips fade in from black: show a frame just past the fade until first play, then start at 0.
-    v.addEventListener("loadedmetadata", () => { if (!v.played.length) v.currentTime = Math.min(0.6, v.duration / 2); }, { once: true });
-    v.addEventListener("play", () => { if (v.currentTime <= 0.65 && v.played.length <= 1) v.currentTime = 0; }, { once: true });
-    a.append(v);
-    const meta = el("div", "meta");
-    const row = el("div", "title-row");
-    if (c.no !== undefined) { const n = el("span", "no", String(c.no)); n.title = "Clip " + c.no; row.append(n); }
-    row.append(el("span", "title", c.title));
-    meta.append(row);
-    const facts = el("div", "facts");
-    const fact = (label, value) => { const s = el("span"); s.append(label + " "); s.append(el("b", "", value)); facts.append(s); };
-    if (c.score !== undefined) fact("Score", String(c.score));
-    if (c.rank) fact("Rank in demo", "#" + c.rank);
-    if (c.kills) fact("Kills", String(c.kills));
-    fact("Length", c.seconds.toFixed(1) + " s");
-    fact("Added", new Date(c.createdAt).toLocaleDateString());
-    meta.append(facts);
-    const tags = [...(c.clutch ? ["1v" + c.clutch.vs + (c.clutch.won ? " clutch" : " clutch lost")] : []), ...(c.flags || [])];
-    if (tags.length) {
-      const t = el("div", "tags");
-      for (const x of tags) t.append(el("span", "tag", x));
-      meta.append(t);
+  const matchList = [...matches.values()].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+
+  // State. Controls are reset on every load: a browser restoring an old filter
+  // must not leave the page looking empty.
+  const state = { kind: null, map: null, match: null, current: null };
+  $("find").value = ""; $("sort").value = "score";
+
+  if (data.running) { $("run").hidden = false; $("run").textContent = "Run in progress: " + clips.length + " clips so far"; }
+  $("stamp").textContent = "Updated " + new Date(data.generatedAt).toLocaleString();
+
+  function facet(container, items, key) {
+    container.replaceChildren();
+    for (const [value, label, count, sub] of items) {
+      const b = el("button");
+      b.type = "button";
+      b.setAttribute("aria-pressed", String(state[key] === value));
+      b.dataset.facet = key + ":" + value;
+      const left = el("span", "", label);
+      if (sub) { left.append(" "); left.append(el("span", "sub", sub)); }
+      b.append(left, el("span", "count num", String(count)));
+      b.addEventListener("click", () => {
+        state[key] = state[key] === value ? null : value;
+        render();
+        // The facet buttons were rebuilt: keep keyboard focus on the one just used.
+        const again = [...document.querySelectorAll("[data-facet]")].find((x) => x.dataset.facet === key + ":" + value);
+        if (again) again.focus({ preventScroll: true });
+      });
+      container.append(b);
     }
-    a.append(meta);
-    return a;
   }
+
+  function shown() {
+    const q = $("find").value.trim().toLowerCase();
+    const num = /^(clip\s*|#)?(\d+)$/.exec(q);
+    const sort = $("sort").value;
+    return clips
+      .filter((c) => (!state.kind || c.kind === state.kind) && (!state.map || c.map === state.map) && (!state.match || c.match === state.match))
+      .filter((c) => !q || (num ? c.no === Number(num[2]) : c.title.toLowerCase().includes(q)))
+      .sort((a, b) => sort === "no" ? (a.no || 0) - (b.no || 0)
+        : sort === "match" ? dateOf(b).localeCompare(dateOf(a)) || (a.round || 0) - (b.round || 0)
+        : (b.score ?? -1) - (a.score ?? -1));
+  }
+
+  function play(c, autoplay) {
+    state.current = c ? c.id : null;
+    const v = $("player");
+    const now = $("now");
+    now.replaceChildren();
+    if (!c) { v.removeAttribute("src"); v.load(); return; }
+    if (v.getAttribute("src") !== c.file) { v.src = c.file; }
+    // Sound on. Browsers allow that only after a click or key press, so the first clip on load waits.
+    if (autoplay) v.play().catch(() => {});
+    now.append(el("span", "no num", String(c.no ?? "")));
+    const text = el("div");
+    text.append(el("div", "title", c.title));
+    const facts = [c.score !== undefined ? "Score " + c.score : null, c.kills ? c.kills + " kills" : null, c.seconds.toFixed(1) + " s",
+      c.clutch ? "1v" + c.clutch.vs + (c.clutch.won ? " won" : " lost") : null, ...(c.flags || []), day(dateOf(c))].filter(Boolean);
+    text.append(el("div", "facts num", facts.join("  /  ")));
+    now.append(text, el("span", "hint", "Left / right or j / k: previous / next"));
+    for (const b of document.querySelectorAll("#rows button")) b.setAttribute("aria-current", String(b.dataset.id === c.id));
+    const cur = document.querySelector('#rows button[aria-current="true"]');
+    if (cur) {
+      cur.scrollIntoView({ block: "nearest" });
+      // Focus follows the playing row when the list has it, so one row is marked, not two.
+      if (document.activeElement && document.activeElement.closest("#rows")) cur.focus({ preventScroll: true });
+    }
+  }
+
   function render() {
-    // A number finds that clip ("17", "clip 17", "#17"); other text matches the title.
-    const find = $("find").value.trim().toLowerCase();
-    const num = /^(clip\s*|#)?(\d+)$/.exec(find);
-    const found = (c) => !find || (num ? c.no === Number(num[2]) : c.title.toLowerCase().includes(find));
-    const map = $("map").value, kills = Number($("kills").value), score = Number($("score").value), sort = $("sort").value;
-    $("scoreValue").textContent = String(score);
-    const shown = clips
-      .filter((c) => found(c) && (!map || c.map === map) && (c.kills ?? 0) >= kills && (c.score ?? 0) >= score)
-      .sort((a, b) => sort === "date" ? b.createdAt.localeCompare(a.createdAt) : (b.score ?? -1) - (a.score ?? -1));
-    $("count").textContent = shown.length === clips.length ? clips.length + " clips" : shown.length + " of " + clips.length + " clips";
-    const grid = $("grid");
-    grid.replaceChildren();
+    const list = shown();
+    const kindCount = (k) => clips.filter((c) => c.kind === k).length;
+    facet($("kinds"), KINDS.map(([k, label]) => [k, label, kindCount(k)]), "kind");
+    const maps = [...new Set(clips.map((c) => c.map))].sort();
+    facet($("maps"), maps.map((m) => [m, mapName(m), clips.filter((c) => c.map === m).length]), "map");
+    facet($("matches"), matchList.map((m) => [m.key, m.date ? day(m.date) : "date unknown", m.n, mapName(m.map)]), "match");
+    $("count").textContent = list.length === clips.length ? clips.length + " clips" : list.length + " of " + clips.length + " clips";
+
+    const rows = $("rows");
+    rows.replaceChildren();
     if (!clips.length) {
-      const e = el("div", "empty");
-      e.append("No clips yet. Drop demos into ");
-      e.append(el("code", "", "demos/inbox"));
-      e.append(" and run ");
-      e.append(el("code", "", "pnpm go"));
-      e.append(".");
-      grid.append(e);
-    } else if (!shown.length) {
-      grid.append(el("div", "empty", "No clips match these filters."));
-    } else for (const c of shown) grid.append(card(c));
+      const e = el("li", "empty");
+      e.append("No clips yet. Drop demos into ", el("code", "", "demos/inbox"), " and run ", el("code", "", "pnpm go"), ".");
+      rows.append(e);
+    } else if (!list.length) {
+      const e = el("li", "empty", "No clips match these filters.");
+      const clear = el("button", "", "Clear filters");
+      clear.type = "button";
+      clear.addEventListener("click", () => { state.kind = state.map = state.match = null; $("find").value = ""; render(); });
+      e.append(el("br"), clear);
+      rows.append(e);
+    }
+    for (const c of list) {
+      const li = el("li");
+      const b = el("button");
+      b.type = "button";
+      b.dataset.id = c.id;
+      b.append(el("span", "n num", String(c.no ?? "")), el("span", "t", c.title),
+        el("span", "m num", (c.score !== undefined ? c.score.toFixed(0) + "  " : "") + c.seconds.toFixed(0) + " s"));
+      b.addEventListener("click", () => play(c, true));
+      li.append(b);
+      rows.append(li);
+    }
+    // Keep the playing clip if it is still listed, else show the first one.
+    const keep = list.find((c) => c.id === state.current);
+    play(keep || list[0] || null, false);
   }
-  for (const id of ["find", "map", "kills", "score", "sort"]) $(id).addEventListener("input", render);
+
+  function step(d) {
+    const list = shown();
+    if (!list.length) return;
+    const i = list.findIndex((c) => c.id === state.current);
+    play(list[Math.min(list.length - 1, Math.max(0, (i < 0 ? 0 : i + d)))], true);
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.altKey || e.ctrlKey || e.metaKey) return;
+    // On the focused player the arrows seek, as players do; j / k still step.
+    const arrows = !(e.target instanceof HTMLVideoElement);
+    if ((arrows && e.key === "ArrowRight") || e.key === "j") { e.preventDefault(); step(1); }
+    else if ((arrows && e.key === "ArrowLeft") || e.key === "k") { e.preventDefault(); step(-1); }
+  });
+  $("find").addEventListener("input", render);
+  $("sort").addEventListener("input", render);
+  // Keep pages restored from the back/forward cache consistent with the reset controls.
+  window.addEventListener("pageshow", (e) => { if (e.persisted) { $("find").value = ""; $("sort").value = "score"; state.kind = state.map = state.match = null; render(); } });
   render();
 </script>
 </body>

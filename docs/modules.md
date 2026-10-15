@@ -244,9 +244,20 @@ re-made. Only a guard refusal gives
   them, to be deleted by hand after checking no cs2.exe / HLAE.exe is left.
 - **Library page.** `src/library/page.html` (committed) with the clip
   index inlined as JSON, every `<` escaped, so it works from `file://`;
-  videos load by relative path. One static file, plain CSS and JS: filter
-  by map, kill count and score, sort by score or date; rank, title, score,
-  kills, clutch and flags per clip.
+  videos load by relative path. One static dark file, plain CSS and JS:
+  a sidebar with Find (clip number or title), sort and the categories kind
+  (highlight, deaths, kills; entry `kind`, absent = highlight), map and
+  match (one per demo, dated by `state/sources/matches.json`, which
+  `pnpm grab` fills from FACEIT history; a demo without a FACEIT match id
+  in its name is "date unknown"); the selected clip plays as large as the
+  window allows at 16:9, with sound (browsers allow sound only after a
+  click or key, so the first clip on load waits); a compact list of the
+  category's clips (number, title, score, length) with the playing one
+  marked; left/right or j/k step through it. Controls reset on every
+  load, so a browser restoring old form values cannot leave it looking
+  empty. `src/library/page.ts` rewrites it (temp, then rename) after every
+  clip a job publishes and at the end of `pnpm go`; inside a run it says
+  "Run in progress: N clips so far".
 - **Stretched aspect** is wired end to end (`captureSize` sets the game
   window, post scales); it has been checked in post only, no game capture
   at 1440x1080 yet.
