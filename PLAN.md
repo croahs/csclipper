@@ -159,7 +159,10 @@ For each moment above a threshold (or top N per demo):
 - `end_tick` = the moment's outcome event, not just its last kill: the
   last kill + 5.5 s (Peder raised it from 2.5 s on 2026-10-15: clips
   ended too abruptly), or the defuse/plant/round end that resolves a
-  clutch, whichever is later, capped at round end + 1 s.
+  clutch, whichever is later. The tail is always honoured even when
+the last kill ends the round (the win banner and freeze time are part
+of the clip); the only cap is the next round's start. Changed
+2026-10-15 after clips 59 and 79 ended right after their last kill.
 - Overlapping moments merge. A moment is never cut short: every kill
   in it and its outcome event are inside the captured span, however
   long. Length is controlled in post instead: stretches with no action
