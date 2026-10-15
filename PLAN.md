@@ -379,7 +379,7 @@ library clip with its own number. All takes in one launch.
 
 **Victims reel** (decided 2026-10-15, after the deaths reel). The
 mirror image: one clip per demo showing every kill of Peder's from
-the victim's first person, 10 s before to 4 s after, same overlay and
+the victim's first person, 10 s before to 2 s after (only the death camera follows), same overlay and
 concatenation. Takes overlap when kills are close, so the chained
 controller must seek backwards between takes (a backward
 `demo_gototick` rewinds and fast-forwards internally; slower, works).
