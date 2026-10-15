@@ -136,10 +136,11 @@ Score per moment from, first ranking only:
 | weapon class (pistol/Deagle/scout vs rifle vs AWP) | difficulty |
 | round won after the moment | impact |
 | victim already low HP (reconstructed from `player_hurt` before the kill) | penalty |
+| no-scope kill, kill while airborne (`attackerinair` on the death event) | added by Peder 2026-10-15 |
+| bullets per kill (POV `weapon_fire` count between kills; fewer is better) | added 2026-10-15; efficiency |
+| flick: yaw turned in the 100–200 ms before the shot, from the POV per-tick view angles, with angle wrapping, scored above a threshold | added 2026-10-15; the earlier deferral is lifted |
 
-Deferred until their definitions and inputs are proven: flick angle
-(yaw delta is recoil and movement as much as flicks, and needs angle
-wrapping and timing rules), trades, "saved a teammate".
+Still deferred: trades, "saved a teammate".
 
 Weights live in one `scoring.json`. Validation: you hand-pick the best
 moments from 3–5 of your demos; the ranking is tuned until it agrees
