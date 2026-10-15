@@ -12,13 +12,14 @@ export type Weights = {
   killBase: Record<string, number>;
   speed: { referenceSeconds: number; pointsPerSecondFaster: number; max: number };
   tightness: { windowSeconds: number; perKillBeyondTwo: number };
-  clutch: { perEnemy: number; wonBonus: number; lostFactor: number };
+  clutch: { byEnemies: Record<string, number>; lostFactor: number };
+  spread: { minDegrees: number; points: number; pointsPer45Degrees: number; max: number };
   flags: { headshot: number; wallbang: number; thrusmoke: number; attackerblind: number };
   style: { oneBulletKill: number; flick: number; flickMinDegrees: number; bigFlick: number; bigFlickMinDegrees: number; noscope: number; airborne: number; facing: number; behind: number; facingMaxDegrees: number };
   economy: { perLnRatio: number; min: number; max: number; pistolRounds: number[] };
   weaponMultiplier: Record<WeaponClass, number>;
   roundOutcome: { won: number; lost: number };
-  lowHp: { threshold: number; penaltyPerKill: number };
+  lowHp: { threshold: number; penaltyPerKill: number; maxPerMoment: number };
   threshold: number;
   includeOvertime: boolean;
 };
@@ -120,7 +121,13 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
     b.speed = Math.round(Math.min(w.speed.max, Math.max(0, (w.speed.referenceSeconds - avgGap) * w.speed.pointsPerSecondFaster)) * 10) / 10;
     if (run.length >= 3) b.tight = (run.length - 2) * w.tightness.perKillBeyondTwo;
   }
-  if (clutch) b.clutch = clutch.vs * w.clutch.perEnemy * (clutch.won ? 1 : w.clutch.lostFactor) + (clutch.won ? w.clutch.wonBonus : 0);
+  // Clutch: by enemies alive at its start, times the share of them he killed in it (at least half).
+  if (clutch) {
+    const inClutch = kills.filter((k) => k.tick >= clutch.fromTick).length;
+    const share = Math.max(0.5, Math.min(1, inClutch / clutch.vs));
+    const base = w.clutch.byEnemies[String(Math.min(clutch.vs, 5))] ?? 0;
+    b.clutch = Math.round(base * share * (clutch.won ? 1 : w.clutch.lostFactor) * 10) / 10;
+  }
   const f = w.flags;
   b.flags = kills.reduce((s, k) => s + (k.headshot ? f.headshot : 0) + (k.penetrated ? f.wallbang : 0) + (k.thrusmoke ? f.thrusmoke : 0) + (k.attackerblind ? f.attackerblind : 0), 0);
   // Style: per-kill multipliers on that kill's share of the kill base (one-bullet, flick, no-scope,
@@ -145,15 +152,33 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
   const extra = factor.reduce((a, f) => a + (f - 1), 0) / n; // the average factor beyond 1
   if (extra !== 0) b.style = Math.round(b.kills * extra * 10) / 10;
 
-  const low = kills.filter((k) => k.victimHpBefore <= w.lowHp.threshold).length;
-  if (low) b.lowHp = -low * w.lowHp.penaltyPerKill;
+  // Low HP: only when someone else brought the victim low: others (teammates, the world) did at least as
+  // much damage to him before the kill as he did. His own spraydown is never "low HP". Capped per moment.
+  const meId = p.identity.steamid;
+  const broughtLowByOthers = (k: Death) => {
+    let mine = 0, others = 0;
+    for (const h of p.hurts ?? []) if (h.round === k.round && h.victim === k.victim && h.tick < k.tick) { if (h.attacker === meId) mine += h.dmg; else others += h.dmg; }
+    return others > 0 && others >= mine;
+  };
+  const low = kills.filter((k) => k.victimHpBefore <= w.lowHp.threshold && broughtLowByOthers(k)).length;
+  if (low) b.lowHp = -Math.min(w.lowHp.maxPerMoment, low * w.lowHp.penaltyPerKill);
+  // Direction spread: the yaw he turned between consecutive kills of the tightest run.
+  if (run.length >= 2) {
+    // Between consecutive known yaws: a kill without one (a victim with no SteamID) is bridged over.
+    const yaws = run.map((k) => k.povYaw).filter((y): y is number => y !== undefined);
+    let turned = 0;
+    for (let i = 1; i < yaws.length; i++) { const d = Math.abs(yaws[i - 1] - yaws[i]) % 360; turned += d > 180 ? 360 - d : d; }
+    const sp = w.spread;
+    if (turned > sp.minDegrees) b.spread = Math.round(Math.min(sp.max, sp.points + ((turned - sp.minDegrees) / 45) * sp.pointsPer45Degrees) * 10) / 10;
+  }
   // Round factors on the round's whole score, each part showing its change: economy (the buy
   // difference at freeze end), then the outcome (won or lost).
+  // Economy multiplies the kill points only (kills and style); outcome then scales the whole round.
   const eco = economyFactor(p, kills[0]?.round, w);
+  if (eco !== 1) b.economy = Math.round(((b.kills ?? 0) + (b.style ?? 0)) * (eco - 1) * 10) / 10;
   const sum = Object.values(b).reduce((a, x) => a + x, 0);
-  if (eco !== 1) b.economy = Math.round(sum * (eco - 1) * 10) / 10;
   const outcome = roundWon ? w.roundOutcome.won : w.roundOutcome.lost;
-  if (outcome !== 1) b.outcome = Math.round(sum * eco * (outcome - 1) * 10) / 10;
+  if (outcome !== 1) b.outcome = Math.round(sum * (outcome - 1) * 10) / 10;
   return { score: Math.round(Object.values(b).reduce((a, x) => a + x, 0) * 10) / 10, breakdown: b };
 }
 

@@ -13,7 +13,8 @@
     "2026-10-15 flickMinDegrees 25 -> 15 (Peder): on the 29 stored demos only 2 of 531 gun kills turned more than 25 degrees into the kill shot, 8 more than 15; at 25 the flick almost never counted",
     "2026-10-15 two flick tiers (Peder): 15-45 degrees keeps flick 1.5; 45 degrees or more is a big flick, bigFlick 2.5 on that kill. On the 29 stored demos no gun kill reaches 45 (max 35 of 531), so nothing moves today",
     "2026-10-15 round outcome as a multiplier (Peder): the flat roundWon +8 is replaced by x1.1 for a won round and x0.9 for a lost one on the round's whole score, a light weight for impact; the clutch won bonus stays separate",
-    "2026-10-15 facing per kill (Peder): the victim looking within 60 degrees of him at the kill tick multiplies that kill's share by 1.1, a kill from behind by 0.9 (few bullets in the back is easy); unknown angles count 1"
+    "2026-10-15 facing per kill (Peder): the victim looking within 60 degrees of him at the kill tick multiplies that kill's share by 1.1, a kill from behind by 0.9 (few bullets in the back is easy); unknown angles count 1",
+    "2026-10-15 hand-pick fixes (Peder: 63 and 29 > 90, 13 > 84/105): clutch scales with enemies and with the share killed (1v1 with one kill 10, 1v2 30, 1v3 50, ...; lost x0.3); the low-HP penalty skips a victim his own damage brought low and is capped at 8 per moment; economy multiplies only the kill points; new direction spread bonus (yaw turned between the tightest run's kills, 4 points above 60 degrees, +2 per 45 degrees, at most 10)"
   ],
   "killBase": {
     "1": 10,
@@ -33,9 +34,22 @@
     "windowSeconds": 6,
     "perKillBeyondTwo": 15
   },
+  "spread": {
+    "_note": "direction spread: the yaw he turned between consecutive kills of the tightest run, summed; above minDegrees it earns points, a kill turned through several directions",
+    "minDegrees": 60,
+    "points": 4,
+    "pointsPer45Degrees": 2,
+    "max": 10
+  },
   "clutch": {
-    "perEnemy": 15,
-    "wonBonus": 20,
+    "_note": "value by opponents (index = enemies alive at the clutch start, 5 for 5+), times the share of them he killed in the clutch (at least half), times lostFactor when lost",
+    "byEnemies": {
+      "1": 10,
+      "2": 30,
+      "3": 50,
+      "4": 70,
+      "5": 90
+    },
     "lostFactor": 0.3
   },
   "flags": {
@@ -58,7 +72,7 @@
     "facingMaxDegrees": 60
   },
   "economy": {
-    "_note": "the round's score times 1 + perLnRatio x ln(enemy buy / own buy) at freeze end, kept within min..max: about 0.7 farming an eco, 1.4 on an eco against a full buy, 1.0 at parity; pistol rounds count as parity",
+    "_note": "multiplies the kill points (kills and style), not the round's other parts: 1 + perLnRatio x ln(enemy buy / own buy) at freeze end, kept within min..max; pistol rounds count as parity",
     "perLnRatio": 0.2,
     "min": 0.7,
     "max": 1.4,
@@ -84,8 +98,10 @@
     "other": 1.0
   },
   "lowHp": {
+    "_note": "a victim at or below threshold HP before the killing hit, damaged by someone else first, costs penaltyPerKill; his own earlier damage on that victim does not count; at most maxPerMoment",
     "threshold": 30,
-    "penaltyPerKill": 6
+    "penaltyPerKill": 6,
+    "maxPerMoment": 8
   },
   "threshold": 30,
   "includeOvertime": false

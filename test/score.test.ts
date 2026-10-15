@@ -107,7 +107,7 @@ test("economy: about 1.4 on an eco against a full buy, 0.7 farming an eco, 1 nea
   assert.equal(economyFactor(round(5, 0, 4500), 5, w), 1, "an unknown buy counts as parity");
 });
 
-test("economy scales the whole score; breakdown.economy is the change", () => {
+test("economy scales the kill points; breakdown.economy is the change", () => {
   const p = { ...demo(), rounds: [{ n: 5, teams: { [ME]: "T" }, equip: { T: 2800, CT: 20700 } }] } as unknown as ParsedDemo;
   const even = { ...demo(), rounds: [{ n: 5, teams: { [ME]: "T" }, equip: { T: 20000, CT: 20000 } }] } as unknown as ParsedDemo;
   const ks = [kill(0, { round: 5 }), kill(2000, { round: 5 })];
@@ -131,4 +131,44 @@ test("facing: within 60 degrees x1.1, from behind x0.9, unknown x1", () => {
   assert.equal(at(30), Math.round(w.killBase["1"] * (w.style.facing - 1) * 10) / 10);
   assert.equal(at(120), Math.round(w.killBase["1"] * (w.style.behind - 1) * 10) / 10, "negative: a kill from behind");
   assert.equal(at(undefined), undefined);
+});
+
+test("clutch: by enemies and by the share he killed; a 1v1 with one kill is small, lost x0.3", () => {
+  const c = (vs: number, won: boolean) => ({ vs, won, fromTick: 0 });
+  const one = scoreKills(demo(), [kill(10)], c(1, true), true, w).breakdown.clutch;
+  const twoOfTwo = scoreKills(demo(), [kill(10), kill(20)], c(2, true), true, w).breakdown.clutch;
+  const oneOfTwo = scoreKills(demo(), [kill(10)], c(2, true), true, w).breakdown.clutch;
+  const lost = scoreKills(demo(), [kill(10), kill(20)], c(2, false), false, w).breakdown.clutch;
+  assert.equal(one, w.clutch.byEnemies["1"]);
+  assert.equal(twoOfTwo, w.clutch.byEnemies["2"]);
+  assert.equal(oneOfTwo, w.clutch.byEnemies["2"] / 2);
+  assert.equal(lost, Math.round(w.clutch.byEnemies["2"] * w.clutch.lostFactor * 10) / 10);
+});
+
+test("low HP: only when someone else brought the victim low; capped per moment", () => {
+  const hurt = (tick: number, victim: string, attacker: string) => ({ tick, round: 1, attacker, victim, dmg: 50, health: 10, weapon: "ak47" });
+  const own = { ...demo(), hurts: [hurt(50, "v100", ME)] } as unknown as ParsedDemo;
+  const other = { ...demo(), hurts: [hurt(50, "v100", "x"), hurt(150, "v200", "x"), hurt(250, "v300", "x")] } as unknown as ParsedDemo;
+  assert.equal(scoreKills(own, [kill(100, { victimHpBefore: 10 })], undefined, false, w).breakdown.lowHp, undefined, "his own spray");
+  assert.equal(scoreKills(other, [kill(100, { victimHpBefore: 10 })], undefined, false, w).breakdown.lowHp, -w.lowHp.penaltyPerKill);
+  const three = scoreKills(other, [100, 200, 300].map((t) => kill(t, { victimHpBefore: 10 })), undefined, false, w).breakdown.lowHp;
+  assert.equal(three, -w.lowHp.maxPerMoment);
+});
+
+test("direction spread: yaw turned between the run's kills; nothing at 60 degrees or less", () => {
+  const at = (yaws: number[]) => scoreKills(demo(), yaws.map((y, i) => kill(i * 64, { povYaw: y })), undefined, false, w).breakdown.spread;
+  assert.equal(at([0, 50]), undefined);
+  assert.equal(at([0, 90, 180]), Math.round(Math.min(w.spread.max, w.spread.points + ((180 - w.spread.minDegrees) / 45) * w.spread.pointsPer45Degrees) * 10) / 10);
+  assert.equal(at([170, -170]), undefined, "wrapped: 20 degrees, not 340");
+});
+
+test("clutch counts only kills from its start; economy leaves non-kill parts alone; spread bridges an unknown yaw", () => {
+  const c = { vs: 2, won: true, fromTick: 1000 };
+  assert.equal(scoreKills(demo(), [kill(500), kill(1500)], c, true, w).breakdown.clutch, w.clutch.byEnemies["2"] / 2, "the kill before the clutch does not count");
+  const r = (own: number, enemy: number) => ({ ...demo(), rounds: [{ n: 5, teams: { [ME]: "T" }, equip: { T: own, CT: enemy } }] }) as unknown as ParsedDemo;
+  const ks = [kill(0, { round: 5 })];
+  const withClutch = scoreKills(r(2800, 20700), ks, { vs: 1, won: true, fromTick: 0 }, true, w).breakdown;
+  assert.equal(withClutch.economy, Math.round(withClutch.kills! * (w.economy.max - 1) * 10) / 10, "the clutch is not scaled by economy");
+  const sp = scoreKills(demo(), [kill(0, { povYaw: 0 }), kill(64), kill(128, { povYaw: 180 })], undefined, false, w).breakdown.spread;
+  assert.ok(sp !== undefined && sp > 0, "0 -> (unknown) -> 180 still counts 180");
 });

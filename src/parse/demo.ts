@@ -17,7 +17,7 @@ import { readFileInfo } from "./fileinfo.ts";
 const require = createRequire(import.meta.url);
 const dp = require("@laihoe/demoparser2");
 
-const SCHEMA = 7; // 3: airborne on deaths, POV flicks; 4: flicks from gunshots only; 5: names on deaths; 6: equipment per team; 7: victim facing
+const SCHEMA = 8; // 8: his yaw at each kill; 3: airborne on deaths, POV flicks; 4: flicks from gunshots only; 5: names on deaths; 6: equipment per team; 7: victim facing
 const REGULATION_ROUNDS = 24; // MR12; later match rounds are overtime
 
 export type Team = "T" | "CT";
@@ -30,6 +30,7 @@ export type Death = {
   // POV kills only: the angle between the victim's view (yaw) and the line from the victim to him,
   // the tick before the kill; undefined when the parser has no position or angle for either.
   victimFacingDeg?: number;
+  povYaw?: number; // POV kills only: his view yaw the tick before the kill (direction spread)
 };
 // The POV's view turn before each of his gun kills: the largest yaw change from 100-200 ms
 // before the kill shot (his last gunshot at or before the kill, within 1 s) to the shot itself.
@@ -170,6 +171,7 @@ function extract(demo: string, sha256: string, pov: string, key: string): Parsed
   // Facing: for each POV kill, the victim's yaw against the direction to the POV, the tick before.
   // Victims without a SteamID (bots, a dropped player) have no angles to ask for.
   const povKillsAll = deaths.filter((d) => d.attacker === pov && d.victim !== pov && sid(d.victim));
+  // (his yaw is read with the facing data; a kill of a player without a SteamID gets neither)
   if (povKillsAll.length) {
     type Pos = { tick: number; steamid: string; X: number; Y: number; yaw: number };
     const at = new Map<string, Pos>();
@@ -177,6 +179,7 @@ function extract(demo: string, sha256: string, pov: string, key: string): Parsed
     for (const row of rows2) at.set(`${row.tick}:${row.steamid}`, row);
     for (const d of povKillsAll) {
       const v = at.get(`${d.tick - 1}:${d.victim}`), a = at.get(`${d.tick - 1}:${pov}`);
+      if (a && Number.isFinite(a.yaw)) d.povYaw = Math.round(a.yaw * 10) / 10;
       if (!v || !a || ![v.X, v.Y, v.yaw, a.X, a.Y].every(Number.isFinite)) continue;
       const toAttacker = (Math.atan2(a.Y - v.Y, a.X - v.X) * 180) / Math.PI;
       const diff = Math.abs(((v.yaw - toAttacker) % 360 + 540) % 360 - 180);
