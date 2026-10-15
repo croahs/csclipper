@@ -145,9 +145,8 @@ Score per moment from, first ranking only:
 
 Still deferred: trades, "saved a teammate".
 
-Peder's hand-picks (ordering constraints the ranking must satisfy)
-live in `docs/hand-picks.md`; every scoring change reports whether
-they still hold.
+Peder's hand-picks (guidance, not hard constraints) live in
+`docs/hand-picks.md`; every scoring change reports which hold.
 
 Weights live in one `scoring.json`. Validation: you hand-pick the best
 moments from 3–5 of your demos; the ranking is tuned until it agrees

@@ -1,9 +1,11 @@
 # Hand-picks
 
-Peder's judgments about clips, as ordering constraints for the
-ranking. Clip numbers refer to `library/index.json`. Every scoring
-change rescores these moments and reports whether each line still
-holds; a violated line is a calibration bug, not a matter of taste.
+Peder's judgments about clips, as guidance for the ranking, not
+hard constraints: taste varies with length, pacing and mood, and he
+says so himself. Clip numbers refer to `library/index.json`. Every
+scoring change rescores these moments and reports which lines hold
+and which do not, with the signals behind each; a broken line is a
+prompt to look, not an automatic retune.
 
 | Date | Constraint | Note |
 |---|---|---|
