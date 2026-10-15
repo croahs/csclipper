@@ -202,9 +202,13 @@ reference for launch options and command sequence. Expected shape:
 4. Record the output-time to demo-tick mapping per job so post can trim
    exactly; the lead-in margin is defined by that mapping, not assumed.
    M1 measures it from the POV player's gunshots (`docs/modules.md`).
-5. Validate the output, kill the game, next job. One launch per clip is
-   the baseline; chaining clips in one launch is an optimization that
-   comes after the gate passes.
+5. Validate the output, kill the game, next job. Decided 2026-10-15:
+   one launch per demo, never per clip. All takes for a demo (every
+   selected moment, and every death for the deaths reel) are scheduled
+   in one cfg: seek to the next take's start tick, settle, lock POV
+   (which may be a different player per take), record, stop, seek
+   again, and quit after the last. The game is never restarted between
+   takes.
 
 **Audio is a capture-mode decision.** HLAE's own audio stream is first
 choice because it shares the video timebase. There is an open report of
@@ -363,6 +367,13 @@ tuning tool here, not a milestone of its own.
 **M3. Batch and resume.** Queue, the resumability contract end to end,
 crash recovery, library page with players and filters. "Drop demos in,
 run one command, come back to clips."
+
+**Deaths reel** (decided 2026-10-15, after M4a). One clip per demo
+showing every death of Peder from the killer's first person: 10 s
+before the kill to 4 s after, each take spectating the killer's slot
+with the same HUD, crosshair and TrueView rules, a small overlay per
+death (round, weapon, killer), concatenated with short fades into one
+library clip with its own number. All takes in one launch.
 
 **M4. Sources and polish.** FACEIT auto-download, overlays, killfeed,
 montage builder, OBS fallback, Valve GC download, deferred scoring
