@@ -15,7 +15,7 @@
   },
   "clip": {
     "leadInSeconds": 4,
-    "tailSeconds": 7.5
+    "tailSeconds": 5.5
   },
   "reels": {
     "deaths": { "enabled": true, "beforeSeconds": 7, "afterSeconds": 4 },

@@ -63,7 +63,7 @@ engagement (POV shot or damage dealt/taken) within 5 s before the first
 kill, minus the lead-in; end = last kill + the tail, or for a clutch 1 s
 after what resolved it (the POV's plant/defuse within 25 s of the last
 kill, else a round end within 5 s of it, else the last kill) when that is
-later; never past the next round's start (the tail runs on past round end; after the last round, the demo's end). Lead-in (4 s) and tail (7.5 s) are in
+later; never past the next round's start (the tail runs on past round end; after the last round, the demo's end). Lead-in (4 s) and tail (5.5 s) are in
 `config.json` → `clip` and part of the moments cache key;
 overlapping moments in a round merge; nothing is cut short, however long
 (post fast-forwards the stretches without action: `docs/modules.md`,

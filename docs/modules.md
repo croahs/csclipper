@@ -160,7 +160,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
   the fast ones, then concat, with fades over the whole clip. The first
   window starts at the clip start and the last ends at its end, so the
   lead-in (`config.json` → `clip.leadInSeconds`, 4 s) and the tail after
-  the last kill (`clip.tailSeconds`, 7.5 s; the span runs on to the clutch
+  the last kill (`clip.tailSeconds`, 5.5 s; the span runs on to the clutch
   outcome + 1 s if later, past round end too, capped only by the next
   round's start, after the last round by the demo's end) always play in full. About 30 s is a
   goal, not a cap.
