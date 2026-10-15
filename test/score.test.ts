@@ -71,7 +71,7 @@ test("one-bullet kills count guns only; flicks below the threshold multiply noth
   const one = scoreKills(demo({ fires: [100] }), [kill(100)], undefined, false, w).breakdown.style;
   const three = scoreKills(demo({ fires: [60, 80, 100] }), [kill(100)], undefined, false, w).breakdown.style;
   const knife = scoreKills(demo({ fires: [100] }), [kill(100, { weapon: "knife" })], undefined, false, w).breakdown.style;
-  const smallFlick = scoreKills(demo({ flicks: [{ killTick: 100, yawDegrees: 20 }] }), [kill(100)], undefined, false, w).breakdown.style;
+  const smallFlick = scoreKills(demo({ flicks: [{ killTick: 100, yawDegrees: 10 }] }), [kill(100)], undefined, false, w).breakdown.style;
   assert.equal(one, Math.round(w.killBase["1"] * (w.style.oneBulletKill - 1) * 10) / 10);
   assert.equal(three, undefined);
   assert.equal(knife, undefined);
