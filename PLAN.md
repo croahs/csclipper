@@ -109,16 +109,18 @@ rendering or with Peder playing.
 
 ### 3. Score
 
-Two layers, because a clutch is a round property and a multikill is a
-sequence property, and clip boundaries differ between them.
+Two layers, both per round: round context (clutch, outcome) and the
+round's kill sequence.
 
 - **Round context** (per round you were alive in): round outcome, your
   kills, whether you were the last alive on your team and how many
   enemies were alive then (1vX), whether you won it, whether the round
   ended by your kill, defuse or plant. Defines warmup, knife, overtime,
   team changes, suicides and teamkills explicitly and excludes them.
-- **Kill clusters**: your kills within a sliding window (~6 s between
-  kills, same round).
+- **Kill clusters**: replaced on 2026-10-15 by Peder's rule: all of
+  your kills in a round are one moment, however far apart, so a 5k is
+  always one clip and the stretches between kills are fast-forwarded
+  in post. No gap threshold.
 
 Score per moment from, first ranking only:
 
