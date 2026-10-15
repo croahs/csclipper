@@ -47,7 +47,7 @@ const WEAPON_NAMES: Record<string, string> = {
   mp7: "MP7", mp5sd: "MP5", ump45: "UMP", p90: "P90", bizon: "Bizon", nova: "Nova", xm1014: "XM1014", mag7: "MAG-7",
   sawedoff: "Sawed-Off", m249: "M249", negev: "Negev", g3sg1: "G3SG1", scar20: "SCAR-20",
 };
-const weaponName = (w: string) => (weaponClass(w) === "knife" ? "knife" : WEAPON_NAMES[w] ?? w);
+export const weaponName = (w: string) => (weaponClass(w) === "knife" ? "knife" : WEAPON_NAMES[w] ?? w);
 
 function flagsOf(kills: Death[]): string[] {
   const f: string[] = [];

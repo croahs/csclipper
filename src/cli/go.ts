@@ -40,6 +40,11 @@ async function main(): Promise<number> {
     console.log("\n== batch ==");
     console.log(`demos: ${r.demos} (${r.ingested} new), moments selected: ${r.selected}`);
     console.log(`rendered: ${r.rendered.length ? r.rendered.join(" | ") : "none"}`);
+    // Made this run, by kind, with clip numbers (the page and pnpm clip --rerender take them).
+    for (const kind of ["highlight", "deaths", "kills"]) {
+      const made = r.made.filter((m) => m.kind === kind);
+      if (made.length) console.log(`${kind === "highlight" ? "highlights" : kind === "deaths" ? "deaths reels" : "kills reels"}: ${made.map((m) => `clip ${m.no ?? "?"} (${m.title})`).join(", ")}`);
+    }
     console.log(`already in the library: ${r.skipped.length}`);
     if (r.settled) console.log(`settled demos skipped: ${r.settled}`);
     if (r.emptyDemos.length) console.log(`no moment above the threshold: ${r.emptyDemos.join(", ")}`);

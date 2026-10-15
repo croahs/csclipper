@@ -15,6 +15,7 @@ export type Weights = {
   clutch: { perEnemy: number; wonBonus: number; lostFactor: number };
   flags: { headshot: number; wallbang: number; thrusmoke: number; attackerblind: number };
   style: { oneBulletKill: number; flick: number; flickMinDegrees: number; noscope: number; airborne: number };
+  economy: { perLnRatio: number; min: number; max: number; pistolRounds: number[] };
   weaponMultiplier: Record<WeaponClass, number>;
   roundWon: number;
   lowHp: { threshold: number; penaltyPerKill: number };
@@ -141,7 +142,22 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
   if (roundWon) b.roundWon = w.roundWon;
   const low = kills.filter((k) => k.victimHpBefore <= w.lowHp.threshold).length;
   if (low) b.lowHp = -low * w.lowHp.penaltyPerKill;
+  // Economy: the round's score scaled by the buy difference at freeze end; `economy` holds the change.
+  const eco = economyFactor(p, kills[0]?.round, w);
+  const sum = Object.values(b).reduce((a, x) => a + x, 0);
+  if (eco !== 1) b.economy = Math.round(sum * (eco - 1) * 10) / 10;
   return { score: Math.round(Object.values(b).reduce((a, x) => a + x, 0) * 10) / 10, breakdown: b };
+}
+
+/** 1 + perLnRatio x ln(enemy buy / own buy), within [min, max]; 1 for pistol rounds or when a buy is unknown. */
+export function economyFactor(p: ParsedDemo, round: number | undefined, w: Weights): number {
+  const r = (p.rounds ?? []).find((x) => x.n === round);
+  const team = r ? povTeam(p, r) : undefined;
+  if (!r || !team || !r.equip || w.economy.pistolRounds.includes(r.n)) return 1;
+  const own = r.equip[team], enemy = r.equip[team === "T" ? "CT" : "T"];
+  if (!(own > 0) || !(enemy > 0)) return 1;
+  const e = w.economy;
+  return Math.min(e.max, Math.max(e.min, 1 + e.perLnRatio * Math.log(enemy / own)));
 }
 
 /**

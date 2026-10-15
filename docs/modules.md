@@ -12,7 +12,42 @@ pnpm moments "<demo.dem>"
 pnpm clip "<demo.dem>" --top <n> [--timeout <s>] [--dry-run]
 pnpm clip "<demo.dem>" <startTick> <endTick> [same options]
 pnpm clip --rerender <no|id> [--lead <s>] [--timeout <s>] [--dry-run]
+pnpm deaths "<demo.dem>" [--timeout <s>] [--dry-run]
+pnpm victims "<demo.dem>" [--timeout <s>] [--dry-run]
+pnpm library [--port <n>]
+pnpm drop <no>...
+pnpm trash --empty
 ```
+
+**Reels** (`src/reel/`). `pnpm go` makes two reels for every new demo, in
+the same launch as its highlights (`config.json` → `reels`, each with
+`enabled`, `beforeSeconds`, `afterSeconds`): **deaths**, every death of
+his from his killer's first person (7 s before, 4 s after; a suicide or a
+world death from his own view), and **kills**, every kill of his from the
+victim's first person (7 s before, 2 s after; after the death the game
+shows its death camera). Each take spectates that player's slot with the
+same HUD, crosshair and TrueView rules as a highlight, carries a line of
+text (round, weapon, the other player; Segoe UI Semibold, `drawtext` with
+`expansion=none`), fades in and out, and the takes are concatenated into
+one library clip (`kind` deaths or kills, title `<map> · deaths` /
+`<map> · kills`, `reel.takes` in the entry). Takes that overlap are
+reached by backward seeks. A reel's render key names each take's event
+and slot, not its window, so a capture with a wider window serves a
+narrower one (post trims). A reel is held per demo and kind; frames are
+checked mid-take, never on a seam where the fades meet. `pnpm deaths` /
+`pnpm victims` make one for any demo, settled or not.
+
+**Deleting.** `pnpm drop <no>` (not `pnpm rm`: pnpm's own `rm` removes a
+dependency) moves the clip's mp4 to `library/trash/`, removes its index
+entry (the number is never reused) and keeps it in `state/deleted.json`,
+which counts as held: `pnpm go` never makes that moment or reel again.
+`pnpm trash --empty` deletes the trash for good. `pnpm library` serves
+`library/` at `http://127.0.0.1:8765/` (127.0.0.1 only, no dependencies,
+Range requests; Host and Origin checked, so no other site can delete
+through it); served that way the page has a Delete button and the Delete
+key (with a confirm), opened from disk it shows the `pnpm drop <no>`
+command to copy. Index writes (publish, delete) take a short lock,
+`state/.index.lock`, so a delete during a run is never lost.
 
 `pnpm grab` (PLAN.md's `pnpm fetch`; pnpm's own `fetch` command takes that
 name) runs the demo sources, each writing new demos into `demos/inbox/`,
@@ -275,7 +310,9 @@ re-made. Only a guard refusal gives
   category's clips (number, title, score, length) with the playing one
   marked; left/right or j/k step through it. Controls reset on every
   load, so a browser restoring old form values cannot leave it looking
-  empty. `src/library/page.ts` rewrites it (temp, then rename) after every
+  empty. "Newest clips" at the top of the sidebar clears the filters and
+  sorts by date added; the playing clip is marked by a tint and a bold
+  number. `src/library/page.ts` rewrites it (temp, then rename) after every
   clip a job publishes and at the end of `pnpm go`; inside a run it says
   "Run in progress: N clips so far".
 - **Stretched aspect** is wired end to end (`captureSize` sets the game

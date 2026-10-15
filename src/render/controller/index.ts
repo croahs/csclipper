@@ -18,7 +18,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
-import { captureSize, type Identities, type RenderSettings } from "../../config.ts";
+import { Refusal, captureSize, type Identities, type RenderSettings } from "../../config.ts";
 import { TICKRATE } from "../../parse/clip-facts.ts";
 import { countFrames, decodeProblems, probe } from "../../post/ffmpeg.ts";
 import { FINISHED_RE, STARTED_RE, hlaeArgs, hlaeCapture, takeOutputs } from "../capture/hlae.ts";
@@ -93,6 +93,10 @@ const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(
 
 export async function render(job: RenderJob): Promise<RenderResult> {
   const { ids, settings: s } = job;
+  // CS2 resolves a relative demo path against its own folders and then cannot open it (it shows a
+  // dialog and plays nothing): always hand it an absolute path, and refuse before launch if it is missing.
+  const demo = path.resolve(job.demo);
+  if (!existsSync(demo)) throw new Refusal(`refusing: demo not found: ${demo}`);
   if (!job.takes.length) throw new Error("a render job needs at least one take");
   const plan = job.takes.map((t) => {
     const recordStartTick = t.startTick - MARGIN_TICKS;
@@ -126,7 +130,7 @@ export async function render(job: RenderJob): Promise<RenderResult> {
     writeFileSync(path.join(usrDir, "cfg", `${cfgName}.cfg`), cfgs.main);
     for (const t of cfgs.takes) writeFileSync(path.join(usrDir, "cfg", `${t.name}.cfg`), t.body);
     const size = captureSize(s);
-    const csArgs = ["-insecure", "-novid", "-sw", "-width", String(size.width), "-height", String(size.height), "-condebug", "+exec", cfgName, "+playdemo", `"${job.demo}"`];
+    const csArgs = ["-insecure", "-novid", "-sw", "-width", String(size.width), "-height", String(size.height), "-condebug", "+exec", cfgName, "+playdemo", `"${demo}"`];
     args = hlaeArgs(ids.hlaeExe, ids.cs2Exe, csArgs);
     writeFileSync(path.join(job.workDir, "job.json"), JSON.stringify({ title: job.title, demo: job.demo, takes: plan, crosshair: job.crosshair, settings: s, hlaeExe: ids.hlaeExe, hlaeArgs: args, timeoutS }, null, 2));
     // Re-check right before launch: the account or a running CS2 may have changed.
@@ -245,6 +249,9 @@ export async function render(job: RenderJob): Promise<RenderResult> {
       // Without the loader itself nothing it starts is ever adopted; the final
       // "no cs2.exe at all" check then fails cleanup instead of guessing.
       if (!tree.rooted && Date.now() > rootDeadline) { failure = "HLAE loader never seen as this controller's child"; break; }
+      // CS2 could not open the demo: nothing will play, so stop now rather than at the load timeout.
+      const early = readLog();
+      if (early !== undefined && /CDemoFile::Open: couldn't open file/.test(early)) { failure = "CS2 could not open the demo file"; break; }
       const log = readLog();
       if (log !== undefined) logLive = true;
       while (next < steps.length && steps[next].reached(log ?? "")) {

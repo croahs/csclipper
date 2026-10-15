@@ -5,16 +5,16 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { Refusal, STATE_DIR, captureSize, loadCrosshairCutoff, loadIdentities, loadSettings } from "../config.ts";
+import { Refusal, STATE_DIR, captureSize, loadCrosshairCutoff, loadIdentities, loadSettings, type Identities, type RenderSettings } from "../config.ts";
 import { clipFacts } from "../parse/clip-facts.ts";
-import { MARGIN_TICKS, SETTLE_TICKS, render, validateCapture, type TickMapping } from "../render/controller/index.ts";
-import { SPECTATOR_PANELS, crosshairSource, lookCfg } from "../render/controller/cfg.ts";
+import { MARGIN_TICKS, SETTLE_TICKS, render, validateCapture, type TakeSpec, type TickMapping } from "../render/controller/index.ts";
+import { SPECTATOR_PANELS, crosshairSource, lookCfg, type CrosshairSource } from "../render/controller/cfg.ts";
 import { RenderLock } from "../render/controller/guards.ts";
 import { toolVersions } from "../render/versions.ts";
 import { post } from "../post/index.ts";
 import type { ClipSpec } from "../clip/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
-import { clipId, clipPath, clipTmpPath, ensureClipsDir, publish, readIndex, recordFailure, writeJsonAtomic, type ClipEntry } from "../library/index.ts";
+import { clipId, clipPath, clipTmpPath, ensureClipsDir, publish, readDeleted, readIndex, recordFailure, writeJsonAtomic, type ClipEntry } from "../library/index.ts";
 
 export type JobInput = {
   demo: string;
@@ -39,9 +39,12 @@ export type JobResult = { status: "done" | "skipped" | "failed" | "dry"; id: str
 
 // Written into an attempt's work dir once its raw capture validated: the
 // render stage is done for this render key, and a retry goes straight to post.
-type CaptureRecord = { renderKey: string; mapping: TickMapping; video: string; audio: string };
+// One take per entry of `takes` (a highlight has one, a reel many); records
+// written before reels hold a single take's fields at the top level.
+export type TakeCapture = { mapping: TickMapping; video: string; audio: string };
+type CaptureRecord = { renderKey: string; takes: TakeCapture[] };
 
-function completedCapture(id: string, renderKey: string, size: string): (CaptureRecord & { workDir: string }) | undefined {
+function completedCapture(id: string, renderKey: string, size: string, takes: number): (CaptureRecord & { workDir: string }) | undefined {
   const dir = path.join(STATE_DIR, "render", id);
   if (!existsSync(dir)) return undefined;
   for (const attempt of readdirSync(dir).sort().reverse()) {
@@ -50,9 +53,11 @@ function completedCapture(id: string, renderKey: string, size: string): (Capture
     let problems: string[];
     let c: CaptureRecord | undefined;
     try {
-      c = JSON.parse(readFileSync(file, "utf8")) as CaptureRecord;
+      const raw = JSON.parse(readFileSync(file, "utf8"));
+      c = { renderKey: raw.renderKey, takes: Array.isArray(raw.takes) ? raw.takes : [{ mapping: raw.mapping, video: raw.video, audio: raw.audio }] };
       if (c.renderKey !== renderKey) continue;
-      problems = validateCapture(c.video, c.audio, c.mapping.frames, c.mapping.fps, size);
+      problems = c.takes.length !== takes ? [`capture has ${c.takes.length} take(s), expected ${takes}`]
+        : c.takes.flatMap((t) => validateCapture(t.video, t.audio, t.mapping.frames, t.mapping.fps, size));
     } catch (e) {
       // FFmpeg missing is a tool problem, not a bad capture: stop instead of launching again.
       if ((e as Error).message.startsWith("ffmpeg did not run")) throw e;
@@ -63,6 +68,25 @@ function completedCapture(id: string, renderKey: string, size: string): (Capture
   }
   return undefined;
 }
+
+/**
+ * What runJobs renders and finishes: a highlight (one take, prepareJob) or a reel (many takes,
+ * src/reel). All units of one runJobs call belong to one demo and share its look and settings.
+ */
+export type RenderUnit = {
+  id: string; title: string; demo: string; demoSha256: string; map: string;
+  o: JobInput;
+  takes: TakeSpec[];
+  startTick: number; endTick: number; // for failure records: the span the unit covers
+  renderKey: string;
+  settings: RenderSettings; ids: Identities; look: string; crosshair: CrosshairSource; debugCommands: string[];
+  inLibrary: () => boolean;
+  /** Post and publish from the unit's validated takes; `fail` records a failure and returns its result. */
+  finish: (takes: TakeCapture[], workDir: string, attempt: string, fail: (reasons: string[]) => JobResult) => JobResult;
+};
+
+/** A validated capture for this render key exists, so the unit needs post only, no launch. */
+export const unitHasCapture = (u: RenderUnit) => !!completedCapture(u.id, u.renderKey, `${captureSize(u.settings).width}x${captureSize(u.settings).height}`, u.takes.length);
 
 /**
  * The library entry that holds this moment: the same clip id, or (for a ranked moment) a clip
@@ -108,15 +132,17 @@ export async function prepareJob(o: JobInput) {
   // The POV id is part of the key but never stored in the library.
   const renderKey = createHash("sha256").update(JSON.stringify({ ...renderInputs, pov: ids.pov })).digest("hex").slice(0, 16);
   /** A validated raw capture for this render key exists, so the job needs post only, no launch. */
-  const hasCapture = () => !!completedCapture(id, renderKey, `${captureSize(settings).width}x${captureSize(settings).height}`);
+  const hasCapture = () => !!completedCapture(id, renderKey, `${captureSize(settings).width}x${captureSize(settings).height}`, 1);
   /**
    * The library holds this moment: done, whatever its render key (AGENTS.md: a finished clip is never
    * re-rendered because the cfg, settings or method changed; only pnpm clip --rerender <no|id> does that).
    * The entry is written only after the clip validated and was renamed into place.
    */
   const inLibrary = () => {
-    const held = heldEntry(readIndex().clips, id, facts.demoSha256, round, spec);
+    // A deleted moment counts as held: deleting a clip means "never make it again".
+    const held = heldEntry({ ...readDeleted(), ...readIndex().clips }, id, facts.demoSha256, round, spec);
     if (!held) return false;
+    if (readDeleted()[held.id]) { console.log(`clip ${held.no ?? held.id} was deleted; not made again`); return true; }
     if (held.id !== id) console.log(`the library holds this moment as clip ${held.no ?? held.id} (other span); kept as done`);
     if (!existsSync(clipPath(held.id))) console.log(`library entry ${held.id} has no file; kept as done (pnpm clip --rerender ${held.id} re-makes it)`);
     return true;
@@ -134,20 +160,31 @@ export async function clipJob(o: JobInput): Promise<JobResult> {
   return runJob(p);
 }
 
+/** A highlight job as a render unit: one take, posted with the moment's action windows. */
+export function highlightUnit(p: PreparedJob): RenderUnit {
+  return {
+    id: p.id, title: p.title, demo: p.demo, demoSha256: p.facts.demoSha256, map: p.facts.map, o: p.o,
+    takes: [{ startTick: p.startTick, endTick: p.endTick, slot: p.facts.slot }], startTick: p.startTick, endTick: p.endTick,
+    renderKey: p.renderKey, settings: p.settings, ids: p.ids, look: p.look, crosshair: p.crosshair, debugCommands: p.debugCommands,
+    inLibrary: p.inLibrary,
+    finish: (takes, workDir, attempt, fail) => postAndPublish(p, { renderKey: p.renderKey, ...takes[0], workDir }, attempt, fail),
+  };
+}
+
 /** One clip: runJobs with a single job. */
 export async function runJob(prep: PreparedJob): Promise<JobResult> {
-  return (await runJobs([prep]))[0];
+  return (await runJobs([highlightUnit(prep)]))[0];
 }
 
 /**
- * Jobs of ONE demo, with one launch for all of them (chained takes, PLAN.md §5): each
- * job the library does not hold and that has no validated capture becomes a take, in
- * tick order so the game only seeks forward; then every job with a capture is posted
- * and published as before. Results come back in the order of `preps`.
+ * Units of ONE demo, with one launch for all of them (chained takes, PLAN.md §5): every
+ * take of every unit the library does not hold and that has no validated capture is
+ * rendered in tick order (fewest backward seeks); then every unit with all its takes
+ * captured is finished (posted and published). Results come back in the order of `units`.
  */
-export async function runJobs(preps: PreparedJob[]): Promise<JobResult[]> {
-  if (!preps.length) return [];
-  if (preps.some((p) => p.facts.demoSha256 !== preps[0].facts.demoSha256)) throw new Error("runJobs: jobs of more than one demo");
+export async function runJobs(units: RenderUnit[]): Promise<JobResult[]> {
+  if (!units.length) return [];
+  if (units.some((u) => u.demoSha256 !== units[0].demoSha256)) throw new Error("runJobs: units of more than one demo");
   // One clip run at a time, from the resume check to the index write.
   const clipLock = new RenderLock(path.join(STATE_DIR, ".clip.lock"));
   clipLock.acquire();
@@ -157,67 +194,69 @@ export async function runJobs(preps: PreparedJob[]): Promise<JobResult[]> {
   try {
     const attempt = String(Date.now());
     const results = new Map<string, JobResult>();
-    const captures = new Map<string, CaptureRecord & { workDir: string }>();
-    const fail = (p: PreparedJob, reasons: string[], workDir: string, cleanupVerified = true): JobResult => {
-      try { recordFailure(p.id, { at: new Date().toISOString(), reasons, workDir, startTick: p.startTick, endTick: p.endTick, demo: p.demo }); }
+    const captures = new Map<string, { takes: TakeCapture[]; workDir: string }>();
+    const fail = (u: RenderUnit, reasons: string[], workDir: string, cleanupVerified = true): JobResult => {
+      try { recordFailure(u.id, { at: new Date().toISOString(), reasons, workDir, startTick: u.startTick, endTick: u.endTick, demo: u.demo }); }
       catch (e) { console.error(`could not record the failure: ${(e as Error).message}`); }
-      console.error(`FAILED ${p.title}: ${reasons.join("; ")}\nwork dir: ${workDir}`);
-      return { status: "failed", id: p.id, title: p.title, reasons, cleanupVerified };
+      console.error(`FAILED ${u.title}: ${reasons.join("; ")}\nwork dir: ${workDir}`);
+      return { status: "failed", id: u.id, title: u.title, reasons, cleanupVerified };
     };
 
-    const toRender: PreparedJob[] = [];
-    for (const p of preps) {
-      // Resume: the clip is done when the library holds it (any render key); force (--rerender) makes it again.
-      if (!p.o.force && p.inLibrary()) { console.log(`already in the library: ${p.title}`); results.set(p.id, { status: "skipped", id: p.id, title: p.title, clip: clipPath(p.id) }); continue; }
-      const c = p.o.force ? undefined : completedCapture(p.id, p.renderKey, `${captureSize(p.settings).width}x${captureSize(p.settings).height}`);
-      if (c) { console.log(`${p.title}: render stage already done in ${c.workDir}; resuming at post`); captures.set(p.id, c); }
-      else toRender.push(p);
+    const toRender: RenderUnit[] = [];
+    for (const u of units) {
+      // Resume: done when the library holds it (any render key); force (--rerender) makes it again.
+      if (!u.o.force && u.inLibrary()) { console.log(`already in the library: ${u.title}`); results.set(u.id, { status: "skipped", id: u.id, title: u.title, clip: clipPath(u.id) }); continue; }
+      const c = u.o.force ? undefined : completedCapture(u.id, u.renderKey, `${captureSize(u.settings).width}x${captureSize(u.settings).height}`, u.takes.length);
+      if (c) { console.log(`${u.title}: render stage already done in ${c.workDir}; resuming at post`); captures.set(u.id, c); }
+      else toRender.push(u);
     }
 
     if (toRender.length) {
       // The last word on --repost's no-launch promise, at the launch boundary itself.
-      if (toRender.some((p) => p.o.postOnly)) throw new Refusal("post only: no completed capture for a job; nothing launched");
-      const order = [...toRender].sort((x, y) => x.startTick - y.startTick);
-      const first = order[0];
-      const launchDir = order.length === 1 ? path.join(STATE_DIR, "render", first.id, attempt) : path.join(STATE_DIR, "render", `launch-${first.facts.demoSha256.slice(0, 12)}-${attempt}`);
+      if (toRender.some((u) => u.o.postOnly)) throw new Refusal("post only: no completed capture for a job; nothing launched");
+      const plan = toRender.flatMap((u) => u.takes.map((t, k) => ({ u, k, t }))).sort((x, y) => x.t.startTick - y.t.startTick);
+      const first = toRender[0];
+      const single = toRender.length === 1 && first.takes.length === 1;
+      const launchDir = single ? path.join(STATE_DIR, "render", first.id, attempt) : path.join(STATE_DIR, "render", `launch-${first.demoSha256.slice(0, 12)}-${attempt}`);
       const r = await render({
-        title: order.length === 1 ? first.title : `${first.facts.map} · ${order.length} takes`,
-        demo: first.demo, takes: order.map((p) => ({ startTick: p.startTick, endTick: p.endTick, slot: p.facts.slot })),
+        title: single ? first.title : `${first.map} · ${plan.length} takes`,
+        demo: first.demo, takes: plan.map((x) => x.t),
         workDir: launchDir, lockFile: path.join(STATE_DIR, ".render.lock"), ids: first.ids, settings: first.settings,
-        lookCfg: first.look, crosshair: first.crosshair, debugCommands: order.length === 1 ? first.debugCommands : [],
+        lookCfg: first.look, crosshair: first.crosshair, debugCommands: single ? first.debugCommands : [],
         timeoutS: first.o.timeoutS,
       });
-      console.log(`render ${r.status} in ${r.wallSeconds}s (${order.length} take(s))`);
-      for (const [i, p] of order.entries()) {
-        const t = r.takes[i];
-        // A take with a usable capture is kept even when another take of the launch failed.
-        if (!r.cleanupVerified || !t || t.reasons.length || !t.mapping || !t.audio) {
-          results.set(p.id, fail(p, [...r.reasons, ...(t?.reasons ?? ["no take result"])], launchDir, r.cleanupVerified));
+      console.log(`render ${r.status} in ${r.wallSeconds}s (${plan.length} take(s))`);
+      for (const u of toRender) {
+        const mine = plan.map((x, i) => ({ ...x, res: r.takes[i] })).filter((x) => x.u === u).sort((x, y) => x.k - y.k);
+        // A unit needs every one of its takes; a usable take is kept even when another unit's take failed.
+        const bad = mine.filter((x) => !x.res || x.res.reasons.length || !x.res.mapping || !x.res.audio);
+        if (!r.cleanupVerified || bad.length) {
+          results.set(u.id, fail(u, [...r.reasons, ...bad.flatMap((x) => x.res?.reasons.map((m) => `take ${x.k}: ${m}`) ?? [`take ${x.k}: no result`])], launchDir, r.cleanupVerified));
           continue;
         }
-        // Each clip's own attempt dir records its capture, pointing into the shared launch dir.
-        const workDir = order.length === 1 ? launchDir : path.join(STATE_DIR, "render", p.id, attempt);
-        const record: CaptureRecord = { renderKey: p.renderKey, mapping: t.mapping, video: t.video, audio: t.audio };
+        // Each unit's own attempt dir records its capture, pointing into the shared launch dir.
+        const workDir = single ? launchDir : path.join(STATE_DIR, "render", u.id, attempt);
+        const record: CaptureRecord = { renderKey: u.renderKey, takes: mine.map((x) => ({ mapping: x.res!.mapping!, video: x.res!.video, audio: x.res!.audio! })) };
         writeJsonAtomic(path.join(workDir, "capture.json"), record);
-        captures.set(p.id, { ...record, workDir });
+        captures.set(u.id, { takes: record.takes, workDir });
       }
     }
 
-    for (const p of preps) {
-      if (results.has(p.id)) continue;
-      const c = captures.get(p.id)!;
-      // A post that throws fails its own clip only; the others keep their results.
-      try { results.set(p.id, postAndPublish(p, c, attempt, (reasons) => fail(p, reasons, c.workDir))); }
-      catch (e) { results.set(p.id, fail(p, [`post error: ${(e as Error).message}`], c.workDir)); }
+    for (const u of units) {
+      if (results.has(u.id)) continue;
+      const c = captures.get(u.id)!;
+      // A finish that throws fails its own unit only; the others keep their results.
+      try { results.set(u.id, u.finish(c.takes, c.workDir, attempt, (reasons) => fail(u, reasons, c.workDir))); }
+      catch (e) { results.set(u.id, fail(u, [`post error: ${(e as Error).message}`], c.workDir)); }
     }
-    return preps.map((p) => results.get(p.id)!);
+    return units.map((u) => results.get(u.id)!);
   } finally {
     clipLock.release();
     process.off("exit", releaseClipLock);
   }
 }
 
-function postAndPublish(prep: PreparedJob, capture: CaptureRecord & { workDir: string }, attempt: string, fail: (reasons: string[]) => JobResult): JobResult {
+function postAndPublish(prep: PreparedJob, capture: TakeCapture & { renderKey: string; workDir: string }, attempt: string, fail: (reasons: string[]) => JobResult): JobResult {
   const { o, demo, spec, startTick, endTick, settings, facts, round, id, title, crosshair, cutoff, versions, renderInputs, renderKey } = prep;
   ensureClipsDir();
   const tmp = clipTmpPath(id, attempt);

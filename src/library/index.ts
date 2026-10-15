@@ -2,7 +2,7 @@
 // in state/failures.json. Every write goes to a temp path and is renamed into
 // place, so a file existing is never mistaken for a finished stage.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { LIBRARY_DIR, STATE_DIR } from "../config.ts";
 
@@ -36,7 +36,8 @@ export type ClipEntry = {
   createdAt: string;
   moment?: Record<string, unknown>; // rank, score and signals when the clip came from pnpm moments
   kind?: "highlight" | "deaths" | "kills"; // absent: highlight (clips made before the reels)
-  leadOverride?: number; // seconds of lead-in a re-render asked for instead of config.json → clip.leadInSeconds
+  leadOverride?: number;
+  reel?: { takes: { round: number; tick: number; weapon: string; player: string }[] }; // a reel's takes: who killed him (deaths) or whom he killed (kills) // seconds of lead-in a re-render asked for instead of config.json → clip.leadInSeconds
   // How the clip was trimmed: "scheduled" = by the scheduled record-start mapping (src/post);
   // absent = clips made before M3's simplification, timed from muzzle flash and gunshots.
   timing?: "scheduled";
@@ -61,6 +62,37 @@ function writeJsonAtomic(file: string, value: unknown) {
 
 export const readIndex = () => readJson<Index>(INDEX, { version: 1, clips: {} });
 
+// The index's read-modify-write (publish, delete) runs under a short lock, so a delete from the
+// page during a pnpm go run cannot be lost to a publish (or the other way round). Held for
+// milliseconds. It is never taken over automatically (two takers could both get in): a lock
+// left by a crashed process is reported, to be deleted by hand.
+const INDEX_LOCK = path.join(STATE_DIR, ".index.lock");
+function withIndexLock<T>(fn: () => T): T {
+  mkdirSync(path.dirname(INDEX_LOCK), { recursive: true });
+  const token = `${process.pid}:${Math.random().toString(36).slice(2)}`;
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    try {
+      const fd = openSync(INDEX_LOCK, "wx");
+      writeSync(fd, token);
+      closeSync(fd);
+      break;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      if (Date.now() > deadline) {
+        let age = "";
+        try { age = ` (${Math.round((Date.now() - statSync(INDEX_LOCK).mtimeMs) / 1000)} s old)`; } catch {}
+        throw new Error(`library index is locked${age}: ${INDEX_LOCK}; if no croclipper command is running, delete it by hand`);
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  }
+  try { return fn(); } finally {
+    // Only our own lock is released.
+    try { if (readFileSync(INDEX_LOCK, "utf8") === token) rmSync(INDEX_LOCK); } catch {}
+  }
+}
+
 /** Numbers entries that have none (made before numbering), oldest first. nextNo only grows. Runs in publish, under the clip lock. */
 function assignNumbers(index: Index): boolean {
   let next = Math.max(index.nextNo ?? 1, ...Object.values(index.clips).map((c) => (c.no ?? 0) + 1));
@@ -80,6 +112,9 @@ function assignNumbers(index: Index): boolean {
  * index write, its number taken over.
  */
 export function publish(tmp: string, entry: ClipEntry, replaces?: string) {
+  withIndexLock(() => publishLocked(tmp, entry, replaces));
+}
+function publishLocked(tmp: string, entry: ClipEntry, replaces?: string) {
   const index = readIndex();
   assignNumbers(index);
   const old = index.clips[entry.id];
@@ -116,3 +151,35 @@ export function recordFailure(id: string, f: Failures[string]) {
 
 export const ensureClipsDir = () => mkdirSync(CLIPS_DIR, { recursive: true });
 export { writeJsonAtomic };
+
+// --- deleting ------------------------------------------------------------------------
+export const TRASH_DIR = path.join(LIBRARY_DIR, "trash");
+const DELETED = path.join(STATE_DIR, "deleted.json");
+/** Deleted clips, by id: the entry as it was. A deleted moment counts as done, so it is never made again. */
+export const readDeleted = () => readJson<Record<string, ClipEntry & { deletedAt: string }>>(DELETED, {});
+
+/**
+ * Deletes the clip with this number: the mp4 moves to library/trash/, the entry leaves the
+ * index (its number is never reused: nextNo only grows) and is kept in state/deleted.json,
+ * which pnpm go reads as "done". Returns the deleted entry, or undefined when no clip has it.
+ */
+export function deleteClip(no: number): ClipEntry | undefined {
+  return withIndexLock(() => deleteLocked(no));
+}
+function deleteLocked(no: number): ClipEntry | undefined {
+  const index = readIndex();
+  const entry = Object.values(index.clips).find((c) => c.no === no);
+  if (!entry) return undefined;
+  // The file first: if the move fails nothing else has changed, and a retry finds the entry;
+  // an entry whose file is already in the trash is simply deleted on the retry.
+  if (existsSync(clipPath(entry.id))) {
+    mkdirSync(TRASH_DIR, { recursive: true });
+    renameSync(clipPath(entry.id), path.join(TRASH_DIR, `${entry.id}.mp4`));
+  }
+  const deleted = readDeleted();
+  deleted[entry.id] = { ...entry, deletedAt: new Date().toISOString() };
+  writeJsonAtomic(DELETED, deleted);
+  delete index.clips[entry.id];
+  writeJsonAtomic(INDEX, index);
+  return entry;
+}

@@ -2,7 +2,8 @@
 // record-start mapping, play the action windows at normal speed and
 // fast-forward the stretches between them (muted), fade in/out, encode the
 // final clip to a temp path and validate it.
-import { rmSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { captureSize, type RenderSettings } from "../config.ts";
 import type { TickMapping } from "../render/controller/index.ts";
 import { decodeProblems, ff, meanLuma, probe } from "./ffmpeg.ts";
@@ -39,7 +40,7 @@ const SAMPLES = [0.1, 0.3, 0.5, 0.7, 0.9]; // where frames are sampled, as fract
  * a cached clip. Checks: decodes cleanly, one video and one audio stream, the
  * configured size, duration within 0.5 s of `seconds`, sampled frames not black.
  */
-export function validateClip(file: string, seconds: number, size: string): string[] {
+export function validateClip(file: string, seconds: number, size: string, sampleAt?: number[]): string[] {
   const p = probe(file);
   if (!p.video || !p.audio || p.unreadable) return [`clip streams: ${JSON.stringify(p)}`];
   const reasons: string[] = [];
@@ -50,7 +51,8 @@ export function validateClip(file: string, seconds: number, size: string): strin
   if (err) reasons.push(`clip decode: ${err}`);
   if (p.duration) {
     // -1 (unreadable frame) counts as black too: a clip whose frames cannot be read is not fine.
-    const dark = SAMPLES.map((f) => ({ t: f * p.duration!, l: meanLuma(file, f * p.duration!) })).filter((x) => x.l <= BLACK_LUMA);
+    // sampleAt: where to look instead (a reel: mid-take, never on a seam where fades meet in black).
+    const dark = (sampleAt ?? SAMPLES.map((f) => f * p.duration!)).map((t) => ({ t, l: meanLuma(file, t) })).filter((x) => x.l <= BLACK_LUMA);
     if (dark.length) reasons.push(`black frames at ${dark.map((x) => `${x.t.toFixed(1)} s (luma ${x.l.toFixed(1)})`).join(", ")}`);
   }
   return reasons;
@@ -125,4 +127,64 @@ export function post(video: string, audio: string, m: TickMapping, startTick: nu
   }
   if (reasons.length) rmSync(outTmp, { force: true });
   return { status: reasons.length ? "failed" : "ok", reasons, plan, segments: segs };
+}
+
+/** One take of a reel: its capture, the ticks to show and the overlay line. */
+export type ReelTakeInput = { video: string; audio: string; mapping: TickMapping; startTick: number; endTick: number; label: string };
+
+const OVERLAY_FONT = "C:/Windows/Fonts/seguisb.ttf"; // Segoe UI Semibold; without it the overlay is left out
+const REEL_FADE_S = 0.25;
+// A path inside a filter argument: forward slashes, the drive colon escaped, inside single quotes;
+// a quote in the path closes the quoting, is added escaped, and reopens it.
+const filterPath = (p: string) => `'${p.replaceAll("\\", "/").replace(/^([A-Za-z]):/, "$1\\:").replaceAll("'", "'\\\\''")}'`;
+
+/**
+ * A reel: each take trimmed by the scheduled mapping, a line of text over it (round, weapon,
+ * player), short fades, then all takes concatenated into one clip. Writes outTmp; on any
+ * failure the temp file is removed.
+ */
+export function postReel(takes: ReelTakeInput[], s: RenderSettings, workDir: string, outTmp: string): PostResult {
+  const reasons: string[] = [];
+  let plan: TrimPlan | undefined;
+  try {
+    if (!takes.length) throw new Error("a reel needs at least one take");
+    const cap = captureSize(s);
+    const scale = cap.width !== s.width || cap.height !== s.height ? `,scale=${s.width}:${s.height}:flags=lanczos,setsar=1` : "";
+    const font = existsSync(OVERLAY_FONT);
+    const size = Math.round(s.height / 30);
+    const inputs: string[] = [];
+    const graph: string[] = [];
+    let total = 0, frames = 0;
+    const mids: number[] = [];
+    for (const [i, t] of takes.entries()) {
+      const p = trimPlan(t.mapping, t.startTick, t.endTick);
+      const t0 = p.startFrame / t.mapping.fps;
+      const f = Math.min(REEL_FADE_S, p.seconds / 4);
+      // The overlay text goes through a file, so names need no escaping.
+      const textFile = path.join(workDir, `reel-label-${i}.txt`);
+      writeFileSync(textFile, t.label);
+      const text = font ? `,drawtext=fontfile=${filterPath(OVERLAY_FONT)}:textfile=${filterPath(textFile)}:expansion=none:fontsize=${size}:fontcolor=white:x=${Math.round(s.width * 0.03)}:y=${Math.round(s.height * 0.34)}:box=1:boxcolor=black@0.55:boxborderw=${Math.round(size / 3)}` : "";
+      inputs.push("-i", t.video, "-i", t.audio);
+      graph.push(`[${2 * i}:v]trim=start_frame=${p.startFrame}:end_frame=${p.startFrame + p.frames},setpts=PTS-STARTPTS${scale}${text},fade=t=in:st=0:d=${f},fade=t=out:st=${(p.seconds - f).toFixed(6)}:d=${f}[v${i}]`);
+      graph.push(`[${2 * i + 1}:a]atrim=start=${t0.toFixed(6)}:end=${(t0 + p.seconds).toFixed(6)},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=${f},afade=t=out:st=${(p.seconds - f).toFixed(6)}:d=${f}[a${i}]`);
+      mids.push(total + p.seconds / 2);
+      total += p.seconds; frames += p.frames;
+      if (i === 0) plan = { startFrame: p.startFrame, frames: 0, seconds: 0 };
+    }
+    graph.push(`${takes.map((_, i) => `[v${i}][a${i}]`).join("")}concat=n=${takes.length}:v=1:a=1[v][a]`);
+    plan = { startFrame: plan!.startFrame, frames, seconds: total };
+    const r = ff([
+      "-v", "error", "-y", ...inputs,
+      "-filter_complex", graph.join(";"), "-map", "[v]", "-map", "[a]",
+      "-c:v", "libx264", "-preset", "slow", "-crf", String(s.crf), "-pix_fmt", "yuv420p",
+      "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", outTmp,
+    ]);
+    if (r.status !== 0) reasons.push(`encode failed: ${r.stderr.slice(0, 300)}`);
+    // Frames checked mid-take (at most five takes, spread over the reel).
+    else reasons.push(...validateClip(outTmp, total, `${s.width}x${s.height}`, mids.filter((_, i) => i % Math.max(1, Math.ceil(mids.length / 5)) === 0)));
+  } catch (e) {
+    reasons.push(`post error: ${(e as Error).message}`);
+  }
+  if (reasons.length) rmSync(outTmp, { force: true });
+  return { status: reasons.length ? "failed" : "ok", reasons, plan };
 }

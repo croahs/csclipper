@@ -28,6 +28,16 @@ export async function sha256File(file: string): Promise<string> {
   return h.digest("hex");
 }
 
+/**
+ * Any player's spectator slot over [startTick, endTick] (spec_player argument: user_id + 1);
+ * undefined when the player is missing at either end or reconnected in between.
+ */
+export function slotOf(demo: string, steamid: string, startTick: number, endTick: number): number | undefined {
+  const rows: { user_id: number; tick: number }[] = dp.parseTicks(demo, ["user_id"], [startTick, endTick], [steamid]);
+  const a = rows.find((r) => r.tick === startTick), b = rows.find((r) => r.tick === endTick);
+  return a && b && a.user_id === b.user_id ? a.user_id + 1 : undefined;
+}
+
 export async function clipFacts(demo: string, pov: string, startTick: number, endTick: number): Promise<ClipFacts> {
   if (startTick < 0 || endTick <= startTick) throw new Error("bad tick range");
   const info = readFileInfo(demo);

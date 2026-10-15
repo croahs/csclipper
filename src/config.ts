@@ -52,6 +52,22 @@ export function loadCrosshairCutoff(file = path.join(ROOT, "config.json")): numb
   return v as number;
 }
 
+/**
+ * The reels pnpm go makes for every new demo (AGENTS.md, The standing order) and each take's
+ * window around the event: seconds before and after the kill.
+ */
+export type ReelSetting = { enabled: boolean; beforeSeconds: number; afterSeconds: number };
+export type ReelSettings = { deaths: ReelSetting; kills: ReelSetting };
+export function loadReels(file = path.join(ROOT, "config.json")): ReelSettings {
+  const r = JSON.parse(readFileSync(file, "utf8")).reels ?? {};
+  const one = (k: "deaths" | "kills"): ReelSetting => {
+    const x = r[k] ?? {};
+    if (typeof x.enabled !== "boolean" || !(x.beforeSeconds > 0) || !(x.afterSeconds > 0)) throw new Error(`config.json reels.${k} needs enabled (true/false), beforeSeconds and afterSeconds (> 0)`);
+    return { enabled: x.enabled, beforeSeconds: x.beforeSeconds, afterSeconds: x.afterSeconds };
+  };
+  return { deaths: one("deaths"), kills: one("kills") };
+}
+
 /** Clip span rules (PLAN.md §4): lead-in before the engagement start, tail after the last kill. */
 export type ClipRules = { leadInSeconds: number; tailSeconds: number };
 export function loadClipRules(file = path.join(ROOT, "config.json")): ClipRules {

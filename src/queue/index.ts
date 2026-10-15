@@ -13,15 +13,16 @@
 // twice is not retried until --retry-failed.
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { Refusal, STATE_DIR, loadBatch, loadIdentities, pickMoments } from "../config.ts";
+import { Refusal, STATE_DIR, loadBatch, loadIdentities, loadReels, pickMoments } from "../config.ts";
 import { buildMoments } from "../clip/moments.ts";
 import type { ClipSpec } from "../clip/index.ts";
 import { ingest, readRegistry } from "../ingest/index.ts";
 import { cleanupUnverified } from "../render/controller/index.ts";
 import { imageRunning } from "../render/controller/processes.ts";
-import { recordFailure, writeJsonAtomic } from "../library/index.ts";
+import { readIndex, recordFailure, writeJsonAtomic } from "../library/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
-import { prepareJob, runJobs, type JobResult, type PreparedJob } from "./job.ts";
+import { highlightUnit, prepareJob, runJobs, unitHasCapture, type JobResult, type PreparedJob, type RenderUnit } from "./job.ts";
+import { prepareReel } from "../reel/index.ts";
 
 /** Demos marked processed by pnpm go --settle-existing: sha256 → when. pnpm go skips them. */
 const SETTLED = path.join(STATE_DIR, "settled.json");
@@ -53,6 +54,8 @@ export type BatchReport = {
   rendered: string[]; skipped: string[]; failed: string[]; givenUp: string[]; emptyDemos: string[]; demoErrors: string[];
   /** --repost: selected moments without a completed capture (a normal pnpm go renders them). */
   needsRender: string[];
+  /** Clips this run added to the library, with their numbers (the standing order's report). */
+  made: { kind: string; no?: number; title: string }[];
   /** Demos skipped because they are settled; --settle-existing: how many it settled now. */
   settled: number; settledNow?: number;
   stoppedBy?: "refusal" | "cleanup"; pageError?: string;
@@ -62,7 +65,7 @@ export type BatchReport = {
 export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchReport; code: number }> {
   // The whole batch refuses up front when CS2 runs: nothing is ingested or rendered.
   if (!o.repostOnly && !o.settleExisting && imageRunning("cs2.exe")) throw new Refusal("refusing: CS2 is already running");
-  const report: BatchReport = { ingested: 0, demos: 0, selected: 0, rendered: [], skipped: [], failed: [], givenUp: [], emptyDemos: [], demoErrors: [], needsRender: [], settled: 0 };
+  const report: BatchReport = { ingested: 0, demos: 0, selected: 0, rendered: [], skipped: [], failed: [], givenUp: [], emptyDemos: [], demoErrors: [], needsRender: [], made: [], settled: 0 };
   // --settle-existing: before ingest, so a demo still in the inbox is never settled unprocessed.
   const settled = readSettled();
   if (o.settleExisting) {
@@ -84,6 +87,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   const batch = loadBatch();
   const pov = loadIdentities().pov;
   const queue: { demo: string; sha256: string; spec: ClipSpec }[] = [];
+  const demoFiles = new Map<string, string>(); // every demo this run handles (its reels too, even without highlights)
   const registry = Object.values(readRegistry()).sort((a, b) => a.addedAt.localeCompare(b.addedAt));
   report.demos = registry.length;
   // Settled demos are done: their moments that were never rendered stay unrendered (Peder,
@@ -96,6 +100,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
       console.log(`${m.parsed.demo.map} ${d.originalName}: ${m.specs.length} moments, ${picked.length} selected${m.cached ? " (cached)" : ""}`);
       if (!picked.length) report.emptyDemos.push(d.originalName);
       for (const spec of picked) queue.push({ demo: d.file, sha256: d.sha256, spec });
+      demoFiles.set(d.sha256, d.file);
     } catch (e) {
       // A demo that cannot be parsed is a failure, recorded apart from empty results.
       const reason = (e as Error).message;
@@ -110,10 +115,11 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   let launchedOne = false;
   const ledger = readLedger();
   // One launch per demo (chained takes): its jobs are gated one by one, then rendered together.
-  const byDemo = new Map<string, typeof queue>();
-  for (const q of queue) byDemo.set(q.sha256, [...(byDemo.get(q.sha256) ?? []), q]);
-  demos: for (const [sha256, items] of byDemo) {
-    type Ready = { prep: PreparedJob; spec: ClipSpec; key: string; prevStatus?: "running" | "done" | "failed"; attempts: number };
+  const reels = loadReels();
+  const kinds = (["deaths", "kills"] as const).filter((k) => reels[k].enabled);
+  demos: for (const [sha256, file] of demoFiles) {
+    const items = queue.filter((q) => q.sha256 === sha256);
+    type Ready = { unit: RenderUnit; key: string; prevStatus?: "running" | "done" | "failed"; attempts: number };
     const ready: Ready[] = [];
     for (const { demo, spec } of items) {
       let prep: PreparedJob;
@@ -145,10 +151,38 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
         continue;
       }
       if (o.dryRun) { console.log(`would render: #${spec.rank} ${spec.title} (score ${spec.score})`); continue; }
-      ready.push({ prep, spec, key, prevStatus: prev?.status, attempts: (prev?.attempts ?? 0) + 1 });
+      ready.push({ unit: highlightUnit(prep), key, prevStatus: prev?.status, attempts: (prev?.attempts ?? 0) + 1 });
+    }
+    // The demo's reels (config.json reels), gated like its highlights and rendered in the same launch.
+    for (const kind of kinds) {
+      let unit: RenderUnit | undefined;
+      try {
+        unit = await prepareReel(file, kind, { timeoutS: o.timeoutS, postOnly: o.repostOnly, inBatch: true });
+      } catch (e) {
+        const reason = (e as Error).message;
+        recordFailure(`${kind}:${sha256}`, { at: new Date().toISOString(), reasons: [reason], startTick: 0, endTick: 0, demo: file });
+        report.failed.push(`${kind} reel of ${path.basename(file)}: ${reason}`);
+        code = Math.max(code, 1);
+        continue;
+      }
+      if (!unit) continue;
+      const key = `${unit.id}:${unit.renderKey}`;
+      const prev = ledger[key];
+      if (unit.inLibrary()) {
+        if (prev?.status !== "done") { ledger[key] = { ...(prev ?? { id: unit.id, renderKey: unit.renderKey, demoSha256: sha256, title: unit.title, attempts: 0 }), status: "done", updatedAt: new Date().toISOString() }; writeLedger(ledger); }
+        report.skipped.push(unit.title);
+        continue;
+      }
+      if (o.repostOnly && !unitHasCapture(unit)) { report.needsRender.push(unit.title); continue; }
+      if (prev && prev.attempts >= MAX_ATTEMPTS && !o.retryFailed && !o.repostOnly) {
+        report.givenUp.push(`${unit.title} (${prev.attempts} attempts: ${prev.lastReasons?.join("; ") ?? "interrupted"})`);
+        continue;
+      }
+      if (o.dryRun) { console.log(`would render: ${unit.title} (${unit.takes.length} takes)`); continue; }
+      ready.push({ unit, key, prevStatus: prev?.status, attempts: (prev?.attempts ?? 0) + 1 });
     }
     if (!ready.length) continue;
-    for (const r of ready) ledger[r.key] = { id: r.prep.id, renderKey: r.prep.renderKey, demoSha256: sha256, title: r.spec.title, status: "running", attempts: r.attempts, updatedAt: new Date().toISOString() };
+    for (const r of ready) ledger[r.key] = { id: r.unit.id, renderKey: r.unit.renderKey, demoSha256: sha256, title: r.unit.title, status: "running", attempts: r.attempts, updatedAt: new Date().toISOString() };
     writeLedger(ledger);
     // Test hook, scoped to the first launch and cleared when it ends.
     const testTimer = o.testExitAfterS !== undefined && !launchedOne
@@ -157,7 +191,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
     launchedOne = true;
     let results: JobResult[];
     try {
-      results = await runJobs(ready.map((r) => r.prep));
+      results = await runJobs(ready.map((r) => r.unit));
     } catch (e) {
       clearTimeout(testTimer);
       const reason = (e as Error).message;
@@ -173,8 +207,8 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
       // Anything else may have happened after a launch: the attempts count.
       for (const r of ready) {
         ledger[r.key] = { ...ledger[r.key], status: "failed", lastReasons: [reason], updatedAt: new Date().toISOString() };
-        recordFailure(r.prep.id, { at: new Date().toISOString(), reasons: [reason], startTick: r.prep.startTick, endTick: r.prep.endTick, demo: r.prep.demo });
-        report.failed.push(`${r.spec.title}: ${reason}`);
+        recordFailure(r.unit.id, { at: new Date().toISOString(), reasons: [reason], startTick: r.unit.startTick, endTick: r.unit.endTick, demo: r.unit.demo });
+        report.failed.push(`${r.unit.title}: ${reason}`);
       }
       writeLedger(ledger);
       code = Math.max(code, 1);
@@ -185,7 +219,11 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
     for (const [i, res] of results.entries()) {
       const r = ready[i];
       ledger[r.key] = { ...ledger[r.key], status: res.status === "failed" ? "failed" : "done", attempts: res.status === "skipped" ? r.attempts - 1 : r.attempts, lastReasons: res.reasons, updatedAt: new Date().toISOString() };
-      if (res.status === "done") report.rendered.push(res.title);
+      if (res.status === "done") {
+        report.rendered.push(res.title);
+        const e = readIndex().clips[res.id];
+        report.made.push({ kind: e?.kind ?? "highlight", no: e?.no, title: res.title });
+      }
       else if (res.status === "skipped") report.skipped.push(res.title);
       else { report.failed.push(`${res.title}: ${res.reasons?.join("; ")}`); code = Math.max(code, 1); }
     }

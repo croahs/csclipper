@@ -1,7 +1,7 @@
 // Per-round scoring (pace from the tightest run, the light signals' cap) and the batch selection.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { loadWeights, moments, scoreKills, tightestRun } from "../src/score/index.ts";
+import { economyFactor, loadWeights, moments, scoreKills, tightestRun } from "../src/score/index.ts";
 import type { Death, ParsedDemo } from "../src/parse/demo.ts";
 import { pickMoments } from "../src/config.ts";
 
@@ -84,4 +84,24 @@ test("selection: every moment at or over minScore; none → the best one when fa
   assert.deepEqual(pickMoments([{ score: 30 }, { score: 20 }], { minScore: 40, fallbackBest: true }), [{ score: 30 }]);
   assert.deepEqual(pickMoments([{ score: 30 }], { minScore: 40, fallbackBest: false }), []);
   assert.deepEqual(pickMoments([], { minScore: 40, fallbackBest: true }), []);
+});
+
+test("economy: about 1.4 on an eco against a full buy, 0.7 farming an eco, 1 near parity and in pistol rounds", () => {
+  const round = (n: number, own: number, enemy: number) => ({ ...demo(), rounds: [{ n, teams: { [ME]: "T" }, equip: { T: own, CT: enemy } }] }) as unknown as ParsedDemo;
+  assert.equal(economyFactor(round(5, 2800, 20700), 5, w), w.economy.max);
+  assert.equal(economyFactor(round(5, 20700, 2800), 5, w), w.economy.min);
+  assert.ok(Math.abs(economyFactor(round(5, 20000, 22000), 5, w) - 1) < 0.05, "within 25 % of parity: under 5 %");
+  assert.equal(economyFactor(round(1, 800, 4500), 1, w), 1, "pistol round");
+  assert.equal(economyFactor(round(5, 0, 4500), 5, w), 1, "an unknown buy counts as parity");
+});
+
+test("economy scales the whole score; breakdown.economy is the change", () => {
+  const p = { ...demo(), rounds: [{ n: 5, teams: { [ME]: "T" }, equip: { T: 2800, CT: 20700 } }] } as unknown as ParsedDemo;
+  const even = { ...demo(), rounds: [{ n: 5, teams: { [ME]: "T" }, equip: { T: 20000, CT: 20000 } }] } as unknown as ParsedDemo;
+  const ks = [kill(0, { round: 5 }), kill(2000, { round: 5 })];
+  const base = scoreKills(even, ks, undefined, false, w);
+  const eco = scoreKills(p, ks, undefined, false, w);
+  assert.equal(base.breakdown.economy, undefined, "parity: no change");
+  assert.equal(eco.breakdown.economy, Math.round(base.score * (w.economy.max - 1) * 10) / 10);
+  assert.ok(Math.abs(eco.score - base.score * w.economy.max) < 0.2);
 });

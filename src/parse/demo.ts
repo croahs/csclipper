@@ -17,7 +17,7 @@ import { readFileInfo } from "./fileinfo.ts";
 const require = createRequire(import.meta.url);
 const dp = require("@laihoe/demoparser2");
 
-const SCHEMA = 4; // 3: airborne on deaths, POV flicks; 4: flicks from gunshots only
+const SCHEMA = 6; // 3: airborne on deaths, POV flicks; 4: flicks from gunshots only; 5: names on deaths; 6: equipment per team
 const REGULATION_ROUNDS = 24; // MR12; later match rounds are overtime
 
 export type Team = "T" | "CT";
@@ -26,6 +26,7 @@ export type Death = {
   weapon: string; headshot: boolean; penetrated: boolean; noscope: boolean; thrusmoke: boolean; attackerblind: boolean;
   distance: number; victimHpBefore: number; // victim's health before the killing hit (100 if unhurt this round)
   airborne: boolean; // attackerinair on the death event
+  attackerName: string; victimName: string; // as the death event names them (reel overlays)
 };
 // The POV's view turn before each of his gun kills: the largest yaw change from 100-200 ms
 // before the kill shot (his last gunshot at or before the kill, within 1 s) to the shot itself.
@@ -43,6 +44,7 @@ export type Round = {
   // A player alive at freeze end neither died nor was alive on the same team at
   // round end (disconnect, team change): alive counts from deaths are unreliable.
   rosterChanged: boolean;
+  equip: Record<Team, number>; // the team's equipment value at freeze end (current_equip_value, alive players): its buy
 };
 export type ParsedDemo = {
   schema: number; key: string;
@@ -94,7 +96,7 @@ function extract(demo: string, sha256: string, pov: string, key: string): Parsed
     return {
       n: i + 1, startTick, freezeEndTick: freeze.length ? Math.min(...freeze) : startTick, endTick: e.tick,
       winner: winnerOf(e.winner), reason: typeof e.reason === "string" ? e.reason : null,
-      phase: i + 1 > REGULATION_ROUNDS ? "overtime" : "regular", teams: {}, rosterChanged: false,
+      phase: i + 1 > REGULATION_ROUNDS ? "overtime" : "regular", teams: {}, rosterChanged: false, equip: { T: 0, CT: 0 },
     };
   });
   const roundAt = (tick: number) => {
@@ -105,15 +107,15 @@ function extract(demo: string, sha256: string, pov: string, key: string): Parsed
   };
 
   // Teams and alive state at each freeze end and each round end, every player.
-  type Row = { tick: number; steamid: string; team_num: number; is_alive: boolean; user_id: number; name: string };
+  type Row = { tick: number; steamid: string; team_num: number; is_alive: boolean; user_id: number; name: string; current_equip_value: number };
   const rows: Row[] = rounds.length
-    ? dp.parseTicks(demo, ["team_num", "is_alive", "user_id"], [...new Set(rounds.flatMap((r) => [r.freezeEndTick, r.endTick]))], [])
+    ? dp.parseTicks(demo, ["team_num", "is_alive", "user_id", "current_equip_value"], [...new Set(rounds.flatMap((r) => [r.freezeEndTick, r.endTick]))], [])
     : [];
   for (const r of rounds) {
     for (const row of rows.filter((x) => x.tick === r.freezeEndTick)) {
       const t = teamOf(row.team_num);
       const id = sid(row.steamid);
-      if (t && id && row.is_alive) r.teams[id] = t;
+      if (t && id && row.is_alive) { r.teams[id] = t; r.equip[t] += row.current_equip_value || 0; }
     }
   }
   const mine = rows.filter((x) => x.steamid === pov);
@@ -134,6 +136,7 @@ function extract(demo: string, sha256: string, pov: string, key: string): Parsed
       thrusmoke: !!d.thrusmoke, attackerblind: !!d.attackerblind, distance: d.distance ?? 0,
       victimHpBefore: prior.length ? prior[prior.length - 1].health : 100,
       airborne: !!d.attackerinair,
+      attackerName: String(d.attacker_name ?? ""), victimName: String(d.user_name ?? ""),
     };
   });
   const fires: Fire[] = inMatch(dp.parseEvent(demo, "weapon_fire", [], []) as any[]).map((f) => ({ tick: f.tick, round: roundAt(f.tick), player: f.user_steamid, weapon: f.weapon }));

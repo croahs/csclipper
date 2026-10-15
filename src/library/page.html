@@ -14,6 +14,7 @@
     --muted: #979da6;
     --accent: #f0a63a;
     --accent-ink: #1a1306;
+    --accent-tint: rgba(240, 166, 58, 0.12);
     --radius: 6px;
     color-scheme: dark;
   }
@@ -30,7 +31,7 @@
   /* Layout: sidebar | player | list; the list drops under the player on narrow windows. */
   .app {
     display: grid; height: 100dvh;
-    grid-template-columns: 232px minmax(0, 1fr) 340px;
+    grid-template-columns: 232px minmax(0, 1fr) 288px;
     grid-template-areas: "side main list";
   }
   aside.side { grid-area: side; border-right: 1px solid var(--line); background: var(--surface); overflow-y: auto; padding: 16px 14px 24px; }
@@ -68,9 +69,16 @@
     padding: 5px 8px; cursor: pointer; color: var(--text);
   }
   .facet button:hover { background: var(--surface-2); }
-  .facet button[aria-pressed="true"] { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
+  .facet button[aria-pressed="true"] { background: var(--accent-tint); font-weight: 600; }
   .facet .count { color: var(--muted); font-size: 12px; }
   .facet .sub { color: var(--muted); font-size: 12px; }
+  .facet.top { margin: 0 0 12px; }
+  .facet.top button { font-weight: 600; }
+  /* Delete / the command to delete, under the player */
+  .act { display: flex; align-items: center; gap: 8px; margin-left: auto; white-space: nowrap; }
+  .act button { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 10px; cursor: pointer; color: var(--text); font-size: 12px; }
+  .act button.danger:hover { border-color: #b4483c; color: #f0b3a8; }
+  .act code { font-size: 12px; color: var(--muted); }
 
   /* Player */
   .stage { flex: 1; min-height: 0; display: flex; align-items: flex-start; justify-content: center; }
@@ -91,16 +99,19 @@
   @media (max-width: 1180px) { .hint { display: none; } }
 
   /* Clip list */
-  .list-head { display: flex; justify-content: space-between; align-items: baseline; padding: 14px 14px 8px; color: var(--muted); font-size: 12px; }
-  ol.rows { list-style: none; margin: 0; padding: 0 6px 16px; overflow-y: auto; flex: 1; min-height: 0; }
+  .list-head { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 10px 6px; color: var(--muted); font-size: 12px; }
+  ol.rows { list-style: none; margin: 0; padding: 0 4px 12px; overflow-y: auto; flex: 1; min-height: 0; }
+  /* One line per clip: number, title (truncated), score and length. */
   ol.rows li button {
-    display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 2px 10px; align-items: baseline;
-    width: 100%; text-align: left; background: none; border: 0; border-radius: var(--radius); padding: 7px 8px; cursor: pointer; color: var(--text);
+    display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 8px; align-items: baseline;
+    width: 100%; text-align: left; background: none; border: 0; border-radius: var(--radius); padding: 3px 6px; cursor: pointer; color: var(--text);
+    font-size: 13px; line-height: 1.35;
   }
   ol.rows li button:hover { background: var(--surface-2); }
-  ol.rows li button[aria-current="true"] { background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
+  ol.rows li button[aria-current="true"] { background: var(--accent-tint); }
   ol.rows .n { color: var(--muted); font-size: 12px; text-align: right; }
-  ol.rows li button[aria-current="true"] .n { color: var(--accent); font-weight: 650; }
+  ol.rows li button[aria-current="true"] .n { color: var(--accent); font-weight: 700; }
+  ol.rows li button[aria-current="true"] .t { font-weight: 600; }
   ol.rows .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   ol.rows .m { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }
   .empty { padding: 28px 16px; color: var(--muted); }
@@ -115,6 +126,7 @@
 <div class="app">
   <aside class="side" aria-label="Filters">
     <h1>Clips</h1>
+    <div class="facet top"><button type="button" id="newest">Newest clips</button></div>
     <p class="run" id="run" hidden></p>
     <p class="stamp" id="stamp"></p>
     <label class="field">Find
@@ -124,6 +136,7 @@
       <select id="sort" autocomplete="off">
         <option value="score">Highest score</option>
         <option value="match">Newest match</option>
+        <option value="added">Newest added</option>
         <option value="no">Clip number</option>
       </select>
     </label>
@@ -205,6 +218,7 @@
       .filter((c) => !q || (num ? c.no === Number(num[2]) : c.title.toLowerCase().includes(q)))
       .sort((a, b) => sort === "no" ? (a.no || 0) - (b.no || 0)
         : sort === "match" ? dateOf(b).localeCompare(dateOf(a)) || (a.round || 0) - (b.round || 0)
+        : sort === "added" ? b.createdAt.localeCompare(a.createdAt)
         : (b.score ?? -1) - (a.score ?? -1));
   }
 
@@ -223,7 +237,21 @@
     const facts = [c.score !== undefined ? "Score " + c.score : null, c.kills ? c.kills + " kills" : null, c.seconds.toFixed(1) + " s",
       c.clutch ? "1v" + c.clutch.vs + (c.clutch.won ? " won" : " lost") : null, ...(c.flags || []), day(dateOf(c))].filter(Boolean);
     text.append(el("div", "facts num", facts.join("  /  ")));
-    now.append(text, el("span", "hint", "Left / right or j / k: previous / next"));
+    const act = el("span", "act");
+    if (served) {
+      const del = el("button", "danger", "Delete clip " + c.no);
+      del.type = "button";
+      del.addEventListener("click", () => remove(c));
+      act.append(del);
+    } else {
+      // From disk the page cannot delete: pnpm library serves it with a Delete button.
+      const cmd = "pnpm drop " + c.no;
+      const copy = el("button", "", "Copy");
+      copy.type = "button";
+      copy.addEventListener("click", () => { navigator.clipboard?.writeText(cmd).then(() => { copy.textContent = "Copied"; }, () => {}); });
+      act.append(el("code", "", cmd), copy);
+    }
+    now.append(text, act);
     for (const b of document.querySelectorAll("#rows button")) b.setAttribute("aria-current", String(b.dataset.id === c.id));
     const cur = document.querySelector('#rows button[aria-current="true"]');
     if (cur) {
@@ -272,6 +300,22 @@
     play(keep || list[0] || null, false);
   }
 
+  // Served by pnpm library (http) the page can delete; opened from disk it cannot.
+  const served = location.protocol === "http:" && /^(127\.0\.0\.1|localhost)$/.test(location.hostname);
+  async function remove(c) {
+    if (!c || !confirm("Delete clip " + c.no + "?\n" + c.title + "\n\nThe file goes to library/trash and the moment is never made again.")) return;
+    const r = await fetch("/delete/" + c.no, { method: "POST" }).catch((e) => ({ ok: false, statusText: String(e) }));
+    if (!r.ok) { alert("Not deleted: " + (r.statusText || r.status)); return; }
+    // Play the next clip in the list, then drop this one from the page.
+    const list = shown();
+    const i = list.findIndex((x) => x.id === c.id);
+    const next = list[i + 1] || list[i - 1] || null;
+    clips.splice(clips.findIndex((x) => x.id === c.id), 1);
+    state.current = next ? next.id : null;
+    render();
+    if (next) play(next, true);
+  }
+
   function step(d) {
     const list = shown();
     if (!list.length) return;
@@ -282,8 +326,15 @@
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.altKey || e.ctrlKey || e.metaKey) return;
     // On the focused player the arrows seek, as players do; j / k still step.
     const arrows = !(e.target instanceof HTMLVideoElement);
+    if (e.key === "Delete" && served) { e.preventDefault(); remove(clips.find((c) => c.id === state.current)); return; }
     if ((arrows && e.key === "ArrowRight") || e.key === "j") { e.preventDefault(); step(1); }
     else if ((arrows && e.key === "ArrowLeft") || e.key === "k") { e.preventDefault(); step(-1); }
+  });
+  $("newest").addEventListener("click", () => {
+    state.kind = state.map = state.match = null; $("find").value = ""; $("sort").value = "added";
+    render();
+    const first = shown()[0];
+    if (first) play(first, true);
   });
   $("find").addEventListener("input", render);
   $("sort").addEventListener("input", render);

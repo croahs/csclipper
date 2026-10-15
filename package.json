@@ -13,7 +13,12 @@
     "moments": "tsx src/cli/moments.ts",
     "go": "tsx src/cli/go.ts",
     "test": "tsx --test test/*.test.ts",
-    "grab": "tsx src/cli/grab.ts"
+    "grab": "tsx src/cli/grab.ts",
+    "deaths": "tsx src/cli/reel.ts deaths",
+    "victims": "tsx src/cli/reel.ts kills",
+    "library": "tsx src/cli/library.ts",
+    "drop": "tsx src/cli/drop.ts drop",
+    "trash": "tsx src/cli/drop.ts trash"
   },
   "dependencies": {
     "@laihoe/demoparser2": "^0.42.0",

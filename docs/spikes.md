@@ -792,3 +792,39 @@ their captures and are library clips 50 and 51.
 Checked on the output: clip 51 shows all three kills in the killfeed at
 their windows and the round win; clip 50 shows both kills. The second take
 spectated its own slot after the seek.
+
+## Reels: many takes from other players' views (2026-10-15)
+
+**Pass.** One launch rendered both reels of the 11 Oct de_mirage demo:
+34 takes (16 deaths from the killer's view, 18 kills from the victim's
+view), in tick order with 5 backward seeks where kill takes overlapped.
+Every take validated; 506 s from launch to the last take, 527 s to game
+gone. Captured with 10 s before each event; the window was then set to
+7 s (Peder) and the reels were posted from the same captures, trimmed
+(the reel render key names events and slots, not windows; the two
+capture records were re-keyed once after checking slots and coverage).
+Library clips 52 (deaths, 16 takes, 176.0 s) and 53 (kills, 18 takes,
+162.0 s).
+
+Checked against the parser: in every take the event falls 7.0 s in.
+Deaths reel takes 1, 5 and 12 (R5 awitya AK-47, R12 Nhei- AK-47, R20
+Nhei- M4A1-S): the overlay and the killfeed name the same killer, and
+the view is the killer's (his weapon and HUD). Kills reel take 1 (R1,
+HeavyGat): the victim's view before the kill, then the death camera.
+
+**What the death camera shows** (kills reel, after the victim dies): the
+view first drops with the body in first person, then holds a still view
+from where the player fell, with the HUD dimming (about 1.3 s after the
+kill in R1); in other takes it is a third-person camera over the body
+(R7). Accepted by Peder as the end of a kills-reel take.
+
+**Two failures on the way, both fixed:**
+- A first launch got a relative demo path from a test script; CS2 could
+  not open it and showed a dialog (Peder saw it). The controller waited
+  for "loaded", timed out at 120 s and killed the game itself. Now the
+  controller makes the path absolute, refuses before launch when the
+  file is missing, and stops at once on "couldn't open file" in the
+  console log.
+- Post rejected the deaths reel for "black frames at 112.0 s": the 50 %
+  sample fell exactly on a seam between two takes, where the fades meet
+  in black. Reels now check frames mid-take.
