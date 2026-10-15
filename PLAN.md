@@ -140,7 +140,13 @@ Score per moment from, first ranking only:
 
 | economy: ratio of the enemy team's equipment value to your team's at freeze end (per-player equipment values from the demo). Kills against a much richer team scale the round up; kills against a much poorer team scale it down. A round-level multiplier, capped (about 0.7–1.4×) | decided by Peder 2026-10-15: kills on an eco are easy, kills while on an eco are hard |
 
+| facing: whether the victim was looking at you at the kill tick (victim view yaw against the vector from victim to attacker, within about 60 degrees = facing). A small per-kill multiplier: facing slightly up, from behind slightly down | decided by Peder 2026-10-15: few bullets in the back is easy, less impressive |
+
 Still deferred: trades, "saved a teammate".
+
+Peder's hand-picks (ordering constraints the ranking must satisfy)
+live in `docs/hand-picks.md`; every scoring change reports whether
+they still hold.
 
 Weights live in one `scoring.json`. Validation: you hand-pick the best
 moments from 3–5 of your demos; the ranking is tuned until it agrees
@@ -157,8 +163,9 @@ For each moment above a threshold (or top N per demo):
   taken), minus 4 s of lead-in (raised from 2 s by Peder, 2026-10-15).
   A re-render may override the lead-in per clip.
 - `end_tick` = the moment's outcome event, not just its last kill: the
-  last kill + 5.5 s (Peder raised it from 2.5 s on 2026-10-15: clips
-  ended too abruptly), or the defuse/plant/round end that resolves a
+  last kill + 7.5 s (Peder: 2.5 s to 5.5 s, then to 7.5 s on
+  2026-10-15, clips ended too abruptly; applies to future clips only,
+  no rebuilds), or the defuse/plant/round end that resolves a
   clutch, whichever is later. The tail is always honoured even when
 the last kill ends the round (the win banner and freeze time are part
 of the clip); the only cap is the next round's start. Changed
