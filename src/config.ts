@@ -46,6 +46,14 @@ export function loadCrosshairCutoff(file = path.join(ROOT, "config.json")): numb
   return v as number;
 }
 
+/** Clip span rules (PLAN.md §4): lead-in before the engagement start, tail after the last kill. */
+export type ClipRules = { leadInSeconds: number; tailSeconds: number };
+export function loadClipRules(file = path.join(ROOT, "config.json")): ClipRules {
+  const c = JSON.parse(readFileSync(file, "utf8")).clip as ClipRules;
+  for (const k of ["leadInSeconds", "tailSeconds"] as const) if (typeof c?.[k] !== "number" || !(c[k] >= 0)) throw new Error(`config.json clip.${k} must be a number >= 0`);
+  return { leadInSeconds: c.leadInSeconds, tailSeconds: c.tailSeconds };
+}
+
 export function loadSettings(file = path.join(ROOT, "config.json")): RenderSettings {
   const r = JSON.parse(readFileSync(file, "utf8")).render as RenderSettings;
   for (const k of ["width", "height", "fps", "captureCrf", "crf", "fadeSeconds"] as const) {

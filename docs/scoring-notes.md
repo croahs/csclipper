@@ -51,9 +51,11 @@ the round end do not count. A moment needs at least one POV kill.
 
 Clip boundaries (`src/clip/index.ts`), not weights: start = first
 engagement (POV shot or damage dealt/taken) within 5 s before the first
-kill, minus 2 s; end = last kill + 2.5 s, or for a clutch 1 s after what
-resolved it (the POV's plant/defuse within 25 s of the last kill, else a
-round end within 5 s of it, else the last kill); never past round end + 1 s;
+kill, minus the lead-in; end = last kill + the tail, or for a clutch 1 s
+after what resolved it (the POV's plant/defuse within 25 s of the last
+kill, else a round end within 5 s of it, else the last kill) when that is
+later; never past round end + 1 s. Lead-in (4 s) and tail (5.5 s) are in
+`config.json` → `clip` and part of the moments cache key;
 overlapping moments in a round merge; nothing is cut short, however long
 (post fast-forwards the stretches without action: `docs/modules.md`,
 Fast-forward).

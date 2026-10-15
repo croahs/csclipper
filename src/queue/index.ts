@@ -1,7 +1,7 @@
 // The batch (PLAN.md M3): ingest → parse → score → select → render queue →
 // library page, resumable end to end. Each stage keeps its own key and result:
 // parse.json (demo hash + parser + schema + POV), moments.json (parse key +
-// weights + schema; an empty list is a valid result), the library entry
+// weights + clip rules + schema; an empty list is a valid result), the library entry
 // (render key) and capture.json (render key, for post retries). This file
 // adds the job ledger, state/queue.json, keyed by clip id + render key: a job
 // is marked running before it may launch; a run that dies mid-job leaves it

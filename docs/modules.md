@@ -110,8 +110,12 @@ the spectated player (docs/spikes.md, M0.2 open items).
   they are. Post (`segments`, `src/post/index.ts`) plays each window at
   normal speed and each gap between two windows at `FAST_FORWARD_SPEED`
   (8x) with the audio muted: trim/setpts per segment, fps resampling for
-  the fast ones, then concat, with fades over the whole clip. Before the
-  first and after the last window is cut. About 30 s is a goal, not a cap.
+  the fast ones, then concat, with fades over the whole clip. The first
+  window starts at the clip start and the last ends at its end, so the
+  lead-in (`config.json` → `clip.leadInSeconds`, 4 s) and the tail after
+  the last kill (`clip.tailSeconds`, 5.5 s; the span runs on to the clutch
+  outcome + 1 s if later, capped at round end + 1 s) always play in full. About 30 s is a
+  goal, not a cap.
   A hand-written range has no windows and plays whole. The library entry's
   `render.segments` lists what was played at which speed, and `seconds` is
   the output length.
@@ -221,7 +225,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
   missing from the registry is registered on the next run. Nothing is
   deleted: originals go to `ingested/`, bad input to `rejected/`.
 - **Stage keys.** parse.json (demo hash + parser + schema + POV),
-  moments.json (parse key + weights + schema; an empty list is a valid
+  moments.json (parse key + weights + clip rules + schema; an empty list is a valid
   result, a parse error is a failure in `state/failures.json` under
   `demo:<sha256>`), the library entry and `capture.json` (render key).
 - **Ledger.** `state/queue.json`, keyed by clip id + render key, so a

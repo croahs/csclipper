@@ -14,9 +14,20 @@ const demo = (o: { kills?: number[]; fires?: number[]; hurtsBy?: number[]; hurts
   hurts: [...(o.hurtsBy ?? []).map((tick) => ({ tick, round: 1, attacker: ME, victim: "x" })), ...(o.hurtsOn ?? []).map((tick) => ({ tick, round: 1, attacker: "x", victim: ME }))],
 }) as unknown as ParsedDemo;
 
-test("windows: 2 s before to 1.5 s after each action, clamped to the span", () => {
-  assert.deepEqual(actionWindows(demo({ kills: [1000] }), 1, 0, 5000), [{ startTick: 872, endTick: 1096 }]);
-  assert.deepEqual(actionWindows(demo({ kills: [100] }), 1, 50, 5000), [{ startTick: 50, endTick: 196 }]);
+test("windows: 2 s before to 1.5 s after each action; the first starts at the span start, the last ends at its end", () => {
+  // Kills at 1000 and 3000 are 2000 ticks apart: two windows, the inner edges 2 s before / 1.5 s after.
+  assert.deepEqual(actionWindows(demo({ kills: [1000, 3000] }), 1, 0, 5000), [{ startTick: 0, endTick: 1096 }, { startTick: 2872, endTick: 5000 }]);
+  assert.deepEqual(actionWindows(demo({}), 1, 50, 5000), [{ startTick: 50, endTick: 5000 }], "no action: the whole span");
+});
+
+test("windows: a single window reaches both ends of the span", () => {
+  assert.deepEqual(actionWindows(demo({ kills: [1000] }), 1, 0, 5000), [{ startTick: 0, endTick: 5000 }]);
+});
+
+test("windows: a keep stretch (the tail after the last kill) plays at normal speed even with a later outcome", () => {
+  // Kill at 1000, tail 5.5 s = 352 ticks, defuse at 3000: the tail is one window, the defuse another.
+  const w = actionWindows(demo({ kills: [1000] }), 1, 0, 3064, [3000], [{ startTick: 1000, endTick: 1352 }]);
+  assert.deepEqual(w, [{ startTick: 0, endTick: 1352 }, { startTick: 2872, endTick: 3064 }]);
 });
 
 test("windows: actions within 4 s of each other play through; a longer gap splits", () => {
@@ -28,7 +39,7 @@ test("windows: actions within 4 s of each other play through; a longer gap split
 
 test("windows: damage dealt or taken and the outcome count; other rounds and other players' kills do not", () => {
   const w = actionWindows(demo({ kills: [1000], hurtsOn: [3000], otherRound: [2000] }), 1, 0, 9000, [6000]);
-  assert.deepEqual(w.map((x) => x.startTick), [872, 2872, 5872]);
+  assert.deepEqual(w.map((x) => x.startTick), [0, 2872, 5872]);
 });
 
 const m = { tickrate: 64, fps: 60, recordStartTick: 0, recordEndTick: 10_000, frames: 10_000 * 60 / 64 };

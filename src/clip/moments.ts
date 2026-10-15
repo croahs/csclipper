@@ -6,6 +6,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseDemo, parseDir, type ParsedDemo } from "../parse/demo.ts";
 import { loadWeights, moments } from "../score/index.ts";
+import { loadClipRules } from "../config.ts";
 import { clipSpecs, type ClipSpec } from "./index.ts";
 
 export type MomentsResult = { parsed: ParsedDemo; specs: ClipSpec[]; table: string; file: string; cached: boolean };
@@ -30,13 +31,14 @@ export function table(p: ParsedDemo, specs: ClipSpec[]): string {
 }
 
 // Bump when the scoring or clip-spec code changes what it produces.
-const MOMENTS_SCHEMA = 2; // 2: no 30 s cap, action windows
+const MOMENTS_SCHEMA = 3; // 2: no 30 s cap, action windows; 3: windows reach the span's ends
 
-/** Cached: moments.json counts only if its key (parse key, weights, schema) matches. An empty spec list is a valid result. */
+/** Cached: moments.json counts only if its key (parse key, weights, clip rules, schema) matches. An empty spec list is a valid result. */
 export async function buildMoments(demo: string, pov: string): Promise<MomentsResult> {
   const parsed = await parseDemo(demo, pov);
   const w = loadWeights();
-  const key = createHash("sha256").update(JSON.stringify({ parse: parsed.key, weights: w, schema: MOMENTS_SCHEMA })).digest("hex").slice(0, 16);
+  const rules = loadClipRules();
+  const key = createHash("sha256").update(JSON.stringify({ parse: parsed.key, weights: w, rules, schema: MOMENTS_SCHEMA })).digest("hex").slice(0, 16);
   const dir = parseDir(parsed.demo.sha256);
   const file = path.join(dir, "moments.json");
   if (existsSync(file)) {
@@ -51,7 +53,7 @@ export async function buildMoments(demo: string, pov: string): Promise<MomentsRe
       }
     } catch {}
   }
-  const specs = clipSpecs(parsed, moments(parsed, w), w);
+  const specs = clipSpecs(parsed, moments(parsed, w), w, rules);
   const t = table(parsed, specs);
   writeAtomic(path.join(dir, "moments.txt"), t);
   writeAtomic(file, JSON.stringify({ key, demo: parsed.demo, pov: parsed.identity, generatedAt: new Date().toISOString(), weights: w, specs }, null, 2));

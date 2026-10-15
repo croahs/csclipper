@@ -10,6 +10,10 @@
     "fadeSeconds": 0.25
   },
   "crosshairFromDemoSincePatch": 14182,
+  "clip": {
+    "leadInSeconds": 4,
+    "tailSeconds": 5.5
+  },
   "batch": {
     "topN": 2,
     "minScore": 40

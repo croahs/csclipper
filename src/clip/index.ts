@@ -5,10 +5,10 @@
 import type { Death, ParsedDemo, Round } from "../parse/demo.ts";
 import { clipId } from "../library/index.ts";
 import { scoreKills, weaponClass, type Clutch, type Moment, type Weights } from "../score/index.ts";
+import type { ClipRules } from "../config.ts";
 
 const ENGAGE_WINDOW_S = 5; // engagement signals this far before the first kill
-const LEAD_IN_S = 2;
-const TAIL_S = 2.5; // after the last kill
+// Lead-in (before the engagement start) and tail (after the last kill): config.json → clip.
 const OUTCOME_TAIL_S = 1; // after a clutch's resolving event, and past round end at most
 const OUTCOME_MAX_S = 25; // a POV plant/defuse this long after the last kill still resolves the clutch
 const ROUND_END_FOLLOWS_S = 5; // a round end this soon after the last kill is its outcome
@@ -70,7 +70,7 @@ function title(map: string, round: number, kills: Death[], clutch?: Clutch): str
 }
 
 /** Boundaries for one moment, before merging; outcome: the tick of what resolves it. */
-function bounds(p: ParsedDemo, r: Round, m: Moment): { start: number; end: number; outcome: number } {
+function bounds(p: ParsedDemo, r: Round, m: Moment, rules: ClipRules): { start: number; end: number; outcome: number } {
   const t = p.demo.tickrate;
   const me = p.identity.steamid;
   const first = m.kills[0].tick;
@@ -81,16 +81,16 @@ function bounds(p: ParsedDemo, r: Round, m: Moment): { start: number; end: numbe
     ...p.hurts.filter((h) => h.round === r.n && (h.attacker === me || h.victim === me)).map((h) => h.tick),
   ].filter((x) => x >= from && x <= first);
   const engage = signals.length ? Math.min(...signals) : first;
-  const start = Math.max(r.startTick, engage - LEAD_IN_S * t);
-  let end = last + TAIL_S * t;
+  const start = Math.max(r.startTick, engage - rules.leadInSeconds * t);
+  let end = last + rules.tailSeconds * t;
   let outcome = last;
   if (m.clutch) {
-    // A clutch ends 1 s after what resolved it: the POV's plant or defuse within
+    // A clutch's outcome is what resolved it: the POV's plant or defuse within
     // 25 s after the last kill, else the round end when it follows that kill
-    // directly, else the kill itself.
+    // directly, else the kill itself; the clip runs to 1 s past it if that is later.
     const bomb = p.bombs.find((b) => b.round === r.n && b.player === me && b.tick >= last && b.tick <= last + OUTCOME_MAX_S * t);
     outcome = bomb ? bomb.tick : r.endTick - last <= ROUND_END_FOLLOWS_S * t ? r.endTick : last;
-    end = outcome + OUTCOME_TAIL_S * t;
+    end = Math.max(end, outcome + OUTCOME_TAIL_S * t);
   }
   return { start: Math.round(start), end: Math.round(Math.min(end, r.endTick + OUTCOME_TAIL_S * t)), outcome };
 }
@@ -98,9 +98,10 @@ function bounds(p: ParsedDemo, r: Round, m: Moment): { start: number; end: numbe
 /**
  * The stretches of [start, end] post plays at normal speed: 2 s before to 1.5 s after each
  * POV kill, damage dealt or taken, weapon fire and outcome event, merged when they overlap
- * or are at most FAST_FORWARD_GAP_S apart. Before the first and after the last window is cut.
+ * or are at most FAST_FORWARD_GAP_S apart, plus the `keep` stretches. The first window starts
+ * at `start` and the last ends at `end`, so the lead-in and the clip's end always play in full.
  */
-export function actionWindows(p: ParsedDemo, round: number, start: number, end: number, extra: number[] = []): ActionWindow[] {
+export function actionWindows(p: ParsedDemo, round: number, start: number, end: number, extra: number[] = [], keep: ActionWindow[] = []): ActionWindow[] {
   const t = p.demo.tickrate;
   const me = p.identity.steamid;
   const actions = [
@@ -108,23 +109,35 @@ export function actionWindows(p: ParsedDemo, round: number, start: number, end: 
     ...p.hurts.filter((h) => h.round === round && (h.attacker === me || h.victim === me)).map((h) => h.tick),
     ...p.fires.filter((f) => f.round === round && f.player === me).map((f) => f.tick),
     ...extra,
-  ].filter((x) => x >= start && x <= end).sort((a, b) => a - b);
+  ].filter((x) => x >= start && x <= end);
+  // `keep`: stretches that always play at normal speed (the tail after each moment's last kill).
+  const spans = [
+    ...actions.map((a) => ({ startTick: Math.round(a - ACTION_BEFORE_S * t), endTick: Math.round(a + ACTION_AFTER_S * t) })),
+    ...keep,
+  ].map((w) => ({ startTick: Math.max(start, w.startTick), endTick: Math.min(end, w.endTick) }))
+    .filter((w) => w.endTick > w.startTick)
+    .sort((a, b) => a.startTick - b.startTick);
   const out: ActionWindow[] = [];
-  for (const a of actions) {
-    const w = { startTick: Math.max(start, Math.round(a - ACTION_BEFORE_S * t)), endTick: Math.min(end, Math.round(a + ACTION_AFTER_S * t)) };
+  for (const w of spans) {
     const prev = out[out.length - 1];
     if (prev && w.startTick - prev.endTick <= FAST_FORWARD_GAP_S * t) prev.endTick = Math.max(prev.endTick, w.endTick);
     else out.push(w);
   }
+  if (!out.length) return [{ startTick: start, endTick: end }];
+  out[0].startTick = start;
+  out[out.length - 1].endTick = end;
   return out;
 }
 
-export function clipSpecs(p: ParsedDemo, ms: Moment[], w: Weights): ClipSpec[] {
+export function clipSpecs(p: ParsedDemo, ms: Moment[], w: Weights, rules: ClipRules): ClipSpec[] {
   const t = p.demo.tickrate;
-  type Draft = { round: number; kills: Death[]; clutch?: Clutch; roundWon: boolean; start: number; end: number; outcomes: number[] };
+  type Draft = { round: number; kills: Death[]; clutch?: Clutch; roundWon: boolean; start: number; end: number; outcomes: number[]; tails: ActionWindow[] };
   const drafts: Draft[] = ms.map((m) => {
-    const b = bounds(p, p.rounds.find((r) => r.n === m.round)!, m);
-    return { round: m.round, kills: m.kills, clutch: m.clutch, roundWon: m.roundWon, start: b.start, end: b.end, outcomes: [b.outcome] };
+    const b = bounds(p, p.rounds.find((r) => r.n === m.round)!, m, rules);
+    const last = m.kills[m.kills.length - 1].tick;
+    // The tail after the last kill plays in full even when a later clutch outcome extends the span.
+    const tails = [{ startTick: last, endTick: Math.round(last + rules.tailSeconds * p.demo.tickrate) }];
+    return { round: m.round, kills: m.kills, clutch: m.clutch, roundWon: m.roundWon, start: b.start, end: b.end, outcomes: [b.outcome], tails };
   });
   // Merge overlapping drafts of the same round.
   drafts.sort((a, b) => a.round - b.round || a.start - b.start);
@@ -136,6 +149,7 @@ export function clipSpecs(p: ParsedDemo, ms: Moment[], w: Weights): ClipSpec[] {
       prev.clutch = prev.clutch ?? d.clutch;
       prev.end = Math.max(prev.end, d.end);
       prev.outcomes = [...prev.outcomes, ...d.outcomes];
+      prev.tails = [...prev.tails, ...d.tails];
     } else merged.push({ ...d, kills: [...d.kills] });
   }
   // No cap: a moment is never cut short (PLAN.md §4); post fast-forwards the stretches without action.
@@ -152,7 +166,7 @@ export function clipSpecs(p: ParsedDemo, ms: Moment[], w: Weights): ClipSpec[] {
       flags: flagsOf(d.kills),
       ...(d.clutch ? { clutch: d.clutch } : {}),
       aboveThreshold: s.score >= w.threshold,
-      windows: actionWindows(p, d.round, d.start, d.end, d.outcomes),
+      windows: actionWindows(p, d.round, d.start, d.end, d.outcomes, d.tails),
     };
   });
   specs.sort((a, b) => b.score - a.score || a.startTick - b.startTick);
