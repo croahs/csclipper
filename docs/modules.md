@@ -251,12 +251,28 @@ the spectated player (docs/spikes.md, M0.2 open items).
   this: capture 2000 s, post 1246 s (24 s per clip), post blocking the
   next launch.
 - **Final encode.** `config.json` → `post.encoder`: `auto` (default) uses
-  h264_nvenc (`-preset p5 -tune hq -rc vbr -cq 19`, standing in for x264
-  CRF 18) when a one-frame test encode works, else x264 (`-preset slow
-  -crf 18`); a failed NVENC encode falls back to x264. On this machine
-  NVENC does not open yet: FFmpeg 9.0.1 needs NVIDIA driver 610+, the
-  driver is 591.86 ("required nvenc API 13.1, found 13.0"), so clips use
-  x264. The entry's `render.encoder` says which made it.
+  h264_nvenc (`-preset p5 -tune hq -rc vbr -cq <crf + 4>`, so 22 for CRF
+  18) whenever a one-frame test encode works on either FFmpeg, else x264
+  (`-preset slow -crf 18`); a failed NVENC encode falls back to x264 and
+  logs why. The entry's `render.encoder` says which made it. Post runs
+  the FFmpeg in PATH (`POST_FFMPEG`, the same system build HLAE's capture
+  pipe uses via `tools/hlae/ffmpeg/ffmpeg.ini`, which the render key
+  names). The probe tries that one first, then the pinned
+  `tools/ffmpeg/ffmpeg.exe` (`nvencFfmpeg()`): FFmpeg 9 opens NVENC only
+  on NVIDIA driver 610+, and the pin is FFmpeg 7.1.1, which also works on
+  older drivers (it did on 591.86). With driver 617.42 the system FFmpeg
+  9.0.1 passes and the pin goes unused. Pin source:
+  `https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip`
+  (92,234,348 bytes, sha256 `04861d3339c5ebe38b56c19a15cf2c0cc97f5de4fa8910e4d47e5e6404e4a2d4`;
+  no checksum is published for it any more, so this one is as
+  downloaded); `bin/ffmpeg.exe` extracted, sha256
+  `b90225987bdd042cca09a1efb5e34e9848f2d1dbf5fbcd388753a44145522997`.
+  Measured 2026-10-15: on one 15 s 1080p60 capture segment, x264 CRF 18
+  16.2 s, 42.4 MB, SSIM 0.9769 against the raw; NVENC CQ 22 6.9 s,
+  49.3 MB, SSIM 0.9773; a crop of the same frame shows no visible
+  difference. Whole post of clip 59 (system FFmpeg 9.0.1, driver
+  617.42, validation included): x264 44.0 s, 105.1 MB; NVENC 20.1 s,
+  126.2 MB.
 - **Chained takes.** One launch renders every take of a demo
   (`runJobs`, `src/queue/job.ts`): the jobs the library does not hold and
   that have no validated capture, in tick order. The main cfg schedules
