@@ -138,6 +138,8 @@ Score per moment from, first ranking only:
 | victim already low HP (reconstructed from `player_hurt` before the kill) | penalty |
 | style multipliers per kill: no-scope, airborne (`attackerinair`), one-bullet kill, flick (yaw turned in the 100–200 ms before the shot, angle-wrapped, above a threshold). Each scales that kill's base value (about 1.3–1.5× each) and they stack multiplicatively | decided 2026-10-15: two one-tap flicks roughly double a boring 2k, while a single stylish kill cannot lift a weak round over a strong one, because multipliers only scale what is there. Replaces the earlier flat capped bonuses |
 
+| economy: ratio of the enemy team's equipment value to your team's at freeze end (per-player equipment values from the demo). Kills against a much richer team scale the round up; kills against a much poorer team scale it down. A round-level multiplier, capped (about 0.7–1.4×) | decided by Peder 2026-10-15: kills on an eco are easy, kills while on an eco are hard |
+
 Still deferred: trades, "saved a teammate".
 
 Weights live in one `scoring.json`. Validation: you hand-pick the best
