@@ -828,3 +828,12 @@ kill in R1); in other takes it is a third-person camera over the body
 - Post rejected the deaths reel for "black frames at 112.0 s": the 50 %
   sample fell exactly on a seam between two takes, where the fades meet
   in black. Reels now check frames mid-take.
+
+**First real reels, de_anubis (`e3dc4b4e…`, the store's demo with the most
+kills), 7 s windows, one launch:** 49 takes (20 deaths, 29 kills, 4
+backward seeks), 620 s to game exit, 776 s with validation. Library clip
+54 (deaths, 20 takes, 220.0 s) and clip 55 (kills, 29 takes, 261.0 s).
+Six takes checked against the parser (deaths R1 and R17 HAALAMADRID, R30
+BigVago; kills R5 sharkyONFiR3, R16 and R30 CappaTech): event 7.0 s into
+each take, overlay and killfeed agree, the view is the killer's or the
+victim's. Overtime rounds are included (only knife rounds are left out).
