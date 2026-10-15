@@ -42,7 +42,10 @@ sources ──> ingest ──> parse ──> score ──> clip specs ──> re
   path. A file existing is never proof a stage finished.
 - Failures are recorded as failures, separate from valid empty results
   ("this demo has no moments above threshold" is a result).
-- Re-running the CLI resumes from the first incomplete stage.
+- Re-running the CLI resumes from the first incomplete stage. A
+  changed key never invalidates finished output: existing clips stay
+  as they are until an explicit re-render command names them (Peder's
+  rule, 2026-10-15).
 
 ### 1. Ingest
 

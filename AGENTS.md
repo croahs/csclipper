@@ -24,6 +24,11 @@ how to run it. Model and review roles come from
   kills the game process when the job ends. Nothing here ever runs
   against a secure server. Joining a secure server with HLAE injected
   gets an account banned, so these are hard guards, not habits.
+- A clip in the library is never re-rendered because the cfg, the
+  settings or the method changed. Render keys exist to resume
+  interrupted work and to skip what is already done, never to
+  invalidate it. Re-rendering happens only on an explicit command that
+  names the clips.
 - Done means verified on the surface Peder judges: the parsed table,
   the rendered mp4 played back, the library page opened from disk.
 - Claude-written changes get a Sol review before they are called done.
