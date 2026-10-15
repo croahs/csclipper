@@ -136,9 +136,7 @@ Score per moment from, first ranking only:
 | weapon class (pistol/Deagle/scout vs rifle vs AWP) | difficulty |
 | round won after the moment | impact |
 | victim already low HP (reconstructed from `player_hurt` before the kill) | penalty |
-| no-scope kill, kill while airborne (`attackerinair` on the death event) | added by Peder 2026-10-15 |
-| bullets per kill (POV `weapon_fire` count between kills; fewer is better) | added 2026-10-15; efficiency |
-| flick: yaw turned in the 100–200 ms before the shot, from the POV per-tick view angles, with angle wrapping, scored above a threshold | added 2026-10-15; the earlier deferral is lifted |
+| style multipliers per kill: no-scope, airborne (`attackerinair`), one-bullet kill, flick (yaw turned in the 100–200 ms before the shot, angle-wrapped, above a threshold). Each scales that kill's base value (about 1.3–1.5× each) and they stack multiplicatively | decided 2026-10-15: two one-tap flicks roughly double a boring 2k, while a single stylish kill cannot lift a weak round over a strong one, because multipliers only scale what is there. Replaces the earlier flat capped bonuses |
 
 Still deferred: trades, "saved a teammate".
 
