@@ -30,7 +30,7 @@ export function table(p: ParsedDemo, specs: ClipSpec[]): string {
 }
 
 // Bump when the scoring or clip-spec code changes what it produces.
-const MOMENTS_SCHEMA = 1;
+const MOMENTS_SCHEMA = 2; // 2: no 30 s cap, action windows
 
 /** Cached: moments.json counts only if its key (parse key, weights, schema) matches. An empty spec list is a valid result. */
 export async function buildMoments(demo: string, pov: string): Promise<MomentsResult> {

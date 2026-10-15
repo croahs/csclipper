@@ -166,18 +166,19 @@ export async function runJob(prep: PreparedJob): Promise<JobResult> {
 
     ensureClipsDir();
     const tmp = clipTmpPath(id, attempt);
-    const p = post(capture.video, capture.audio, capture.mapping, startTick, endTick, settings, tmp);
+    const p = post(capture.video, capture.audio, capture.mapping, startTick, endTick, settings, tmp, spec?.windows);
     if (p.status !== "ok") return fail(p.reasons);
 
     publish(tmp, {
       id, file: `clips/${id}.mp4`, title, map: facts.map, demo, demoSha256: facts.demoSha256, round,
       ...(spec ? { moment: { rank: spec.rank, score: spec.score, breakdown: spec.breakdown, kills: spec.kills, killTicks: spec.killTicks, weapons: spec.weapons, flags: spec.flags, ...(spec.clutch ? { clutch: { vs: spec.clutch.vs, won: spec.clutch.won } } : {}) } } : {}),
       startTick, endTick, seconds: p.plan!.seconds, frames: p.plan!.frames, createdAt: new Date().toISOString(),
-      renderKey, render: { ...renderInputs, node: versions.node, mapping: capture.mapping, trim: p.plan, workDir },
+      renderKey, render: { ...renderInputs, node: versions.node, mapping: capture.mapping, trim: p.plan, segments: p.segments!.map(({ startTick, endTick, speed, outSeconds }) => ({ startTick, endTick, speed, outSeconds })), workDir },
       timing: "scheduled",
       crosshair: { source: crosshair, demoPatch: facts.patch, cutoff: cutoff ?? null },
     }, o.replaces);
-    console.log(`ok: ${clipPath(id)} (${p.plan!.frames} frames, ${p.plan!.seconds.toFixed(3)} s; trimmed by the scheduled record start)`);
+    const ff = p.segments!.filter((x) => x.speed !== 1);
+    console.log(`ok: ${clipPath(id)} (${p.plan!.seconds.toFixed(1)} s from ${((endTick - startTick) / capture.mapping.tickrate).toFixed(1)} s of play${ff.length ? `, ${ff.length} stretch(es) fast-forwarded` : ""}; trimmed by the scheduled record start)`);
     return { status: "done", id, title, clip: clipPath(id) };
   } finally {
     clipLock.release();

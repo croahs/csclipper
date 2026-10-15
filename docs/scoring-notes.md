@@ -54,7 +54,9 @@ engagement (POV shot or damage dealt/taken) within 5 s before the first
 kill, minus 2 s; end = last kill + 2.5 s, or for a clutch 1 s after what
 resolved it (the POV's plant/defuse within 25 s of the last kill, else a
 round end within 5 s of it, else the last kill); never past round end + 1 s;
-overlapping moments in a round merge; over 30 s is split from the end.
+overlapping moments in a round merge; nothing is cut short, however long
+(post fast-forwards the stretches without action: `docs/modules.md`,
+Fast-forward).
 
 ## What the current weights pick (2026-10-15)
 

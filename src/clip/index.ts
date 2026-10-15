@@ -1,6 +1,7 @@
 // Clip specs from moments (PLAN.md §4): engagement-start lead-in, outcome-event
-// end, overlapping moments merged, a 30 s cap with splitting, a stable id and
-// a generated title.
+// end, overlapping moments merged and never cut short, the action windows post
+// plays at normal speed (the rest is fast-forwarded), a stable id and a
+// generated title.
 import type { Death, ParsedDemo, Round } from "../parse/demo.ts";
 import { clipId } from "../library/index.ts";
 import { scoreKills, weaponClass, type Clutch, type Moment, type Weights } from "../score/index.ts";
@@ -9,9 +10,16 @@ const ENGAGE_WINDOW_S = 5; // engagement signals this far before the first kill
 const LEAD_IN_S = 2;
 const TAIL_S = 2.5; // after the last kill
 const OUTCOME_TAIL_S = 1; // after a clutch's resolving event, and past round end at most
-const MAX_S = 30;
 const OUTCOME_MAX_S = 25; // a POV plant/defuse this long after the last kill still resolves the clutch
 const ROUND_END_FOLLOWS_S = 5; // a round end this soon after the last kill is its outcome
+// Action windows: around each POV kill, damage dealt or taken, weapon fire and the outcome event.
+const ACTION_BEFORE_S = 2;
+const ACTION_AFTER_S = 1.5;
+// A stretch without action longer than this is fast-forwarded in post; a shorter one plays as is.
+export const FAST_FORWARD_GAP_S = 4;
+
+/** Ticks [startTick, endTick) post plays at normal speed; between two windows is fast-forwarded. */
+export type ActionWindow = { startTick: number; endTick: number };
 
 export type ClipSpec = {
   id: string;
@@ -28,6 +36,8 @@ export type ClipSpec = {
   flags: string[];
   clutch?: Clutch;
   aboveThreshold: boolean;
+  /** Normal-speed windows inside [startTick, endTick], in order, more than FAST_FORWARD_GAP_S apart. */
+  windows: ActionWindow[];
 };
 
 const WEAPON_NAMES: Record<string, string> = {
@@ -59,8 +69,8 @@ function title(map: string, round: number, kills: Death[], clutch?: Clutch): str
   return `${map} · R${round} · ${what}${c}`;
 }
 
-/** Boundaries for one moment, before merging and the cap. */
-function bounds(p: ParsedDemo, r: Round, m: Moment): { start: number; end: number } {
+/** Boundaries for one moment, before merging; outcome: the tick of what resolves it. */
+function bounds(p: ParsedDemo, r: Round, m: Moment): { start: number; end: number; outcome: number } {
   const t = p.demo.tickrate;
   const me = p.identity.steamid;
   const first = m.kills[0].tick;
@@ -73,22 +83,49 @@ function bounds(p: ParsedDemo, r: Round, m: Moment): { start: number; end: numbe
   const engage = signals.length ? Math.min(...signals) : first;
   const start = Math.max(r.startTick, engage - LEAD_IN_S * t);
   let end = last + TAIL_S * t;
+  let outcome = last;
   if (m.clutch) {
-    // A clutch ends 1 s after what resolved it: the POV's plant or defuse after
-    // the last kill, else the round end when it follows that kill directly, else
-    // the kill itself. The outcome stays within 25 s of the last kill, so the
-    // 30 s piece that holds the outcome (the cap splits from the end) holds the kill too.
+    // A clutch ends 1 s after what resolved it: the POV's plant or defuse within
+    // 25 s after the last kill, else the round end when it follows that kill
+    // directly, else the kill itself.
     const bomb = p.bombs.find((b) => b.round === r.n && b.player === me && b.tick >= last && b.tick <= last + OUTCOME_MAX_S * t);
-    const outcome = bomb ? bomb.tick : r.endTick - last <= ROUND_END_FOLLOWS_S * t ? r.endTick : last;
+    outcome = bomb ? bomb.tick : r.endTick - last <= ROUND_END_FOLLOWS_S * t ? r.endTick : last;
     end = outcome + OUTCOME_TAIL_S * t;
   }
-  return { start: Math.round(start), end: Math.round(Math.min(end, r.endTick + OUTCOME_TAIL_S * t)) };
+  return { start: Math.round(start), end: Math.round(Math.min(end, r.endTick + OUTCOME_TAIL_S * t)), outcome };
+}
+
+/**
+ * The stretches of [start, end] post plays at normal speed: 2 s before to 1.5 s after each
+ * POV kill, damage dealt or taken, weapon fire and outcome event, merged when they overlap
+ * or are at most FAST_FORWARD_GAP_S apart. Before the first and after the last window is cut.
+ */
+export function actionWindows(p: ParsedDemo, round: number, start: number, end: number, extra: number[] = []): ActionWindow[] {
+  const t = p.demo.tickrate;
+  const me = p.identity.steamid;
+  const actions = [
+    ...p.deaths.filter((d) => d.round === round && d.attacker === me).map((d) => d.tick),
+    ...p.hurts.filter((h) => h.round === round && (h.attacker === me || h.victim === me)).map((h) => h.tick),
+    ...p.fires.filter((f) => f.round === round && f.player === me).map((f) => f.tick),
+    ...extra,
+  ].filter((x) => x >= start && x <= end).sort((a, b) => a - b);
+  const out: ActionWindow[] = [];
+  for (const a of actions) {
+    const w = { startTick: Math.max(start, Math.round(a - ACTION_BEFORE_S * t)), endTick: Math.min(end, Math.round(a + ACTION_AFTER_S * t)) };
+    const prev = out[out.length - 1];
+    if (prev && w.startTick - prev.endTick <= FAST_FORWARD_GAP_S * t) prev.endTick = Math.max(prev.endTick, w.endTick);
+    else out.push(w);
+  }
+  return out;
 }
 
 export function clipSpecs(p: ParsedDemo, ms: Moment[], w: Weights): ClipSpec[] {
   const t = p.demo.tickrate;
-  type Draft = { round: number; kills: Death[]; clutch?: Clutch; roundWon: boolean; start: number; end: number };
-  const drafts: Draft[] = ms.map((m) => ({ round: m.round, kills: m.kills, clutch: m.clutch, roundWon: m.roundWon, ...bounds(p, p.rounds.find((r) => r.n === m.round)!, m) }));
+  type Draft = { round: number; kills: Death[]; clutch?: Clutch; roundWon: boolean; start: number; end: number; outcomes: number[] };
+  const drafts: Draft[] = ms.map((m) => {
+    const b = bounds(p, p.rounds.find((r) => r.n === m.round)!, m);
+    return { round: m.round, kills: m.kills, clutch: m.clutch, roundWon: m.roundWon, start: b.start, end: b.end, outcomes: [b.outcome] };
+  });
   // Merge overlapping drafts of the same round.
   drafts.sort((a, b) => a.round - b.round || a.start - b.start);
   const merged: Draft[] = [];
@@ -98,23 +135,11 @@ export function clipSpecs(p: ParsedDemo, ms: Moment[], w: Weights): ClipSpec[] {
       prev.kills = [...prev.kills, ...d.kills].sort((a, b) => a.tick - b.tick);
       prev.clutch = prev.clutch ?? d.clutch;
       prev.end = Math.max(prev.end, d.end);
+      prev.outcomes = [...prev.outcomes, ...d.outcomes];
     } else merged.push({ ...d, kills: [...d.kills] });
   }
-  // Cap: a longer draft is split from its end backwards; only the piece holding
-  // the outcome (the last one) keeps the clutch label. Pieces without kills go.
-  const pieces: Draft[] = [];
-  for (const d of merged) {
-    let end = d.end;
-    let first = true;
-    while (end > d.start) {
-      const start = Math.max(d.start, end - MAX_S * t);
-      const kills = d.kills.filter((k) => k.tick >= start && k.tick < end);
-      if (kills.length) pieces.push({ ...d, kills, clutch: first ? d.clutch : undefined, start, end });
-      first = false;
-      end = start;
-    }
-  }
-  const specs = pieces.map((d) => {
+  // No cap: a moment is never cut short (PLAN.md §4); post fast-forwards the stretches without action.
+  const specs = merged.map((d) => {
     const s = scoreKills(d.kills, d.clutch, d.roundWon, w, t);
     return {
       id: clipId(p.demo.sha256, d.round, d.start, d.end),
@@ -127,6 +152,7 @@ export function clipSpecs(p: ParsedDemo, ms: Moment[], w: Weights): ClipSpec[] {
       flags: flagsOf(d.kills),
       ...(d.clutch ? { clutch: d.clutch } : {}),
       aboveThreshold: s.score >= w.threshold,
+      windows: actionWindows(p, d.round, d.start, d.end, d.outcomes),
     };
   });
   specs.sort((a, b) => b.score - a.score || a.startTick - b.startTick);

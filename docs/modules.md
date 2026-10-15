@@ -91,7 +91,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `src/parse/demo.ts` | per-demo extraction, cached in `state/<demo sha256>/parse.json` |
 | `src/parse/clip-facts.ts` | what one render needs: tickrate, demo hash, map, POV slot at the clip's ticks, round |
 | `src/score/index.ts` | round context (1vX), kill clusters, scoring |
-| `src/clip/` | clip specs (`index.ts`: boundaries, merge, 30 s cap, id, title); `moments.ts` writes `moments.json` / `moments.txt` |
+| `src/clip/` | clip specs (`index.ts`: boundaries, merge, action windows, id, title); `moments.ts` writes `moments.json` / `moments.txt` |
 | `src/render/controller/` | `index.ts` state machine, `guards.ts`, `processes.ts`, `cfg.ts` |
 | `src/render/capture/hlae.ts` | HLAE launch arguments and `mirv_streams` lines |
 | `src/post/` | trim and fade (`index.ts`), FFmpeg probes (`ffmpeg.ts`) |
@@ -100,6 +100,21 @@ the spectated player (docs/spikes.md, M0.2 open items).
 
 ## Decisions made in M1
 
+- **Fast-forward.** A moment is never cut short: its span runs from the
+  engagement start to its outcome event, however long. Length is handled in
+  post. The spec's `windows` (`actionWindows`, `src/clip/index.ts`) run from
+  2 s before to 1.5 s after each POV kill, damage dealt or taken, weapon
+  fire and outcome event (the clutch's plant, defuse or round end), clamped
+  to the span (a clutch's ends 1 s after its outcome). Windows
+  closer than `FAST_FORWARD_GAP_S` (4 s) merge, so short pauses play as
+  they are. Post (`segments`, `src/post/index.ts`) plays each window at
+  normal speed and each gap between two windows at `FAST_FORWARD_SPEED`
+  (8x) with the audio muted: trim/setpts per segment, fps resampling for
+  the fast ones, then concat, with fades over the whole clip. Before the
+  first and after the last window is cut. About 30 s is a goal, not a cap.
+  A hand-written range has no windows and plays whole. The library entry's
+  `render.segments` lists what was played at which speed, and `seconds` is
+  the output length.
 - **Tick mapping, scheduled.** The capture records `MARGIN_TICKS` (32) on
   each side of the requested ticks. The frame rate is locked (HLAE's
   "Finishing movie … [N frames" line, the demuxed frame count and the WAV
