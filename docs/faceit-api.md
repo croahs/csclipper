@@ -1,30 +1,38 @@
 # FACEIT API shapes relied on
 
-`src/ingest/sources/faceit.ts` uses the four calls below and only the
-fields listed. **None of this has been checked against the live API yet**
-(no key on 2026-10-15): the shapes come from FACEIT's documented Data API
-v4 and Downloads API as known when this was written, and the recorded
-fixtures in `test/fixtures/faceit/` copy them. When the key arrives, run
-`pnpm grab --dry-run` first; a mismatch fails with a message naming the
-call and the field (e.g. `FACEIT match history: field "items" missing`),
-so fix the field here, in the code and in the fixture together, then run
-`pnpm test`.
+`src/ingest/sources/faceit.ts` uses the calls below and only the fields
+listed. Checked against the live API on 2026-10-15 with Peder's key: the
+player and history calls work as listed; the download endpoint is the one
+below and answers 403 `err_f0` ("no valid scope provided") for a key without
+the Downloads API scope. Not yet seen live: the match call's `demo_url`, the
+download response, and a demo body. The recorded fixtures in
+`test/fixtures/faceit/` copy these shapes; a mismatch fails with a message
+naming the call and the field (e.g. `FACEIT match history: field "items"
+missing`), so fix the field here, in the code and in the fixture together,
+then run `pnpm test`.
 
 All calls send `Authorization: Bearer <FACEIT_API_KEY>`. HTTP 401/403 is
-reported as "API key rejected or lacks access".
+reported as "API key rejected or lacks access", except on the download
+endpoint (below).
 
-| Step | Request | Fields read | Fixture |
-|---|---|---|---|
-| Player | `GET https://open.faceit.com/data/v4/players?game=cs2&game_player_id=<STEAM_ID64>` | `player_id` (string). 404 = no FACEIT CS2 account for that SteamID | `player.json` |
-| History | `GET …/data/v4/players/<player_id>/history?game=cs2&offset=<n>&limit=20` | `items[]` (newest first): `match_id` (string), `status` (string, optional; only `finished` is taken), `finished_at` (unix seconds, optional) | `history.json` |
-| Match | `GET …/data/v4/matches/<match_id>` | `demo_url` (array of strings; the first is used). Empty or missing = demo not uploaded yet | `match.json` |
-| Download URL | `POST https://open.faceit.com/download/v2/demos/download-url` with body `{"resource_url": "<demo_url[0]>"}` | `payload.download_url` (string, a signed URL) | `download-url.json` |
-| Demo | `GET <download_url>` (no auth header) | the body: a `.dem.gz` (or `.dem.zst` / `.dem.bz2` / `.dem`, taken from the URL's path) | generated in `test/faceit.test.ts` |
+| Step | Request | Fields read | Fixture | Live |
+|---|---|---|---|---|
+| Player | `GET https://open.faceit.com/data/v4/players?game=cs2&game_player_id=<STEAM_ID64>` | `player_id` (string). 404 = no FACEIT CS2 account for that SteamID | `player.json` | yes |
+| History | `GET https://open.faceit.com/data/v4/players/<player_id>/history?game=cs2&offset=<n>&limit=20` | `items[]` (newest first): `match_id` (string), `status` (string, optional; `finished` is taken, `cancelled` / `aborted` skipped, anything else waited on), `finished_at` (unix seconds, optional) | `history.json` | yes |
+| Match | `GET https://open.faceit.com/data/v4/matches/<match_id>` | `demo_url` (array of strings; the first is used). Missing, `null` or empty = demo not uploaded yet | `match.json` | not yet |
+| Download | `POST https://open.faceit.com/download/v2/demos/download` with body `{"resource_url": "<demo_url[0]>"}` | `payload.download_url` (string, a signed URL) | `download-url.json` | 403 `err_f0` without the scope |
+| Demo | `GET <download_url>` (no auth header) | the body: a `.dem.gz` (or `.dem.zst` / `.dem.bz2` / `.dem`, taken from the URL's path) | generated in `test/faceit.test.ts` | not yet |
 
-Known uncertainty: FACEIT has required its Downloads API (the
-`download-url` step) for demo files since `demo_url` stopped being directly
-downloadable; access to it may need to be requested for the key's app. If
-that step returns 401/403 while the other calls work, that is the cause.
+**The Downloads API is a separate scope.** FACEIT grants it per application
+(docs.faceit.com/getting-started/Guides/download-api; apply at
+https://fce.gg/downloads-api-application); a plain Data API key cannot
+download demos. Without it, the download endpoint answers 403 with
+`{"errors":[{"code":"err_f0","message":"no valid scope provided"}]}`, and
+`pnpm grab` prints one line saying so, lists every new match as pending,
+leaves the checkpoint where it is and exits 0. Once the scope is granted,
+the next `pnpm grab` fetches them. Until then the folders source (CS2's
+`game/csgo/`, where the FACEIT client's "Watch demo" saves demos, and
+`~/Downloads`) is the way in.
 
 ## Behaviour the code adds on top
 

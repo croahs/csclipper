@@ -20,7 +20,7 @@ const ids = (fixture("history.json").items as { match_id: string }[]).map((i) =>
 
 type Fake = Transport & { calls: string[]; downloads: string[] };
 type Item = { match_id: string; status?: string; finished_at?: number };
-function fakeTransport(opts: { history?: string[]; items?: Item[]; failDownload?: string; noDemo?: string; demoUrlValue?: unknown; demoBody?: Buffer; status?: number } = {}): Fake {
+function fakeTransport(opts: { history?: string[]; items?: Item[]; failDownload?: string; noDemo?: string; demoUrlValue?: unknown; demoBody?: Buffer; status?: number; noScope?: boolean } = {}): Fake {
   const historyIds = opts.history ?? ids;
   const calls: string[] = [];
   const downloads: string[] = [];
@@ -54,6 +54,7 @@ function fakeTransport(opts: { history?: string[]; items?: Item[]; failDownload?
     async postJson(url, key, payload) {
       assert.equal(url, DOWNLOAD_API);
       assert.equal(key, KEY);
+      if (opts.noScope) return { status: 403, body: { errors: [{ code: "err_f0", message: "no valid scope provided" }] } };
       const resource = (payload as { resource_url: string }).resource_url;
       return { status: 200, body: { payload: { download_url: `${resource}?X-Amz-Signature=example` } } };
     },
@@ -289,4 +290,32 @@ test("a cancelled match is skipped and the next finished one is fetched", async 
   assert.deepEqual(r.fetched.map((f) => path.basename(f)), [`faceit-${ids[3]}.dem.gz`, `faceit-${ids[1]}.dem.gz`, `faceit-${ids[0]}.dem.gz`]);
   assert.deepEqual(r.pending, []);
   assert.ok(c.lines.some((l) => l.includes("cancelled; skipped")));
+});
+
+test("no Downloads API scope: every new match is pending, nothing skipped, the checkpoint stays", async () => {
+  const c = ctx(); mk(c);
+  const r = await faceitSource(opts(fakeTransport({ noScope: true }))).fetch(c);
+  assert.match(r.blocked ?? "", /lacks the Downloads API scope.*fce\.gg\/downloads-api-application/);
+  assert.deepEqual(r.pending.map((p) => p.item), [ids[3], ids[2], ids[1], ids[0]]);
+  assert.ok(r.pending.every((p) => /Downloads API scope/.test(p.reason)));
+  assert.equal(r.fetched.length, 0);
+  assert.equal(readdirSync(c.inbox).length, 0);
+  assert.equal(JSON.parse(readFileSync(c.stateFile, "utf8")).lastMatchId, "(start)");
+  // With the scope granted later, the same matches are fetched.
+  const r2 = await faceitSource(opts(fakeTransport())).fetch(c);
+  assert.equal(r2.fetched.length, 4);
+});
+
+test("another 403 from the download endpoint is a normal failure, not the scope message", async () => {
+  const c = ctx(); mk(c);
+  const t = fakeTransport();
+  t.postJson = async () => ({ status: 403, body: { errors: [{ code: "err_other", message: "forbidden" }] } });
+  const r = await faceitSource(opts(t)).fetch(c);
+  assert.equal(r.blocked, undefined);
+  assert.equal(r.pending.length, 1);
+  assert.match(r.pending[0].reason, /HTTP 403/);
+});
+
+test("the download endpoint is /download/v2/demos/download", () => {
+  assert.equal(DOWNLOAD_API, "https://open.faceit.com/download/v2/demos/download");
 });

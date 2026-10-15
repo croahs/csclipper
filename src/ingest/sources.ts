@@ -20,6 +20,8 @@ export type SourceResult = {
   pending: { item: string; reason: string }[];
   /** Set when the source cannot run at all (no API key): a message, not a failure. */
   skipped?: string;
+  /** Set when the source runs but cannot fetch for a known, external reason (a missing API scope); its pending items are not failures. */
+  blocked?: string;
 };
 
 export type Source = {

@@ -17,7 +17,9 @@ import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import type { Source, SourceContext, SourceResult } from "../sources.ts";
 
 export const API = "https://open.faceit.com/data/v4";
-export const DOWNLOAD_API = "https://open.faceit.com/download/v2/demos/download-url";
+export const DOWNLOAD_API = "https://open.faceit.com/download/v2/demos/download";
+// The Downloads API is a separate scope FACEIT grants per application; a plain Data API key gets 403 err_f0.
+export const NO_DOWNLOAD_SCOPE = "FACEIT_API_KEY lacks the Downloads API scope, so demos cannot be downloaded yet. Apply at https://fce.gg/downloads-api-application (docs.faceit.com/getting-started/Guides/download-api). The matches stay pending; nothing is skipped.";
 const MAX_DEMO_BYTES = 2 * 1024 ** 3;
 const HISTORY_PAGE = 20;
 const MAX_PER_RUN = 50;
@@ -73,6 +75,12 @@ const str = (o: Record<string, unknown>, k: string, what: string): string => {
   return o[k] as string;
 };
 type HistoryItem = { matchId: string; finishedAt?: number; status?: string };
+
+/** The first error code in a FACEIT error body ({"errors":[{"code":…}]}), if any. */
+function errorCode(body: unknown): string | undefined {
+  const errs = body && typeof body === "object" ? (body as { errors?: unknown }).errors : undefined;
+  return Array.isArray(errs) && errs[0] && typeof errs[0] === "object" ? String((errs[0] as { code?: unknown }).code ?? "") || undefined : undefined;
+}
 
 function check(status: number, body: unknown, what: string) {
   if (status === 401 || status === 403) throw new Error(`FACEIT ${what}: HTTP ${status} (API key rejected or lacks access)`);
@@ -236,8 +244,15 @@ export function faceitSource(o: FaceitOptions): Source {
           }
           // 4. A signed download URL for it (FACEIT Downloads API).
           const dr = await t.postJson(DOWNLOAD_API, key, { resource_url: (urls as string[])[0] });
-          const dl = obj(check(dr.status, dr.body, "demo download-url"), "demo download-url");
-          const signed = str(obj(dl.payload, "demo download-url payload"), "download_url", "demo download-url payload");
+          if (dr.status === 403 && errorCode(dr.body) === "err_f0") {
+            // No Downloads API scope: this and every later new match wait, the checkpoint stays.
+            result.blocked = NO_DOWNLOAD_SCOPE;
+            const rest = [...fresh].reverse();
+            for (const x of rest.slice(rest.findIndex((y) => y.matchId === m.matchId))) result.pending.push({ item: x.matchId, reason: "waiting for the Downloads API scope" });
+            break;
+          }
+          const dl = obj(check(dr.status, dr.body, "demo download"), "demo download");
+          const signed = str(obj(dl.payload, "demo download payload"), "download_url", "demo download payload");
           const name = demoFileName(m.matchId, signed);
           if (ctx.dryRun) { ctx.log(`faceit: would download match ${m.matchId} → ${name}`); continue; }
           // 5. Download under a temporary name; check it holds a CS2 demo; rename; then advance.

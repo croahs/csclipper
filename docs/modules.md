@@ -12,10 +12,17 @@ pnpm clip "<demo.dem>" --top <n> [--timeout <s>] [--force] [--dry-run]
 pnpm clip "<demo.dem>" <startTick> <endTick> [same options]
 ```
 
-`pnpm grab` is PLAN.md's `pnpm fetch` (pnpm's own `fetch` command takes
-that name): it runs the demo sources (FACEIT now, `docs/faceit-api.md`),
-each writing new demos into `demos/inbox/`, then ingests the inbox; it
-renders nothing. Without `FACEIT_API_KEY` in `.env` it says so and exits 0.
+`pnpm grab` (PLAN.md's `pnpm fetch`; pnpm's own `fetch` command takes that
+name) runs the demo sources, each writing new demos into `demos/inbox/`,
+then ingests the inbox; it renders nothing. Sources: **folders** copies new
+demos, read-only, from watched folders (default CS2's `game/csgo/`, where
+the FACEIT client's "Watch demo" and manual downloads land, and
+`~/Downloads`; `config.json` → `sources.folders.dirs` overrides), skipping
+any whose content is already in the store; **faceit** (with
+`FACEIT_API_KEY`) lists new FACEIT matches and downloads their demos once
+the key has FACEIT's Downloads API scope; until then they are listed as
+pending (`docs/faceit-api.md`). Pending items are not failures; exit 1
+means a source failed or ingest rejected a file.
 
 `pnpm go` is the one command: drop demos (`.dem`, or `.zip` / `.bz2` /
 `.gz` / `.zst`) into `demos/inbox/`, run it, come back to clips. It
@@ -50,8 +57,8 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `.env` | identities and tool paths (`.env.example`; M0.2 setup in `docs/spikes.md`) |
 | `scoring.json` | ranking weights; tuning and current picks in `docs/scoring-notes.md` |
 | `src/cli/go.ts`, `src/cli/clip.ts`, `src/cli/moments.ts` | the entries |
-| `src/ingest/` | watch folder (`index.ts`), the source contract (`sources.ts`), sources (`sources/faceit.ts`; Valve matchmaking later, same shape) |
-| `test/` | `pnpm test`: FACEIT source against recorded fixtures (`test/fixtures/faceit/`), no network |
+| `src/ingest/` | watch folder (`index.ts`), the source contract (`sources.ts`), sources (`sources/folders.ts`, `sources/faceit.ts`; Valve matchmaking later, same shape) |
+| `test/` | `pnpm test`: FACEIT source against recorded fixtures (`test/fixtures/faceit/`) and the folders source on temp folders; no network |
 | `src/queue/` | the batch and its job ledger (`index.ts`); one clip job, shared by `pnpm clip` and the batch (`job.ts`) |
 | `src/library/page.html`, `page.ts` | the library page template and its writer |
 | `demos/` | `inbox/` (drop here), `store/<sha256>.dem` (ingested demos), `ingested/` (originals), `rejected/` (with `.reason.txt`) |
