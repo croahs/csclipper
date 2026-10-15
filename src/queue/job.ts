@@ -5,25 +5,29 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { STATE_DIR, captureSize, loadIdentities, loadSettings } from "../config.ts";
+import { Refusal, STATE_DIR, captureSize, loadIdentities, loadSettings } from "../config.ts";
 import { clipFacts } from "../parse/clip-facts.ts";
 import { MARGIN_TICKS, SETTLE_TICKS, render, validateCapture, type TickMapping } from "../render/controller/index.ts";
 import { SPECTATOR_PANELS, lookCfg } from "../render/controller/cfg.ts";
 import { RenderLock } from "../render/controller/guards.ts";
 import { toolVersions } from "../render/versions.ts";
-import { measureMapping, post, validateClip } from "../post/index.ts";
+import { post } from "../post/index.ts";
 import type { ClipSpec } from "../clip/index.ts";
-import { clipId, clipPath, clipTmpPath, ensureClipsDir, publish, readIndex, recordFailure, writeJsonAtomic } from "../library/index.ts";
+import { clipId, clipPath, clipTmpPath, ensureClipsDir, publish, readIndex, recordFailure, writeJsonAtomic, type ClipEntry } from "../library/index.ts";
 
 export type JobInput = {
   demo: string;
   spec?: ClipSpec; // a ranked moment; else startTick/endTick by hand
   startTick?: number;
   endTick?: number;
-  force?: boolean;
+  force?: boolean; // render now even when the library holds it (pnpm clip --rerender only)
   dryRun?: boolean;
   timeoutS?: number;
   debugCommands?: string[];
+  /** Post only (pnpm go --repost): without a completed capture the job refuses; it never renders. */
+  postOnly?: boolean;
+  /** pnpm clip --rerender: the library clip this one replaces (moved to library/replaced/ on publish). */
+  replaces?: string;
 };
 /** done: rendered now; skipped: already in the library; failed: recorded in state/failures.json. */
 export type JobResult = { status: "done" | "skipped" | "failed" | "dry"; id: string; title: string; reasons?: string[]; cleanupVerified?: boolean; clip?: string };
@@ -55,6 +59,21 @@ function completedCapture(id: string, renderKey: string, size: string): (Capture
   return undefined;
 }
 
+/**
+ * The library entry that holds this moment: the same clip id, or (for a ranked moment) a clip
+ * of the same demo and round sharing a kill, made when the span rules were different. Sharing
+ * one kill is enough on purpose: a moment the library holds is never re-made by a rule change,
+ * even when the new span would add kills (AGENTS.md); pnpm clip --rerender does that.
+ */
+export function heldEntry(clips: Record<string, ClipEntry>, id: string, demoSha256: string, round: number, spec?: ClipSpec): ClipEntry | undefined {
+  if (clips[id]) return clips[id];
+  if (!spec) return undefined;
+  return Object.values(clips).find((e) => {
+    const ticks = e.moment?.killTicks;
+    return e.demoSha256 === demoSha256 && e.round === round && Array.isArray(ticks) && ticks.some((t) => spec.killTicks.includes(t as number));
+  });
+}
+
 /** Everything a job decides before it may launch: facts, id, render key, library state. */
 export type PreparedJob = Awaited<ReturnType<typeof prepareJob>>;
 
@@ -78,20 +97,26 @@ export async function prepareJob(o: JobInput) {
   const renderInputs = { settings, versions: outputVersions, slot: facts.slot, lookCfgSha256: createHash("sha256").update(look).digest("hex"), marginTicks: MARGIN_TICKS, settleTicks: SETTLE_TICKS, spectatorPanels: SPECTATOR_PANELS, debugCommands };
   // The POV id is part of the key but never stored in the library.
   const renderKey = createHash("sha256").update(JSON.stringify({ ...renderInputs, pov: ids.pov })).digest("hex").slice(0, 16);
-  /** The library already holds this clip for this render key, and the file still validates. A file alone proves nothing. */
+  /** A validated raw capture for this render key exists, so the job needs post only, no launch. */
+  const hasCapture = () => !!completedCapture(id, renderKey, `${captureSize(settings).width}x${captureSize(settings).height}`);
+  /**
+   * The library holds this moment: done, whatever its render key (AGENTS.md: a finished clip is never
+   * re-rendered because the cfg, settings or method changed; only pnpm clip --rerender <no|id> does that).
+   * The entry is written only after the clip validated and was renamed into place.
+   */
   const inLibrary = () => {
-    const existing = readIndex().clips[id];
-    if (!existing || existing.renderKey !== renderKey || !existsSync(clipPath(id))) return false;
-    const problems = validateClip(clipPath(id), existing.frames, settings.fps, `${settings.width}x${settings.height}`);
-    if (problems.length) console.log(`library clip no longer valid, re-making it: ${problems.join("; ")}`);
-    return !problems.length;
+    const held = heldEntry(readIndex().clips, id, facts.demoSha256, round, spec);
+    if (!held) return false;
+    if (held.id !== id) console.log(`the library holds this moment as clip ${held.no ?? held.id} (other span); kept as done`);
+    if (!existsSync(clipPath(held.id))) console.log(`library entry ${held.id} has no file; kept as done (pnpm clip --rerender ${held.id} re-makes it)`);
+    return true;
   };
-  return { o, demo, spec, debugCommands, startTick, endTick, settings, ids, facts, round, id, title, look, versions, renderInputs, renderKey, inLibrary };
+  return { o, demo, spec, debugCommands, startTick, endTick, settings, ids, facts, round, id, title, look, versions, renderInputs, renderKey, inLibrary, hasCapture };
 }
 
 export async function clipJob(o: JobInput): Promise<JobResult> {
   const p = await prepareJob(o);
-  console.log(`clip ${p.id}: ${p.title} (slot ${p.facts.slot}, ${p.facts.shotTicks.length} POV shots, render key ${p.renderKey})`);
+  console.log(`clip ${p.id}: ${p.title} (slot ${p.facts.slot}, render key ${p.renderKey})`);
   if (o.dryRun) {
     console.log(JSON.stringify({ id: p.id, title: p.title, facts: p.facts, renderInputs: p.renderInputs }, null, 2));
     return { status: "dry", id: p.id, title: p.title };
@@ -108,7 +133,7 @@ export async function runJob(prep: PreparedJob): Promise<JobResult> {
   const releaseClipLock = () => clipLock.release();
   process.on("exit", releaseClipLock);
   try {
-    // Resume: the clip is done when the library holds it for this render key.
+    // Resume: the clip is done when the library holds it (any render key); force (--rerender) makes it again.
     if (!o.force && prep.inLibrary()) { console.log(`already in the library: ${clipPath(id)}`); return { status: "skipped", id, title, clip: clipPath(id) }; }
 
     const attempt = String(Date.now());
@@ -125,6 +150,8 @@ export async function runJob(prep: PreparedJob): Promise<JobResult> {
       workDir = capture.workDir;
       console.log(`render stage already done in ${workDir}; resuming at post`);
     } else {
+      // The last word on --repost's no-launch promise, at the launch boundary itself.
+      if (o.postOnly) throw new Refusal("post only: no completed capture for this job; nothing launched");
       const r = await render({ title, demo, slot: facts.slot, startTick, endTick, workDir, lockFile: path.join(STATE_DIR, ".render.lock"), ids, settings, lookCfg: look, debugCommands, timeoutS: o.timeoutS });
       if (r.status !== "ok" || !r.mapping || !r.audio || !r.video) return fail(r.reasons, r.cleanupVerified);
       capture = { renderKey, mapping: r.mapping, video: r.video, audio: r.audio, workDir };
@@ -132,21 +159,19 @@ export async function runJob(prep: PreparedJob): Promise<JobResult> {
       console.log(`render ok in ${r.wallSeconds}s`);
     }
 
-    const m = measureMapping(capture.mapping, capture.video, capture.audio, facts.shotTicks);
-    if (typeof m === "string") return fail([m]);
-    console.log(`tick origin: frame 0 shows tick ${m.originTick.toFixed(2)} (scheduled ${m.recordStartTick}; ${m.timing.offsetFrames} frames by ${m.timing.source}; flash ${m.timing.video.offsetFrames}, audio ${(m.timing.audio.offsetMs * m.fps / 1000).toFixed(2)})`);
     ensureClipsDir();
     const tmp = clipTmpPath(id, attempt);
-    const p = post(capture.video, capture.audio, m, startTick, endTick, facts.shotTicks, settings, tmp);
+    const p = post(capture.video, capture.audio, capture.mapping, startTick, endTick, settings, tmp);
     if (p.status !== "ok") return fail(p.reasons);
 
     publish(tmp, {
       id, file: `clips/${id}.mp4`, title, map: facts.map, demo, demoSha256: facts.demoSha256, round,
       ...(spec ? { moment: { rank: spec.rank, score: spec.score, breakdown: spec.breakdown, kills: spec.kills, killTicks: spec.killTicks, weapons: spec.weapons, flags: spec.flags, ...(spec.clutch ? { clutch: { vs: spec.clutch.vs, won: spec.clutch.won } } : {}) } } : {}),
       startTick, endTick, seconds: p.plan!.seconds, frames: p.plan!.frames, createdAt: new Date().toISOString(),
-      renderKey, render: { ...renderInputs, node: versions.node, mapping: { ...capture.mapping, originTick: m.originTick, offsetFrames: m.timing.offsetFrames, source: m.timing.source }, trim: p.plan, landedOffsetFrames: p.landed!.offsetFrames, workDir },
-    });
-    console.log(`ok: ${clipPath(id)} (${p.plan!.frames} frames, ${p.plan!.seconds.toFixed(3)} s; requested ticks land ${p.landed!.offsetFrames} frames off by ${p.landed!.source})`);
+      renderKey, render: { ...renderInputs, node: versions.node, mapping: capture.mapping, trim: p.plan, workDir },
+      timing: "scheduled",
+    }, o.replaces);
+    console.log(`ok: ${clipPath(id)} (${p.plan!.frames} frames, ${p.plan!.seconds.toFixed(3)} s; trimmed by the scheduled record start)`);
     return { status: "done", id, title, clip: clipPath(id) };
   } finally {
     clipLock.release();

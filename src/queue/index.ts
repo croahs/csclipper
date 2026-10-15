@@ -37,20 +37,24 @@ function writeLedger(l: Ledger) {
 
 export type BatchOptions = {
   retryFailed?: boolean; dryRun?: boolean; timeoutS?: number;
+  /** Post only: jobs with a completed capture are (re)posted, nothing is rendered or launched. */
+  repostOnly?: boolean;
   /** Test hook: end the process this many seconds into the first launched job (an interrupted run). */
   testExitAfterS?: number;
 };
 export type BatchReport = {
   ingested: number; demos: number; selected: number;
   rendered: string[]; skipped: string[]; failed: string[]; givenUp: string[]; emptyDemos: string[]; demoErrors: string[];
+  /** --repost: selected moments without a completed capture (a normal pnpm go renders them). */
+  needsRender: string[];
   stoppedBy?: "refusal" | "cleanup"; pageError?: string;
 };
 
 /** Exit code: 0 ok, 1 a job or demo failed or was given up, 2 refused, 3 cleanup not verified. */
 export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchReport; code: number }> {
   // The whole batch refuses up front when CS2 runs: nothing is ingested or rendered.
-  if (imageRunning("cs2.exe")) throw new Refusal("refusing: CS2 is already running");
-  const report: BatchReport = { ingested: 0, demos: 0, selected: 0, rendered: [], skipped: [], failed: [], givenUp: [], emptyDemos: [], demoErrors: [] };
+  if (!o.repostOnly && imageRunning("cs2.exe")) throw new Refusal("refusing: CS2 is already running");
+  const report: BatchReport = { ingested: 0, demos: 0, selected: 0, rendered: [], skipped: [], failed: [], givenUp: [], emptyDemos: [], demoErrors: [], needsRender: [] };
   const ing = await ingest();
   report.ingested = ing.added.length;
   for (const a of ing.added) console.log(`ingested ${a.originalName} → ${path.basename(a.file)}`);
@@ -87,7 +91,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
     let prep: PreparedJob;
     let done: boolean;
     try {
-      prep = await prepareJob({ demo, spec, timeoutS: o.timeoutS });
+      prep = await prepareJob({ demo, spec, timeoutS: o.timeoutS, postOnly: o.repostOnly });
       done = prep.inLibrary();
     } catch (e) {
       // Nothing was launched: record it and go on with the next job.
@@ -106,7 +110,9 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
       continue;
     }
     if (prev?.status === "running") console.log(`${spec.title}: interrupted on an earlier run, retrying`);
-    if (prev && prev.attempts >= MAX_ATTEMPTS && !o.retryFailed) {
+    if (o.repostOnly && !prep.hasCapture()) { report.needsRender.push(spec.title); continue; }
+    // Post costs no launch, so a repost is not held back by the attempt limit.
+    if (prev && prev.attempts >= MAX_ATTEMPTS && !o.retryFailed && !o.repostOnly) {
       report.givenUp.push(`${spec.title} (${prev.attempts} attempts: ${prev.lastReasons?.join("; ") ?? "interrupted"})`);
       continue;
     }

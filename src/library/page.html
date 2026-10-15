@@ -38,7 +38,11 @@
   }
   .field { display: grid; gap: 6px; }
   .field label { font-size: 13px; color: var(--muted); }
-  select, input[type="range"] { width: 100%; }
+  select, input[type="range"], input[type="search"] { width: 100%; }
+  input[type="search"] {
+    font: inherit; color: var(--text); background: var(--surface-2);
+    border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px;
+  }
   select {
     appearance: none; font: inherit; color: var(--text);
     background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius);
@@ -58,7 +62,7 @@
   video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #0a0b0c; }
   .meta { padding: 12px 14px 14px; display: grid; gap: 8px; }
   .title-row { display: flex; gap: 10px; align-items: flex-start; }
-  .rank {
+  .no {
     flex: none; min-width: 34px; text-align: center; font-weight: 700; font-size: 13px;
     padding: 2px 7px; border-radius: var(--radius);
     background: var(--accent); color: var(--accent-ink); font-variant-numeric: tabular-nums;
@@ -86,6 +90,10 @@
   </header>
 
   <section class="controls" aria-label="Filter and sort">
+    <div class="field">
+      <label for="find">Find</label>
+      <input id="find" type="search" placeholder="Clip number or title" autocomplete="off">
+    </div>
     <div class="field">
       <label for="map">Map</label>
       <select id="map"><option value="">All maps</option></select>
@@ -147,12 +155,13 @@
     a.append(v);
     const meta = el("div", "meta");
     const row = el("div", "title-row");
-    if (c.rank) row.append(el("span", "rank", "#" + c.rank));
+    if (c.no !== undefined) { const n = el("span", "no", String(c.no)); n.title = "Clip " + c.no; row.append(n); }
     row.append(el("span", "title", c.title));
     meta.append(row);
     const facts = el("div", "facts");
     const fact = (label, value) => { const s = el("span"); s.append(label + " "); s.append(el("b", "", value)); facts.append(s); };
     if (c.score !== undefined) fact("Score", String(c.score));
+    if (c.rank) fact("Rank in demo", "#" + c.rank);
     if (c.kills) fact("Kills", String(c.kills));
     fact("Length", c.seconds.toFixed(1) + " s");
     fact("Added", new Date(c.createdAt).toLocaleDateString());
@@ -167,10 +176,14 @@
     return a;
   }
   function render() {
+    // A number finds that clip ("17", "clip 17", "#17"); other text matches the title.
+    const find = $("find").value.trim().toLowerCase();
+    const num = /^(clip\s*|#)?(\d+)$/.exec(find);
+    const found = (c) => !find || (num ? c.no === Number(num[2]) : c.title.toLowerCase().includes(find));
     const map = $("map").value, kills = Number($("kills").value), score = Number($("score").value), sort = $("sort").value;
     $("scoreValue").textContent = String(score);
     const shown = clips
-      .filter((c) => (!map || c.map === map) && (c.kills ?? 0) >= kills && (c.score ?? 0) >= score)
+      .filter((c) => found(c) && (!map || c.map === map) && (c.kills ?? 0) >= kills && (c.score ?? 0) >= score)
       .sort((a, b) => sort === "date" ? b.createdAt.localeCompare(a.createdAt) : (b.score ?? -1) - (a.score ?? -1));
     $("count").textContent = shown.length === clips.length ? clips.length + " clips" : shown.length + " of " + clips.length + " clips";
     const grid = $("grid");
@@ -187,7 +200,7 @@
       grid.append(el("div", "empty", "No clips match these filters."));
     } else for (const c of shown) grid.append(card(c));
   }
-  for (const id of ["map", "kills", "score", "sort"]) $(id).addEventListener("input", render);
+  for (const id of ["find", "map", "kills", "score", "sort"]) $(id).addEventListener("input", render);
   render();
 </script>
 </body>

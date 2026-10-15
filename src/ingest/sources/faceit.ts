@@ -8,7 +8,7 @@
 // completed, checked download, a first run fixes its starting point before
 // downloading, and the run stops at the first failure, so nothing is skipped.
 import { createHash } from "node:crypto";
-import { closeSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -65,6 +65,8 @@ export type FaceitOptions = {
   apiKey?: string; steamId64: string; maxMatchesPerRun: number; transport?: Transport; now?: () => number;
   /** How demos are obtained; default the Downloads API. The match list always comes from the Data API. */
   demos?: DemoProvider;
+  /** Whether the store already holds this match's demo; such matches are not fetched again. */
+  haveMatch?: (matchId: string) => boolean;
 };
 // A match still without a demo this long after it finished never gets one (cancelled, not recorded): skip it.
 const NO_DEMO_GIVE_UP_S = 24 * 3600;
@@ -228,6 +230,12 @@ export function faceitSource(o: FaceitOptions): Source {
             result.pending.push({ item: m.matchId, reason: `match status "${m.status}", not finished yet` });
             break;
           }
+          // Already in the store (a backfill, the folders source): nothing to fetch, the checkpoint moves on.
+          if (o.haveMatch?.(m.matchId)) {
+            ctx.log(`faceit: match ${m.matchId} is already in the store`);
+            if (!ctx.dryRun) { state.lastMatchId = m.matchId; save(); }
+            continue;
+          }
           let part: string | undefined;
           try {
             // 3-5. The demo, by API download or the browser session (provider).
@@ -254,10 +262,7 @@ export function faceitSource(o: FaceitOptions): Source {
             }
             // Check it holds a CS2 demo; rename; then advance.
             part = got.part;
-            const header = await demoHeader(part);
-            if (header !== "PBDEMS2\0") throw new Error(`downloaded file is not a CS2 demo (${got.name})`);
-            const final = path.join(ctx.inbox, got.name);
-            renameSync(part, final);
+            const final = await acceptDemo(got.part, got.name, ctx.inbox);
             part = undefined;
             result.fetched.push(final);
             state.lastMatchId = m.matchId;
@@ -320,4 +325,118 @@ export function apiDemos(t: Transport, key: string): DemoProvider {
       return { kind: "file", part, name };
     },
   };
+}
+
+// --- backfill: the last N matches, regardless of the checkpoint ---------------------
+
+export type BackfillOptions = {
+  apiKey?: string;
+  steamId64: string;
+  last: number; // how many of the newest matches to cover
+  demos: DemoProvider;
+  /** Whether the store already holds this match's demo (by match id in a stored file name). */
+  haveMatch: (matchId: string) => boolean;
+  /** Milliseconds to wait before each download after the first (default: random 10-20 s). */
+  pauseMs?: () => number;
+  transport?: Transport;
+};
+// The selection (the finished matches among the last n) is kept, so a rerun after newer
+// matches were played still finishes the matches the first run picked; replaced once all are held.
+type BackfillState = { last?: number; selection?: string[]; updatedAt?: string };
+
+/**
+ * Fetches the demos of the player's last `last` FACEIT matches, oldest first,
+ * one at a time with a pause between downloads. A match is skipped when the
+ * store holds it or its download already sits in the inbox (by match id in the
+ * file name), so a rerun resumes where a stopped one left off, and a file that
+ * ingest rejects is fetched again. Stops on the first failure. Leaves the
+ * normal checkpoint (state/sources/faceit.json) alone; the normal run skips
+ * matches the store already holds.
+ */
+export function faceitBackfill(o: BackfillOptions): Source {
+  const t = o.transport ?? httpTransport;
+  return {
+    name: "faceit-backfill",
+    async fetch(ctx: SourceContext): Promise<SourceResult> {
+      const result: SourceResult = { fetched: [], pending: [] };
+      if (!o.apiKey) { result.skipped = NO_KEY; return result; }
+      if (!Number.isSafeInteger(o.last) || o.last < 1 || o.last > MAX_HISTORY_PAGES * HISTORY_PAGE) throw new Error(`--last must be an integer from 1 to ${MAX_HISTORY_PAGES * HISTORY_PAGE}`);
+      const key = o.apiKey;
+      const state: BackfillState = existsSync(ctx.stateFile) ? JSON.parse(readFileSync(ctx.stateFile, "utf8")) : {};
+      const save = () => {
+        if (ctx.dryRun) return;
+        mkdirSync(path.dirname(ctx.stateFile), { recursive: true });
+        const tmp = `${ctx.stateFile}.${process.pid}.${Date.now()}.tmp`;
+        writeFileSync(tmp, JSON.stringify({ ...state, updatedAt: new Date().toISOString() }, null, 2) + "\n");
+        renameSync(tmp, ctx.stateFile);
+      };
+      const pr = await t.getJson(`${API}/players?game=cs2&game_player_id=${encodeURIComponent(o.steamId64)}`, key);
+      if (pr.status === 404) throw new Error("FACEIT has no CS2 player for STEAM_ID64");
+      const playerId = str(obj(check(pr.status, pr.body, "player lookup"), "player lookup"), "player_id", "player lookup");
+      const items: HistoryItem[] = [];
+      for (let offset = 0; items.length < o.last; offset += HISTORY_PAGE) {
+        const r = await t.getJson(`${API}/players/${encodeURIComponent(playerId)}/history?game=cs2&offset=${offset}&limit=${HISTORY_PAGE}`, key);
+        const body = obj(check(r.status, r.body, "match history"), "match history");
+        if (!Array.isArray(body.items)) throw new Error('FACEIT match history: field "items" missing or not an array');
+        for (const x of body.items) {
+          const it = obj(x, "match history item");
+          const matchId = str(it, "match_id", "match history item");
+          if (!MATCH_ID.test(matchId)) throw new Error(`FACEIT match history: match id with an unexpected form: ${JSON.stringify(matchId.slice(0, 80))}`);
+          items.push({ matchId, finishedAt: typeof it.finished_at === "number" ? it.finished_at : undefined, status: typeof it.status === "string" ? it.status : undefined });
+        }
+        if (body.items.length < HISTORY_PAGE) break;
+      }
+      const inbox = existsSync(ctx.inbox) ? readdirSync(ctx.inbox).filter((n) => !n.startsWith(".")) : [];
+      const held = (id: string) => o.haveMatch(id) || inbox.some((n) => n.includes(id));
+      const known = new Map(items.map((m) => [m.matchId, m]));
+      const finished = (m: HistoryItem) => !m.status || m.status.toLowerCase() === "finished";
+      // The selection holds only matches that were finished when picked, so one that has since
+      // dropped out of the fetched history is still known to be finished.
+      const itemOf = (id: string): HistoryItem => known.get(id) ?? { matchId: id, status: "finished" };
+      const resume = state.last === o.last && Array.isArray(state.selection) && state.selection.some((id) => !held(id));
+      const todo = resume ? state.selection!.map(itemOf) : items.slice(0, o.last).reverse().filter(finished);
+      if (!resume) { state.last = o.last; state.selection = todo.map((m) => m.matchId); save(); }
+      const wanted = todo.filter((m) => !held(m.matchId));
+      ctx.log(`faceit-backfill: last ${todo.length} matches${resume ? " (resuming the saved selection)" : ""}, ${todo.length - wanted.length} already held or not finished, ${wanted.length} to fetch`);
+      const pause = o.pauseMs ?? (() => 10_000 + Math.random() * 10_000);
+      try {
+        for (const [i, m] of wanted.entries()) {
+          if (i > 0 && !ctx.dryRun) await new Promise((r) => setTimeout(r, pause()));
+          let part: string | undefined;
+          try {
+            const got = await o.demos.get(m, ctx);
+            if (got.kind === "dry") { ctx.log(`faceit-backfill: would download match ${m.matchId} (${o.demos.label})`); continue; }
+            if (got.kind === "blocked") {
+              result.blocked = got.message;
+              for (const x of wanted.slice(i)) result.pending.push({ item: x.matchId, reason: got.pendingReason });
+              break;
+            }
+            if (got.kind === "notYet") { result.pending.push({ item: m.matchId, reason: got.reason }); break; }
+            part = got.part;
+            const final = await acceptDemo(got.part, got.name, ctx.inbox);
+            part = undefined;
+            result.fetched.push(final);
+            ctx.log(`faceit-backfill: downloaded match ${m.matchId} (${i + 1}/${wanted.length})`);
+          } catch (e) {
+            if (part) rmSync(part, { force: true });
+            result.pending.push({ item: m.matchId, reason: (e as Error).message });
+            result.failed = true;
+            break; // stop on the first failure; a rerun resumes here
+          }
+        }
+      } finally {
+        await o.demos.close?.();
+      }
+      return result;
+    },
+  };
+}
+
+/** A downloaded .part checked to hold a CS2 demo and renamed into the inbox; returns the final path. */
+async function acceptDemo(part: string, name: string, inbox: string): Promise<string> {
+  const header = await demoHeader(part);
+  if (header !== "PBDEMS2\0") throw new Error(`downloaded file is not a CS2 demo (${name})`);
+  const final = path.join(inbox, name);
+  renameSync(part, final);
+  return final;
 }

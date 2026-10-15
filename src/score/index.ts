@@ -110,9 +110,8 @@ export function scoreKills(kills: Death[], clutch: Clutch | undefined, roundWon:
  * Moments per round: a clutch is a round property, so all POV kills from the
  * clutch start form one moment; other kills form clusters of kills at most
  * clusterGapSeconds apart. Knife rounds are excluded, overtime unless
- * includeOvertime (PLAN.md §3 excludes it). A moment needs a POV kill: the
- * render's timing measure needs POV shots, so a clutch won without a kill is
- * not a clip.
+ * includeOvertime (PLAN.md §3 excludes it). A moment needs a POV kill (a
+ * clutch won without one is not a clip).
  */
 export function moments(p: ParsedDemo, w: Weights): Moment[] {
   const out: Moment[] = [];

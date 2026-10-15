@@ -13,7 +13,7 @@ export function writeLibraryPage(): string {
   const clips = Object.values(readIndex().clips).map((c) => {
     const m = (c.moment ?? {}) as { rank?: number; score?: number; kills?: number; flags?: string[]; clutch?: { vs: number; won: boolean } };
     return {
-      id: c.id, file: c.file, title: c.title, map: c.map, round: c.round, seconds: c.seconds, createdAt: c.createdAt,
+      no: c.no, id: c.id, file: c.file, title: c.title, map: c.map, round: c.round, seconds: c.seconds, createdAt: c.createdAt,
       rank: m.rank, score: m.score, kills: m.kills, flags: m.flags, clutch: m.clutch,
     };
   });

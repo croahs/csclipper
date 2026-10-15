@@ -3,7 +3,7 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
@@ -403,4 +403,67 @@ test("browser provider dry run: lists, opens nothing, writes nothing", async () 
   assert.equal(r.fetched.length, 0);
   assert.equal(readdirSync(c.inbox).length, 0);
   assert.equal(c.lines.filter((l) => l.includes("would download") && l.includes("fake session")).length, 4);
+});
+
+// --- backfill (--last n) -------------------------------------------------------------
+import { faceitBackfill } from "../src/ingest/sources/faceit.ts";
+
+test("backfill: the last n oldest first, skipping stored matches, pausing between downloads", async () => {
+  const c = ctx(); mk(c);
+  const pauses: number[] = [];
+  const p = fakeProvider(() => "file");
+  const r = await faceitBackfill({ apiKey: KEY, steamId64: STEAM, last: 3, demos: p, transport: fakeTransport(), haveMatch: (id) => id === ids[1], pauseMs: () => { pauses.push(1); return 0; } }).fetch(c);
+  assert.deepEqual(p.asked, [ids[2], ids[0]], "last 3 = d, c, b; c is stored; oldest first");
+  assert.equal(r.fetched.length, 2);
+  assert.equal(pauses.length, 1, "a pause between the two downloads, none before the first");
+  assert.deepEqual(JSON.parse(readFileSync(c.stateFile, "utf8")).selection, [ids[2], ids[1], ids[0]]);
+  assert.equal(p.closed, 1);
+});
+
+test("backfill: stops on the first failure and resumes there on the next run", async () => {
+  const c = ctx(); mk(c);
+  const failing = fakeProvider((id) => (id === ids[1] ? "throw" : "file"));
+  const r1 = await faceitBackfill({ apiKey: KEY, steamId64: STEAM, last: 4, demos: failing, transport: fakeTransport(), haveMatch: () => false, pauseMs: () => 0 }).fetch(c);
+  assert.deepEqual(failing.asked, [ids[3], ids[2], ids[1]]);
+  assert.equal(r1.failed, true);
+  const again = fakeProvider(() => "file");
+  await faceitBackfill({ apiKey: KEY, steamId64: STEAM, last: 4, demos: again, transport: fakeTransport(), haveMatch: () => false, pauseMs: () => 0 }).fetch(c);
+  assert.deepEqual(again.asked, [ids[1], ids[0]], "resumes at the failed match (the earlier ones sit in the inbox)");
+});
+
+test("backfill: a rerun after a newer match keeps the saved selection", async () => {
+  const c = ctx(); mk(c);
+  const failing = fakeProvider((id) => (id === ids[2] ? "throw" : "file"));
+  // First run: last 2 = ids[1], ids[2] (history is newest first); the oldest, ids[2], fails.
+  await faceitBackfill({ apiKey: KEY, steamId64: STEAM, last: 2, demos: failing, transport: fakeTransport({ history: ids.slice(1) }), haveMatch: () => false, pauseMs: () => 0 }).fetch(c);
+  assert.deepEqual(failing.asked, [ids[2]]);
+  // ids[0] is played since: the last 2 would now be ids[0], ids[1], but the saved selection still holds ids[2].
+  const again = fakeProvider(() => "file");
+  await faceitBackfill({ apiKey: KEY, steamId64: STEAM, last: 2, demos: again, transport: fakeTransport(), haveMatch: () => false, pauseMs: () => 0 }).fetch(c);
+  assert.deepEqual(again.asked, [ids[2], ids[1]]);
+});
+
+test("backfill: a fetched demo that ingest rejected (not in the store or inbox) is fetched again", async () => {
+  const c = ctx(); mk(c);
+  await faceitBackfill({ apiKey: KEY, steamId64: STEAM, last: 1, demos: fakeProvider(() => "file"), transport: fakeTransport(), haveMatch: () => false, pauseMs: () => 0 }).fetch(c);
+  for (const f of readdirSync(c.inbox)) rmSync(path.join(c.inbox, f)); // ingest moved it to rejected/
+  const again = fakeProvider(() => "file");
+  await faceitBackfill({ apiKey: KEY, steamId64: STEAM, last: 1, demos: again, transport: fakeTransport(), haveMatch: () => false, pauseMs: () => 0 }).fetch(c);
+  assert.deepEqual(again.asked, [ids[0]]);
+});
+
+test("backfill: logged out makes the rest pending, not failed", async () => {
+  const c = ctx(); mk(c);
+  const r = await faceitBackfill({ apiKey: KEY, steamId64: STEAM, last: 4, demos: fakeProvider(() => "blocked"), transport: fakeTransport(), haveMatch: () => false, pauseMs: () => 0 }).fetch(c);
+  assert.equal(r.blocked, NOT_LOGGED_IN);
+  assert.equal(r.pending.length, 4);
+  assert.equal(r.failed, undefined);
+});
+
+test("the normal run skips a match already in the store and moves the checkpoint past it", async () => {
+  const c = ctx(); mk(c);
+  const p = fakeProvider(() => "file");
+  const r = await faceitSource(opts(fakeTransport(), { demos: p, haveMatch: (id) => id === ids[2] })).fetch(c);
+  assert.deepEqual(p.asked, [ids[3], ids[1], ids[0]]);
+  assert.equal(r.fetched.length, 3);
 });

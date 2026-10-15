@@ -1,8 +1,9 @@
-// pnpm go [--dry-run] [--retry-failed] [--timeout <s>] [--test-exit-after <s>]: the whole pipeline in
+// pnpm go [--dry-run] [--retry-failed] [--repost] [--timeout <s>] [--test-exit-after <s>]: the whole pipeline in
 // one command. Ingest demos/inbox/, parse and rank every registered demo,
 // render the selected moments (config.json batch: score >= minScore, at most
 // topN per demo) that are not in the library yet, rewrite library/index.html.
-// Re-running resumes; with nothing new it launches nothing.
+// Re-running resumes; with nothing new it launches nothing. --repost runs post
+// only, for jobs whose capture is complete (e.g. after a post change): no launch.
 // Exit codes: 0 ok, 1 a job or demo failed, 2 refused (CS2 running, a guard,
 // or another pnpm go), 3 cleanup not verified (the batch stopped; check for cs2.exe by hand).
 import path from "node:path";
@@ -25,7 +26,7 @@ async function main(): Promise<number> {
   try {
     const testExit = flag("--test-exit-after");
     const { report: r, code } = await runBatch({
-      dryRun: args.includes("--dry-run"), retryFailed: args.includes("--retry-failed"), timeoutS,
+      dryRun: args.includes("--dry-run"), retryFailed: args.includes("--retry-failed"), repostOnly: args.includes("--repost"), timeoutS,
       testExitAfterS: testExit === undefined ? undefined : Number(testExit),
     });
     console.log("\n== batch ==");
@@ -35,6 +36,7 @@ async function main(): Promise<number> {
     if (r.emptyDemos.length) console.log(`no moment above the threshold: ${r.emptyDemos.join(", ")}`);
     for (const f of r.failed) console.log(`FAILED: ${f}`);
     for (const g of r.givenUp) console.log(`not retried (use --retry-failed): ${g}`);
+    if (r.needsRender.length) console.log(`--repost: ${r.needsRender.length} selected moment(s) have no completed capture; a normal pnpm go renders them`);
     for (const d of r.demoErrors) console.log(`demo FAILED: ${d}`);
     if (r.pageError) console.log(`library page FAILED: ${r.pageError}`);
     if (r.stoppedBy) console.log(`batch stopped: ${r.stoppedBy === "refusal" ? "a guard refused" : "cleanup not verified"}`);

@@ -10,7 +10,7 @@
     "fadeSeconds": 0.25
   },
   "batch": {
-    "topN": 3,
+    "topN": 2,
     "minScore": 40
   },
   "sources": {

@@ -1,6 +1,5 @@
-// The few demo facts one hand-written clip needs: tickrate, demo hash, map, the
-// POV player's spectator slot, the round and the POV's shots (the timing
-// anchors post measures). Full parsing is M2.
+// The few demo facts one render needs: tickrate, demo hash, map, the demo's
+// game build, the POV player's spectator slot and the round. Full parsing is src/parse/demo.ts.
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -20,7 +19,7 @@ export type ClipFacts = {
   playbackTicks: number;
   slot: number; // spec_player argument: user_id + 1 (CS Demo Manager; confirmed in M0.2)
   round: number; // 1-based: total_rounds_played + 1 at startTick
-  shotTicks: number[]; // POV weapon_fire ticks within one second of the interval
+  patch: number; // the demo's game build (header patch_version)
 };
 
 export async function sha256File(file: string): Promise<string> {
@@ -41,14 +40,13 @@ export async function clipFacts(demo: string, pov: string, startTick: number, en
   if (atStart.length !== 1) throw new Error(`POV player not present at tick ${startTick}`);
   if (atEnd.length !== 1) throw new Error(`POV player not present at tick ${endTick}`);
   if (atEnd[0].user_id !== atStart[0].user_id) throw new Error("POV player's user_id changes inside the interval");
-  const fires: { user_steamid: string; tick: number }[] = dp.parseEvent(demo, "weapon_fire", [], [])
-    .filter((r: { user_steamid: string; tick: number }) => r.user_steamid === pov && r.tick >= startTick - TICKRATE && r.tick <= endTick + TICKRATE);
+  const header = dp.parseHeader(demo);
   return {
     demoSha256: await sha256File(demo),
-    map: String(dp.parseHeader(demo).map_name),
+    map: String(header.map_name),
+    patch: Number(header.patch_version),
     playbackTicks: info.playback_ticks,
     slot: atStart[0].user_id + 1,
     round: atStart[0].total_rounds_played + 1,
-    shotTicks: fires.map((r) => r.tick),
   };
 }

@@ -1,84 +1,64 @@
-// Post: measure the capture's tick origin, trim the raw capture to exactly the
-// requested ticks, fade in/out, encode the final clip to a temp path and
-// validate it, including where the requested ticks actually landed.
+// Post: trim the raw capture to the requested ticks using the scheduled
+// record-start mapping, fade in/out, encode the final clip to a temp path and
+// validate it.
 import { rmSync } from "node:fs";
 import { captureSize, type RenderSettings } from "../config.ts";
 import type { TickMapping } from "../render/controller/index.ts";
-import { countFrames, decodeProblems, ff, probe } from "./ffmpeg.ts";
-import { measureOrigin, type OriginMeasure } from "./sync.ts";
-import { measureFlash, type FlashMeasure } from "./flash.ts";
-
-/** Measured: frame k of the raw capture shows tick originTick + k * tickrate / fps. */
-export type MeasuredMapping = TickMapping & { originTick: number; timing: Timing };
-
-/** Final clips must show the requested ticks within this many frames. */
-export const MAX_FRAMES_OFF = 2;
-// An origin error larger than this is not a record-start jitter (M0.2: 0-3 frames) but a broken capture.
-const MAX_ORIGIN_FRAMES = 10;
-// Video and audio anchors must agree this closely when both are measurable.
-const MAX_DISAGREE_FRAMES = 1.5;
-
-export type Timing = { offsetFrames: number; source: "video" | "audio"; video: FlashMeasure; audio: OriginMeasure; reason?: string };
+import { decodeProblems, ff, meanLuma, probe } from "./ffmpeg.ts";
 
 /**
- * Where a file's frame 0 really is, in frames against `originTick` (negative:
- * the content is early). The muzzle flash (video, the stream that is trimmed)
- * decides; the gunshot onsets (audio) cross-check it, or decide alone when the
- * flash is not measurable.
+ * Where recording really starts, against the scheduled record-start tick, in
+ * frames (negative: frame 0 already shows a later tick). A constant: the
+ * median of the seven per-capture offsets measured on this machine in M0-M3
+ * (-0.4 to -3.5 frames, median -3.4; docs/modules.md). So a clip can be up to
+ * about 3 frames (50 ms) off either way; nothing measures it per clip.
  */
-export function timing(video: string, audio: string, originTick: number, shotTicks: number[], tickrate: number, fps: number, seconds: number, edgeS = 0): Timing {
-  const v = measureFlash(video, originTick, shotTicks, tickrate, fps, edgeS);
-  const a = measureOrigin(audio, "0:a:0", originTick, shotTicks, tickrate, fps, seconds, edgeS);
-  const aFrames = (a.offsetMs * fps) / 1000;
-  const base = { video: v, audio: a };
-  if (!v.reason && !a.reason && Math.abs(v.offsetFrames - aFrames) > MAX_DISAGREE_FRAMES) {
-    return { ...base, offsetFrames: NaN, source: "video", reason: `muzzle flash (${v.offsetFrames} frames) and gunshot audio (${aFrames.toFixed(2)} frames) disagree` };
-  }
-  if (!v.reason) return { ...base, offsetFrames: v.offsetFrames, source: "video" };
-  if (!a.reason) return { ...base, offsetFrames: Math.round(aFrames * 100) / 100, source: "audio" };
-  return { ...base, offsetFrames: NaN, source: "video", reason: `video: ${v.reason}; audio: ${a.reason}` };
-}
-
-export function measureMapping(m: TickMapping, video: string, wav: string, shotTicks: number[]): MeasuredMapping | string {
-  const t = timing(video, wav, m.recordStartTick, shotTicks, m.tickrate, m.fps, m.frames / m.fps);
-  if (t.reason) return `tick origin not measurable: ${t.reason}`;
-  if (Math.abs(t.offsetFrames) > MAX_ORIGIN_FRAMES) return `tick origin off by ${t.offsetFrames} frames, more than ${MAX_ORIGIN_FRAMES}`;
-  // Content seen early means frame 0 already shows a later tick.
-  return { ...m, originTick: m.recordStartTick - (t.offsetFrames * m.tickrate) / m.fps, timing: t };
-}
+export const RECORD_START_OFFSET_FRAMES = -3.4;
 
 export type TrimPlan = { startFrame: number; frames: number; seconds: number };
 
-/** Frames of the raw capture that show [startTick, endTick). */
-export function trimPlan(m: MeasuredMapping, startTick: number, endTick: number): TrimPlan {
+/** Frames of the raw capture that show [startTick, endTick), by the scheduled mapping. */
+export function trimPlan(m: TickMapping, startTick: number, endTick: number): TrimPlan {
   const framesPerTick = m.fps / m.tickrate;
-  const startFrame = Math.round((startTick - m.originTick) * framesPerTick);
+  const originTick = m.recordStartTick - RECORD_START_OFFSET_FRAMES / framesPerTick;
+  const startFrame = Math.round((startTick - originTick) * framesPerTick);
   const frames = Math.round((endTick - startTick) * framesPerTick);
-  if (startFrame < 0 || startFrame + frames > m.frames) throw new Error(`ticks ${startTick}-${endTick} fall outside the capture (${m.frames} frames from tick ${m.originTick.toFixed(2)})`);
+  if (startFrame < 0 || startFrame + frames > m.frames) throw new Error(`ticks ${startTick}-${endTick} fall outside the capture (${m.frames} frames from tick ${m.recordStartTick})`);
   return { startFrame, frames, seconds: frames / m.fps };
 }
 
-/** Reasons a finished clip is not acceptable; [] when it is. Also used to trust a cached clip. */
-export function validateClip(file: string, frames: number, fps: number, size: string): string[] {
-  const reasons: string[] = [];
+const MAX_DURATION_OFF_S = 0.5;
+const BLACK_LUMA = 12; // mean luma (0-255) at or below this counts as a black frame
+const SAMPLES = [0.1, 0.3, 0.5, 0.7, 0.9]; // where frames are sampled, as fractions of the clip
+
+/**
+ * Reasons a finished clip is not acceptable; [] when it is. Also used to trust
+ * a cached clip. Checks: decodes cleanly, one video and one audio stream, the
+ * configured size, duration within 0.5 s of `seconds`, sampled frames not black.
+ */
+export function validateClip(file: string, seconds: number, size: string): string[] {
   const p = probe(file);
   if (!p.video || !p.audio || p.unreadable) return [`clip streams: ${JSON.stringify(p)}`];
+  const reasons: string[] = [];
+  if (p.videoStreams !== 1 || p.audioStreams !== 1) reasons.push(`clip has ${p.videoStreams} video and ${p.audioStreams} audio streams, expected one each`);
   if (p.size !== size) reasons.push(`clip is ${p.size}, expected ${size}`);
-  const counted = countFrames(file);
-  if (counted !== frames) reasons.push(`clip has ${counted} frames, expected ${frames}`);
-  if (p.duration === null || Math.abs(p.duration - frames / fps) > 2 / fps) reasons.push(`clip duration ${p.duration} vs ${(frames / fps).toFixed(3)}`);
+  if (p.duration === null || Math.abs(p.duration - seconds) > MAX_DURATION_OFF_S) reasons.push(`clip duration ${p.duration} s vs ${seconds.toFixed(2)} s`);
   const err = decodeProblems(file);
   if (err) reasons.push(`clip decode: ${err}`);
+  if (p.duration) {
+    // -1 (unreadable frame) counts as black too: a clip whose frames cannot be read is not fine.
+    const dark = SAMPLES.map((f) => ({ t: f * p.duration!, l: meanLuma(file, f * p.duration!) })).filter((x) => x.l <= BLACK_LUMA);
+    if (dark.length) reasons.push(`black frames at ${dark.map((x) => `${x.t.toFixed(1)} s (luma ${x.l.toFixed(1)})`).join(", ")}`);
+  }
   return reasons;
 }
 
-export type PostResult = { status: "ok" | "failed"; reasons: string[]; plan?: TrimPlan; landed?: Timing };
+export type PostResult = { status: "ok" | "failed"; reasons: string[]; plan?: TrimPlan };
 
 /** Writes outTmp; on any failure the temp file is removed. */
-export function post(video: string, audio: string, m: MeasuredMapping, startTick: number, endTick: number, shotTicks: number[], s: RenderSettings, outTmp: string): PostResult {
+export function post(video: string, audio: string, m: TickMapping, startTick: number, endTick: number, s: RenderSettings, outTmp: string): PostResult {
   const reasons: string[] = [];
   let plan: TrimPlan | undefined;
-  let landed: Timing | undefined;
   try {
     plan = trimPlan(m, startTick, endTick);
     const t0 = plan.startFrame / m.fps;
@@ -97,17 +77,10 @@ export function post(video: string, audio: string, m: MeasuredMapping, startTick
       "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", outTmp,
     ]);
     if (r.status !== 0) reasons.push(`encode failed: ${r.stderr.slice(0, 300)}`);
-    else {
-      reasons.push(...validateClip(outTmp, plan.frames, m.fps, `${s.width}x${s.height}`));
-      // Where the requested ticks landed in the final file, by the same anchors
-      // (a check of trim, scale and encode); shots inside the fades are skipped.
-      landed = timing(outTmp, outTmp, startTick, shotTicks, m.tickrate, m.fps, d, f);
-      if (landed.reason) reasons.push(`final clip timing not measurable: ${landed.reason}`);
-      else if (Math.abs(landed.offsetFrames) > MAX_FRAMES_OFF) reasons.push(`final clip is ${landed.offsetFrames} frames off the requested ticks`);
-    }
+    else reasons.push(...validateClip(outTmp, (endTick - startTick) / m.tickrate, `${s.width}x${s.height}`));
   } catch (e) {
     reasons.push(`post error: ${(e as Error).message}`);
   }
   if (reasons.length) rmSync(outTmp, { force: true });
-  return { status: reasons.length ? "failed" : "ok", reasons, plan, landed };
+  return { status: reasons.length ? "failed" : "ok", reasons, plan };
 }

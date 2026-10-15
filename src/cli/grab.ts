@@ -1,4 +1,4 @@
-// pnpm grab [--dry-run] [--browser] | pnpm grab --login   (PLAN.md's "pnpm fetch"; pnpm's own fetch command takes that name):
+// pnpm grab [--dry-run] [--browser] [--last <n>] | pnpm grab --login   (PLAN.md's "pnpm fetch"; pnpm's own fetch command takes that name):
 // "I have played some games". Runs the demo sources, each writing new demos
 // into demos/inbox/, then ingests the inbox. Renders nothing; pnpm go does that.
 //   folders  copies new demos from watched folders, read-only (default: CS2's
@@ -8,6 +8,9 @@
 //            Downloads API (needs its scope), or with --browser (or config.json
 //            sources.faceit.via "browser") through Peder's logged-in FACEIT session in
 //            the installed Chrome/Edge, profile state/browser-profile (docs/faceit-api.md)
+//   --last n backfill: the demos of the last n FACEIT matches through the browser session,
+//            one at a time with 10-20 s between downloads, skipping those already stored;
+//            resumable (state/sources/faceit-backfill.json)
 //   --login  opens that profile in a plain browser window to sign in; waits until it is closed
 // Pending items (a missing scope, a logged-out browser, a demo not uploaded yet) are listed, not failures.
 // Exit codes: 0 ok, 1 a source or a download failed or ingest rejected a file, 2 another pnpm grab is running.
@@ -18,14 +21,17 @@ import path from "node:path";
 import { ROOT, Refusal, STATE_DIR, loadIdentities } from "../config.ts";
 import { INBOX, ingest, readRegistry } from "../ingest/index.ts";
 import type { Source } from "../ingest/sources.ts";
-import { NO_KEY, faceitSource } from "../ingest/sources/faceit.ts";
+import { NO_KEY, faceitBackfill, faceitSource } from "../ingest/sources/faceit.ts";
 import { foldersSource } from "../ingest/sources/folders.ts";
-import { browserDemos, findBrowser, login } from "../ingest/sources/faceit-browser.ts";
+import { ROOM_URL, browserDemos, findBrowser, login } from "../ingest/sources/faceit-browser.ts";
 import { RenderLock } from "../render/controller/guards.ts";
 
 const dryRun = process.argv.includes("--dry-run");
 const loginOnly = process.argv.includes("--login");
 const viaBrowserFlag = process.argv.includes("--browser");
+// --last <n>: backfill the demos of the last n FACEIT matches through the browser session.
+const lastAt = process.argv.indexOf("--last");
+const backfillLast = lastAt >= 0 ? Number(process.argv[lastAt + 1]) : undefined;
 
 function sources(): Source[] {
   const env = existsSync(path.join(ROOT, ".env")) ? parseEnv(readFileSync(path.join(ROOT, ".env"), "utf8")) : {};
@@ -44,7 +50,15 @@ function sources(): Source[] {
     if (!b) throw new Error("--browser needs Google Chrome or Microsoft Edge installed");
     demos = browserDemos({ browser: b, headless: conf.faceit?.headless === true });
   }
-  if (faceitKey) out.push(faceitSource({ apiKey: faceitKey, steamId64: loadIdentities().pov, maxMatchesPerRun: conf.faceit?.maxMatchesPerRun ?? 5, demos }));
+  // A match whose id is in a stored demo's file name (FACEIT names demos <match id>-1-1.dem…) is not fetched again.
+  const stored = Object.values(readRegistry()).map((d) => d.originalName);
+  const haveMatch = (id: string) => stored.some((n) => n.includes(id));
+  if (faceitKey && backfillLast !== undefined) {
+    const b = findBrowser();
+    if (!b) throw new Error("--last needs Google Chrome or Microsoft Edge installed (it downloads through the browser session)");
+    // The backfill replaces the normal FACEIT run for this invocation.
+    out.push(faceitBackfill({ apiKey: faceitKey, steamId64: loadIdentities().pov, last: backfillLast, demos: browserDemos({ browser: b, headless: conf.faceit?.headless === true }), haveMatch }));
+  } else if (faceitKey) out.push(faceitSource({ apiKey: faceitKey, steamId64: loadIdentities().pov, maxMatchesPerRun: conf.faceit?.maxMatchesPerRun ?? 5, demos, haveMatch }));
   else console.log(`faceit: skipped. ${NO_KEY}`);
   return out;
 }
@@ -72,7 +86,10 @@ async function main(): Promise<number> {
         if (r.skipped) { console.log(`${s.name}: skipped. ${r.skipped}`); continue; }
         console.log(`${s.name}: ${r.fetched.length} demo(s) fetched${dryRun ? " (dry run: nothing written)" : ""}`);
         if (r.blocked) console.log(`${s.name}: ${r.blocked}`);
-        for (const p of r.pending) console.log(`${s.name}: pending ${p.item}: ${p.reason}`);
+        // A pending FACEIT match comes with its room link: "Download demo" there lands the file in
+        // Downloads, where the folders source picks it up on the next run.
+        for (const p of r.pending) console.log(`${s.name}: pending ${p.item}: ${p.reason}${s.name.startsWith("faceit") && /^[A-Za-z0-9-]{1,64}$/.test(p.item) ? `
+    ${ROOM_URL(p.item)}` : ""}`);
         if (r.failed) code = 1;
       } catch (e) {
         console.error(`${s.name} FAILED: ${(e as Error).message}`);

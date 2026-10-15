@@ -5,12 +5,13 @@
 ## Running
 
 ```
-pnpm grab [--dry-run] [--browser]
+pnpm grab [--dry-run] [--browser] [--last <n>]
 pnpm grab --login
-pnpm go [--dry-run] [--retry-failed]
+pnpm go [--dry-run] [--retry-failed] [--repost]
 pnpm moments "<demo.dem>"
-pnpm clip "<demo.dem>" --top <n> [--timeout <s>] [--force] [--dry-run]
+pnpm clip "<demo.dem>" --top <n> [--timeout <s>] [--dry-run]
 pnpm clip "<demo.dem>" <startTick> <endTick> [same options]
+pnpm clip --rerender <no|id> [--timeout <s>] [--dry-run]
 ```
 
 `pnpm grab` (PLAN.md's `pnpm fetch`; pnpm's own `fetch` command takes that
@@ -24,8 +25,16 @@ any whose content is already in the store; **faceit** (with
 the Downloads API (needs a scope FACEIT did not grant) or, with `--browser`
 (or `config.json` → `sources.faceit.via: "browser"`), through Peder's
 logged-in FACEIT session in the installed Chrome or Edge, signed in once
-with `pnpm grab --login` (`docs/faceit-api.md`). Pending items are not failures; exit 1
-means a source failed or ingest rejected a file.
+with `pnpm grab --login` (`docs/faceit-api.md`). `--last <n>` backfills
+instead: the demos of the last n FACEIT matches through the browser
+session, oldest first, one at a time with a random 10–20 s pause between
+downloads, skipping matches already in the store (match id in a stored
+file name; ingest drops content duplicates) and stopping on the first
+failure with a screenshot in `state/browser-failures/`; a rerun resumes
+(`state/sources/faceit-backfill.json`). A pending FACEIT match is printed
+with its room link: "Download demo" there lands the file in Downloads,
+where the folders source picks it up on the next run. Pending items are
+not failures; exit 1 means a source failed or ingest rejected a file.
 
 `pnpm go` is the one command: drop demos (`.dem`, or `.zip` / `.bz2` /
 `.gz` / `.zst`) into `demos/inbox/`, run it, come back to clips. It
@@ -43,7 +52,20 @@ it would render.
 moment, `pnpm clip <start> <end>` a hand-written tick range; either way no
 hands after the command: guarded render → post → `library/clips/<id>.mp4`
 + `library/index.json` (a ranked clip's entry carries its `moment`: rank,
-score, breakdown, kills, flags).
+score, breakdown, kills, flags). A clip the library holds is never made
+again by `pnpm go` or `pnpm clip`, whatever changed (AGENTS.md); `pnpm clip
+--rerender <no|id>` is the one way: it ranks the demo afresh, renders that
+moment now, and when the span rules gave the moment a new id, moves the
+old clip to `library/replaced/` in the same index write that adds the new
+one, which keeps the old one's number (the file moves after that write). A hand-written range re-renders by
+its ticks; a ranked moment takes the ranked spec with its id, else the one
+sharing the most kills with it that shares none with another clip (a tie
+refuses). Every entry has `no`, the human clip number
+("clip 17"): sequential in the order clips entered the library, stable,
+never reused or renumbered (`nextNo` in `index.json` only grows; entries
+from before numbering got theirs oldest first). The page shows it on each
+card and finds a clip by it ("17", "clip 17", "#17") or by title text;
+the content-hash id stays the file name.
 Exit codes: 0 ok or already in the library, 1 failed (recorded in
 `state/failures.json`), 2 refused (nothing launched), 3 cleanup not
 verified (a game process may still run; `state/.render.lock` stays and is
@@ -78,26 +100,24 @@ the spectated player (docs/spikes.md, M0.2 open items).
 
 ## Decisions made in M1
 
-- **Tick mapping, measured per job.** The capture records `MARGIN_TICKS`
-  (32) on each side of the requested ticks. The frame rate is locked (HLAE's
+- **Tick mapping, scheduled.** The capture records `MARGIN_TICKS` (32) on
+  each side of the requested ticks. The frame rate is locked (HLAE's
   "Finishing movie … [N frames" line, the demuxed frame count and the WAV
-  length must agree), but where recording starts varies per launch (0–4
-  frames late in M0.2/M1). Post measures it from the POV player's shots
-  (`weapon_fire`): the muzzle flash in the lower-right quarter of the video
-  (`src/post/flash.ts`) decides, the gunshot onsets in HLAE's WAV
-  (`src/post/sync.ts`) cross-check it (more than 1.5 frames apart fails the
-  job) or decide alone when the flash is not measurable. Both search only
-  origin errors in [−5, +1.5] frames (every capture so far: −0.4 to −3.5)
-  and use only POV shots with no other POV shot within that window's width
-  (6.5 frames), so a shot cannot be matched to its neighbour; a second,
-  separate peak makes the result ambiguous and the job fails. Then post
-  cuts exactly `round((end − start) · fps / 64)` frames and measures the
-  final file the same way (shots whose window touches a fade skipped);
-  more than 2 frames off fails the job. On seven captures of this machine
-  the flash resolved all seven and agreed with audio within 0.9 frames where
-  audio resolved. Limits: a clip needs two such shots (fast sprays alone do
-  not qualify); the flash region assumes a right-hand viewmodel; an origin
-  error outside the bound is not found.
+  length must agree), but where recording starts varies per launch. Post
+  does not measure it: it trims by the scheduled record-start tick shifted
+  by `RECORD_START_OFFSET_FRAMES` (−3.4, `src/post/index.ts`), the median of
+  the seven per-capture offsets measured on this machine in M0–M3 (−0.4 to
+  −3.5 frames). So a clip can land up to about 3 frames (50 ms) off either
+  way. Every library entry says `timing: "scheduled"`. The finished clip is
+  validated only: it decodes cleanly, has one video and one audio stream,
+  the configured size, a duration within 0.5 s of the requested interval,
+  and frames sampled at 10/30/50/70/90 % are not black (mean luma > 12).
+  Entries made before this have no `timing` field (they were timed from
+  the muzzle flash and gunshots) and stay as they are. `pnpm go --repost`
+  launches nothing: it posts every selected moment that is not in the
+  library and has a completed capture (e.g. jobs a post change failed),
+  ignoring the attempt limit; selected moments without a capture are
+  listed, and a normal `pnpm go` renders them.
 - **HUD.** `full` (default) aims at the HUD as in play
   (`docs/hud-reference-inplay.webp`): `cl_draw_only_deathnotices 0`,
   `cl_radar_square_when_spectating 0` in the cfg body (round, rotating
@@ -117,11 +137,12 @@ the spectated player (docs/spikes.md, M0.2 open items).
 - **Two encodes.** HLAE writes the intermediate at `captureCrf` 12; post
   re-encodes once at crf 18 (trim and fades need a re-encode anyway).
 - **Clip id** = first 16 hex of sha256(demo sha256, round, start, end).
-  A clip counts as done only when `index.json` has it with the same render
-  key (settings, tool versions, look cfg hash, POV and slot) and the file
-  still validates (frame count, duration, full decode). A validated raw
+  A moment counts as done once `index.json` holds it (Ledger, below), with
+  any render key. The render key (settings, tool versions, look cfg hash,
+  POV and slot) picks what an unfinished job may resume: a validated raw
   capture (`capture.json` in its work dir) with the same key is reused, so a
-  failed post never costs another launch. `--force` re-renders.
+  failed post never costs another launch. Only `--rerender` renders a held
+  clip again.
 - **Ownership and kill.** The loader counts only as this controller's own
   child created in the spawn window; processes are keyed by pid + creation
   time + image. `killExact` opens a handle, re-checks that identity and kills
@@ -176,8 +197,12 @@ the spectated player (docs/spikes.md, M0.2 open items).
   settings or tool change starts a fresh attempt budget. A job is marked
   running before it may launch; a run that dies mid-job leaves it running
   and the next run retries it once (two attempts in all, then it is listed
-  as given up until `--retry-failed`). A clip the library holds for the
-  render key is done whatever the ledger says. Only a guard refusal gives
+  as given up until `--retry-failed`). A moment the library holds is done
+  whatever the ledger or the render key says: the same clip id, or a clip
+  of the same demo and round sharing a kill (made under other span
+  rules; sharing one kill is enough on purpose, even when the new span
+would add kills). A held entry whose file is missing is reported, not
+re-made. Only a guard refusal gives
   the attempt back. Locks (`state/.go.lock`, `.clip.lock`, `.render.lock`)
   are released on normal exit, errors and signals; a hard-killed run leaves
   them, to be deleted by hand after checking no cs2.exe / HLAE.exe is left.
