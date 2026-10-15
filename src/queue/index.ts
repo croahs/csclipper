@@ -128,7 +128,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   // or pnpm unsettle do). Not on a dry run, a repost or a --no-reels pass (its reels are still owed),
   // and not while a moment still has a retry left.
   const settle = (sha: string) => {
-    if (o.dryRun || o.repostOnly || o.noReels) return;
+    if (!settlesDemos(o)) return;
     const s = readSettled();
     if (s[sha]) return;
     s[sha] = new Date().toISOString();
@@ -234,7 +234,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
       }
       writeLedger(ledger);
       code = Math.max(code, 1);
-      if (!open && ready.every((r) => r.attempts >= MAX_ATTEMPTS)) settle(sha256);
+      if (!open && ready.every((r) => isFinal("failed", r.attempts))) settle(sha256);
       if (cleanupUnverified()) { report.stoppedBy = "cleanup"; code = 3; break; }
       continue;
     }
@@ -250,7 +250,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
       else { report.failed.push(`${res.title}: ${res.reasons?.join("; ")}`); code = Math.max(code, 1); }
     };
     // Final: rendered, held, or failed with no retry left.
-    const final = (r: Ready, res: JobResult) => res.status !== "failed" || r.attempts >= MAX_ATTEMPTS;
+    const final = (r: Ready, res: JobResult) => isFinal(res.status, r.attempts);
     const toPost: Ready[] = [];
     let allFinal = !open;
     for (const [i, res] of results.entries()) {
@@ -309,3 +309,8 @@ function postWorker(demo: string, units: { id: string; title: string; kind: "hig
     });
   });
 }
+
+/** Whether a pass of this kind may settle demos: not a dry run, a repost or a --no-reels pass (its reels are owed). */
+export const settlesDemos = (o: Pick<BatchOptions, "dryRun" | "repostOnly" | "noReels">) => !o.dryRun && !o.repostOnly && !o.noReels;
+/** A moment's outcome is final for settling: rendered, held, or failed with no retry left. */
+export const isFinal = (status: JobResult["status"], attempts: number) => status !== "failed" || attempts >= MAX_ATTEMPTS;
