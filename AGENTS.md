@@ -11,8 +11,9 @@ how to run it. Model and review roles come from
 "Jeg har spilt cs, lag mine klipp" (or any demo dropped in
 `demos/inbox/`) means, without asking: `pnpm grab` (FACEIT through the
 browser profile, Valve MM when that source exists, plus the folder
-scan), then `pnpm go` for every new demo: the top 2 highlights, the
-deaths reel and the kills reel from the victims' view. Report what was
+scan), then `pnpm go` for every new demo: every highlight scoring 40 or
+more (at least one, the best, when none does), the deaths reel and the
+kills reel from the victims' view. Report what was
 made, with clip numbers. Launches are budgeted per demo (one launch
 per demo once chained takes exist), and CS2 must be closed; refuse
 otherwise and say so.

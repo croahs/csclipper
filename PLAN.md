@@ -51,8 +51,9 @@ sources ──> ingest ──> parse ──> score ──> clip specs ──> re
 
 The user-facing entry point is one command, `pnpm grab` (pnpm reserves `fetch`): "I have
 played some games" means running it, followed by `pnpm go`, which
-makes every clip type for each new demo (top 2 highlights, deaths
-reel, kills reel) without asking; see AGENTS.md "The standing order". It asks every configured source
+makes every clip type for each new demo (all highlights scoring 40
+or more, or the single best when none does; deaths reel; kills reel)
+without asking; see AGENTS.md "The standing order". It asks every configured source
 for matches newer than the last one it saw, downloads the demos it
 does not have into `demos/inbox/`, and the normal pipeline takes over.
 State per source (last FACEIT match id, last Valve share code) lives
