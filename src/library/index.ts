@@ -55,7 +55,8 @@ function readJson<T>(file: string, empty: T): T {
 }
 function writeJsonAtomic(file: string, value: unknown) {
   mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp`;
+  // Unique per writer: pnpm go and its post worker may write state files at the same time.
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n");
   renameSync(tmp, file);
 }
@@ -144,9 +145,12 @@ function publishLocked(tmp: string, entry: ClipEntry, replaces?: string) {
 
 /** Failures are kept apart from the library; the latest attempt per id wins. */
 export function recordFailure(id: string, f: Failures[string]) {
-  const failures = readJson<Failures>(FAILURES, {});
-  failures[id] = f;
-  writeJsonAtomic(FAILURES, failures);
+  // Under the index lock: publish clears failures inside it, from either process.
+  withIndexLock(() => {
+    const failures = readJson<Failures>(FAILURES, {});
+    failures[id] = f;
+    writeJsonAtomic(FAILURES, failures);
+  });
 }
 
 export const ensureClipsDir = () => mkdirSync(CLIPS_DIR, { recursive: true });

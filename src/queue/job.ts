@@ -35,7 +35,8 @@ export type JobInput = {
   replaces?: string;
 };
 /** done: rendered now; skipped: already in the library; failed: recorded in state/failures.json. */
-export type JobResult = { status: "done" | "skipped" | "failed" | "dry"; id: string; title: string; reasons?: string[]; cleanupVerified?: boolean; clip?: string };
+/** captured: rendered and its capture recorded, post still to come (runJobs renderOnly). */
+export type JobResult = { status: "done" | "skipped" | "failed" | "dry" | "captured"; id: string; title: string; reasons?: string[]; cleanupVerified?: boolean; clip?: string };
 
 // Written into an attempt's work dir once its raw capture validated: the
 // render stage is done for this render key, and a retry goes straight to post.
@@ -182,14 +183,23 @@ export async function runJob(prep: PreparedJob): Promise<JobResult> {
  * rendered in tick order (fewest backward seeks); then every unit with all its takes
  * captured is finished (posted and published). Results come back in the order of `units`.
  */
-export async function runJobs(units: RenderUnit[]): Promise<JobResult[]> {
+/**
+ * renderOnly: stop once the captures are recorded (units come back "captured"); the post
+ * worker finishes them (pnpm go overlaps that with the next demo's launch). noClipLock: the
+ * post worker's mode, post only, alongside a pnpm go that holds the clip lock for its launches;
+ * publishing is still serialised by the index lock.
+ */
+export type RunOptions = { renderOnly?: boolean; noClipLock?: boolean };
+
+export async function runJobs(units: RenderUnit[], ro: RunOptions = {}): Promise<JobResult[]> {
   if (!units.length) return [];
   if (units.some((u) => u.demoSha256 !== units[0].demoSha256)) throw new Error("runJobs: units of more than one demo");
+  if (ro.noClipLock && units.some((u) => !u.o.postOnly)) throw new Error("runJobs: without the clip lock only post-only units");
   // One clip run at a time, from the resume check to the index write.
-  const clipLock = new RenderLock(path.join(STATE_DIR, ".clip.lock"));
-  clipLock.acquire();
+  const clipLock = ro.noClipLock ? undefined : new RenderLock(path.join(STATE_DIR, ".clip.lock"));
+  clipLock?.acquire();
   // Signals end the process from inside the controller (after its cleanup), skipping finally.
-  const releaseClipLock = () => clipLock.release();
+  const releaseClipLock = () => clipLock?.release();
   process.on("exit", releaseClipLock);
   try {
     const attempt = String(Date.now());
@@ -244,6 +254,7 @@ export async function runJobs(units: RenderUnit[]): Promise<JobResult[]> {
 
     for (const u of units) {
       if (results.has(u.id)) continue;
+      if (ro.renderOnly) { results.set(u.id, { status: "captured", id: u.id, title: u.title }); continue; }
       const c = captures.get(u.id)!;
       // A finish that throws fails its own unit only; the others keep their results.
       try { results.set(u.id, u.finish(c.takes, c.workDir, attempt, (reasons) => fail(u, reasons, c.workDir))); }
@@ -251,7 +262,7 @@ export async function runJobs(units: RenderUnit[]): Promise<JobResult[]> {
     }
     return units.map((u) => results.get(u.id)!);
   } finally {
-    clipLock.release();
+    clipLock?.release();
     process.off("exit", releaseClipLock);
   }
 }
@@ -266,7 +277,7 @@ function postAndPublish(prep: PreparedJob, capture: TakeCapture & { renderKey: s
     id, file: `clips/${id}.mp4`, title, map: facts.map, demo, demoSha256: facts.demoSha256, round,
     ...(spec ? { moment: { rank: spec.rank, score: spec.score, breakdown: spec.breakdown, kills: spec.kills, killTicks: spec.killTicks, weapons: spec.weapons, flags: spec.flags, ...(spec.clutch ? { clutch: { vs: spec.clutch.vs, won: spec.clutch.won } } : {}) } } : {}),
     startTick, endTick, seconds: p.plan!.seconds, frames: p.plan!.frames, createdAt: new Date().toISOString(),
-    renderKey, render: { ...renderInputs, node: versions.node, mapping: capture.mapping, trim: p.plan, segments: p.segments!.map(({ startTick, endTick, speed, outSeconds }) => ({ startTick, endTick, speed, outSeconds })), workDir: capture.workDir },
+    renderKey, render: { ...renderInputs, node: versions.node, mapping: capture.mapping, trim: p.plan, segments: p.segments!.map(({ startTick, endTick, speed, outSeconds }) => ({ startTick, endTick, speed, outSeconds })), encoder: p.encoder, workDir: capture.workDir },
     kind: "highlight", timing: "scheduled",
     crosshair: { source: crosshair, demoPatch: facts.patch, cutoff: cutoff ?? null },
     ...(o.leadOverride !== undefined ? { leadOverride: o.leadOverride } : {}),

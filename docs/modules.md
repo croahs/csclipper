@@ -233,6 +233,24 @@ the spectated player (docs/spikes.md, M0.2 open items).
   CS2 install each launch; the job cfg has a per-launch name
   (`croclip_<ms>`), and the log counts as this launch's only when its
   `[CommandLine]` line carries that name.
+- **Post overlaps the next launch.** `pnpm go` renders a demo (`runJobs`
+  with `renderOnly`), then hands its captured units to a post worker
+  (`src/cli/post-worker.ts`, its own process: post is synchronous FFmpeg
+  and would stall the controller's polling) and launches the next demo
+  meanwhile; at most one worker runs, and the batch waits for the last one.
+  The worker only posts (every unit post-only, so a missing capture is a
+  refusal, never a launch), takes no clip lock, and writes results to a
+  file; `pnpm go` alone writes the ledger. Index writes are serialised by
+  `state/.index.lock`. Measured on the 19-demo run of 2026-10-15 before
+  this: capture 2000 s, post 1246 s (24 s per clip), post blocking the
+  next launch.
+- **Final encode.** `config.json` → `post.encoder`: `auto` (default) uses
+  h264_nvenc (`-preset p5 -tune hq -rc vbr -cq 19`, standing in for x264
+  CRF 18) when a one-frame test encode works, else x264 (`-preset slow
+  -crf 18`); a failed NVENC encode falls back to x264. On this machine
+  NVENC does not open yet: FFmpeg 9.0.1 needs NVIDIA driver 610+, the
+  driver is 591.86 ("required nvenc API 13.1, found 13.0"), so clips use
+  x264. The entry's `render.encoder` says which made it.
 - **Chained takes.** One launch renders every take of a demo
   (`runJobs`, `src/queue/job.ts`): the jobs the library does not hold and
   that have no validated capture, in tick order. The main cfg schedules

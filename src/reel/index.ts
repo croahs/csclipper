@@ -103,7 +103,7 @@ export async function prepareReel(demoArg: string, kind: ReelKind, o: Omit<JobIn
         id, file: `clips/${id}.mp4`, title, map: p.demo.map, demo, demoSha256: p.demo.sha256, round: takes[0].round,
         startTick: takes[0].startTick, endTick: takes[takes.length - 1].endTick, seconds: r.plan!.seconds, frames: r.plan!.frames,
         createdAt: new Date().toISOString(), renderKey,
-        render: { ...renderInputs, node: versions.node, windows: takes.map(({ startTick, endTick }) => ({ startTick, endTick })), mappings: captures.map((c) => c.mapping), workDir },
+        render: { ...renderInputs, node: versions.node, windows: takes.map(({ startTick, endTick }) => ({ startTick, endTick })), mappings: captures.map((c) => c.mapping), encoder: r.encoder, workDir },
         kind, timing: "scheduled",
         crosshair: { source: crosshair, demoPatch: Number(p.demo.patch), cutoff: cutoff ?? null },
         reel: { takes: takes.map(({ round, tick, weapon, player }) => ({ round, tick, weapon, player })) },

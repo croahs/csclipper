@@ -11,7 +11,8 @@
 // checking no cs2.exe / HLAE.exe is left, as for every lock here.) A clip the library already holds
 // for its render key is done, whatever the ledger says. A job that failed
 // twice is not retried until --retry-failed.
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { Refusal, STATE_DIR, loadBatch, loadIdentities, loadReels, pickMoments } from "../config.ts";
 import { buildMoments } from "../clip/moments.ts";
@@ -118,10 +119,11 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   const ledger = readLedger();
   // One launch per demo (chained takes): its jobs are gated one by one, then rendered together.
   const reels = loadReels();
+  let posting: Promise<void> = Promise.resolve();
   const kinds = o.noReels ? [] : (["deaths", "kills"] as const).filter((k) => reels[k].enabled);
   demos: for (const [sha256, file] of demoFiles) {
     const items = queue.filter((q) => q.sha256 === sha256);
-    type Ready = { unit: RenderUnit; key: string; prevStatus?: "running" | "done" | "failed"; attempts: number };
+    type Ready = { unit: RenderUnit; kind: "highlight" | "deaths" | "kills"; key: string; prevStatus?: "running" | "done" | "failed"; attempts: number };
     const ready: Ready[] = [];
     for (const { demo, spec } of items) {
       let prep: PreparedJob;
@@ -153,7 +155,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
         continue;
       }
       if (o.dryRun) { console.log(`would render: #${spec.rank} ${spec.title} (score ${spec.score})`); continue; }
-      ready.push({ unit: highlightUnit(prep), key, prevStatus: prev?.status, attempts: (prev?.attempts ?? 0) + 1 });
+      ready.push({ unit: highlightUnit(prep), kind: "highlight", key, prevStatus: prev?.status, attempts: (prev?.attempts ?? 0) + 1 });
     }
     // The demo's reels (config.json reels), gated like its highlights and rendered in the same launch.
     for (const kind of kinds) {
@@ -181,7 +183,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
         continue;
       }
       if (o.dryRun) { console.log(`would render: ${unit.title} (${unit.takes.length} takes)`); continue; }
-      ready.push({ unit, key, prevStatus: prev?.status, attempts: (prev?.attempts ?? 0) + 1 });
+      ready.push({ unit, kind, key, prevStatus: prev?.status, attempts: (prev?.attempts ?? 0) + 1 });
     }
     if (!ready.length) continue;
     for (const r of ready) ledger[r.key] = { id: r.unit.id, renderKey: r.unit.renderKey, demoSha256: sha256, title: r.unit.title, status: "running", attempts: r.attempts, updatedAt: new Date().toISOString() };
@@ -193,7 +195,8 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
     launchedOne = true;
     let results: JobResult[];
     try {
-      results = await runJobs(ready.map((r) => r.unit));
+      // Render only: the post of this demo goes to the post worker, overlapping the next launch.
+      results = await runJobs(ready.map((r) => r.unit), { renderOnly: true });
     } catch (e) {
       clearTimeout(testTimer);
       const reason = (e as Error).message;
@@ -218,8 +221,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
       continue;
     }
     clearTimeout(testTimer);
-    for (const [i, res] of results.entries()) {
-      const r = ready[i];
+    const record = (r: Ready, res: JobResult) => {
       ledger[r.key] = { ...ledger[r.key], status: res.status === "failed" ? "failed" : "done", attempts: res.status === "skipped" ? r.attempts - 1 : r.attempts, lastReasons: res.reasons, updatedAt: new Date().toISOString() };
       if (res.status === "done") {
         report.rendered.push(res.title);
@@ -228,13 +230,54 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
       }
       else if (res.status === "skipped") report.skipped.push(res.title);
       else { report.failed.push(`${res.title}: ${res.reasons?.join("; ")}`); code = Math.max(code, 1); }
+    };
+    const toPost: Ready[] = [];
+    for (const [i, res] of results.entries()) {
+      if (res.status === "captured") toPost.push(ready[i]);
+      else record(ready[i], res);
     }
     writeLedger(ledger);
+    // One post at a time: wait for the previous demo's, then start this one's and go on launching.
+    if (toPost.length) {
+      await posting;
+      posting = postWorker(file, toPost.map((r) => ({ id: r.unit.id, title: r.unit.title, kind: r.kind }))).then((done) => {
+        for (const r of toPost) record(r, done.find((d) => d.id === r.unit.id) ?? { status: "failed", id: r.unit.id, title: r.unit.title, reasons: ["no result from the post worker"] });
+        writeLedger(ledger);
+      }).catch((e) => {
+        // Never an unhandled rejection: it would end the process in the middle of the next launch.
+        for (const r of toPost) report.failed.push(`${r.unit.title}: recording the post result failed: ${(e as Error).message}`);
+        code = Math.max(code, 1);
+      });
+    }
     // An unverified cleanup may have left a game running: stop everything.
     if (results.some((x) => x.cleanupVerified === false) || cleanupUnverified()) { report.stoppedBy = "cleanup"; code = 3; break demos; }
   }
+  await posting; // the last demo's post
   if ((report.demoErrors.length || report.givenUp.length) && code === 0) code = 1;
   // The page is rewritten even after a stop; its own failure never hides the batch's exit code.
   try { writeLibraryPage(); } catch (e) { report.pageError = (e as Error).message; if (code === 0) code = 1; }
   return { report, code };
+}
+
+/**
+ * Posts one demo's captured units in a separate process (src/cli/post-worker.ts), so this
+ * process stays free to drive the next launch. Resolves with the worker's results; a worker
+ * that dies yields failures, never a stuck batch.
+ */
+function postWorker(demo: string, units: { id: string; title: string; kind: "highlight" | "deaths" | "kills" }[]): Promise<JobResult[]> {
+  const dir = path.join(STATE_DIR, "post-jobs");
+  mkdirSync(dir, { recursive: true });
+  const stamp = `${Date.now()}-${process.pid}`;
+  const jobFile = path.join(dir, `${stamp}.job.json`), resultFile = path.join(dir, `${stamp}.result.json`);
+  writeFileSync(jobFile, JSON.stringify({ demo, highlights: units.filter((u) => u.kind === "highlight").map((u) => u.id), reels: units.filter((u) => u.kind !== "highlight").map((u) => u.kind) }));
+  const fail = (reason: string): JobResult[] => units.map((u) => ({ status: "failed", id: u.id, title: u.title, reasons: [reason] }));
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, ["--import", "tsx", path.join(import.meta.dirname, "..", "cli", "post-worker.ts"), jobFile, resultFile], { stdio: "inherit", windowsHide: true });
+    child.on("error", (e) => resolve(fail(`post worker did not start: ${e.message}`)));
+    child.on("exit", (code) => {
+      try { resolve(JSON.parse(readFileSync(resultFile, "utf8")) as JobResult[]); }
+      catch { resolve(fail(`post worker exited ${code} without results`)); }
+      for (const f of [jobFile, resultFile]) try { rmSync(f, { force: true }); } catch {}
+    });
+  });
 }

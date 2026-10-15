@@ -68,6 +68,14 @@ export function loadReels(file = path.join(ROOT, "config.json")): ReelSettings {
   return { deaths: one("deaths"), kills: one("kills") };
 }
 
+/** The final encode: "auto" = NVENC when FFmpeg has it (x264 if that encode fails), or always "x264" / "nvenc". */
+export type Encoder = "auto" | "x264" | "nvenc";
+export function loadEncoder(file = path.join(ROOT, "config.json")): Encoder {
+  const e = JSON.parse(readFileSync(file, "utf8")).post?.encoder ?? "auto";
+  if (e !== "auto" && e !== "x264" && e !== "nvenc") throw new Error('config.json post.encoder must be "auto", "x264" or "nvenc"');
+  return e;
+}
+
 /** Clip span rules (PLAN.md §4): lead-in before the engagement start, tail after the last kill. */
 export type ClipRules = { leadInSeconds: number; tailSeconds: number };
 export function loadClipRules(file = path.join(ROOT, "config.json")): ClipRules {

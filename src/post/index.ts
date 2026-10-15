@@ -4,9 +4,9 @@
 // final clip to a temp path and validate it.
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { captureSize, type RenderSettings } from "../config.ts";
+import { captureSize, loadEncoder, type RenderSettings } from "../config.ts";
 import type { TickMapping } from "../render/controller/index.ts";
-import { decodeProblems, ff, meanLuma, probe } from "./ffmpeg.ts";
+import { decodeProblems, encodeFinal, meanLuma, probe } from "./ffmpeg.ts";
 
 /**
  * Where recording really starts, against the scheduled record-start tick, in
@@ -83,13 +83,14 @@ export function segments(m: TickMapping, startTick: number, endTick: number, win
   });
 }
 
-export type PostResult = { status: "ok" | "failed"; reasons: string[]; plan?: TrimPlan; segments?: Segment[] };
+export type PostResult = { status: "ok" | "failed"; reasons: string[]; plan?: TrimPlan; segments?: Segment[]; encoder?: "x264" | "nvenc" };
 
 /** Writes outTmp; on any failure the temp file is removed. windows: the spec's action windows, if any. */
 export function post(video: string, audio: string, m: TickMapping, startTick: number, endTick: number, s: RenderSettings, outTmp: string, windows?: { startTick: number; endTick: number }[]): PostResult {
   const reasons: string[] = [];
   let plan: TrimPlan | undefined;
   let segs: Segment[] | undefined;
+  let encoder: "x264" | "nvenc" | undefined;
   try {
     segs = segments(m, startTick, endTick, windows);
     const d = segs.reduce((n, x) => n + x.outSeconds, 0);
@@ -114,19 +115,19 @@ export function post(video: string, audio: string, m: TickMapping, startTick: nu
     graph.push(`${segs.map((_, i) => `[v${i}][a${i}]`).join("")}concat=n=${k}:v=1:a=1[vc][ac]`);
     graph.push(`[vc]null${scale}${fades ? `,fade=t=in:st=0:d=${f},fade=t=out:st=${(d - f).toFixed(6)}:d=${f}` : ""}[v]`);
     graph.push(`[ac]anull${fades ? `,afade=t=in:st=0:d=${f},afade=t=out:st=${(d - f).toFixed(6)}:d=${f}` : ""}[a]`);
-    const r = ff([
+    const r = encodeFinal(loadEncoder(), s.crf, (v) => [
       "-v", "error", "-y", "-i", video, "-i", audio,
       "-filter_complex", graph.join(";"), "-map", "[v]", "-map", "[a]",
-      "-c:v", "libx264", "-preset", "slow", "-crf", String(s.crf), "-pix_fmt", "yuv420p",
-      "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", outTmp,
+      ...v, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", outTmp,
     ]);
+    encoder = r.encoder;
     if (r.status !== 0) reasons.push(`encode failed: ${r.stderr.slice(0, 300)}`);
     else reasons.push(...validateClip(outTmp, d, `${s.width}x${s.height}`));
   } catch (e) {
     reasons.push(`post error: ${(e as Error).message}`);
   }
   if (reasons.length) rmSync(outTmp, { force: true });
-  return { status: reasons.length ? "failed" : "ok", reasons, plan, segments: segs };
+  return { status: reasons.length ? "failed" : "ok", reasons, plan, segments: segs, encoder };
 }
 
 /** One take of a reel: its capture, the ticks to show and the overlay line. */
@@ -146,6 +147,7 @@ const filterPath = (p: string) => `'${p.replaceAll("\\", "/").replace(/^([A-Za-z
 export function postReel(takes: ReelTakeInput[], s: RenderSettings, workDir: string, outTmp: string): PostResult {
   const reasons: string[] = [];
   let plan: TrimPlan | undefined;
+  let encoder: "x264" | "nvenc" | undefined;
   try {
     if (!takes.length) throw new Error("a reel needs at least one take");
     const cap = captureSize(s);
@@ -173,12 +175,12 @@ export function postReel(takes: ReelTakeInput[], s: RenderSettings, workDir: str
     }
     graph.push(`${takes.map((_, i) => `[v${i}][a${i}]`).join("")}concat=n=${takes.length}:v=1:a=1[v][a]`);
     plan = { startFrame: plan!.startFrame, frames, seconds: total };
-    const r = ff([
+    const r = encodeFinal(loadEncoder(), s.crf, (v) => [
       "-v", "error", "-y", ...inputs,
       "-filter_complex", graph.join(";"), "-map", "[v]", "-map", "[a]",
-      "-c:v", "libx264", "-preset", "slow", "-crf", String(s.crf), "-pix_fmt", "yuv420p",
-      "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", outTmp,
+      ...v, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", outTmp,
     ]);
+    encoder = r.encoder;
     if (r.status !== 0) reasons.push(`encode failed: ${r.stderr.slice(0, 300)}`);
     // Frames checked mid-take (at most five takes, spread over the reel).
     else reasons.push(...validateClip(outTmp, total, `${s.width}x${s.height}`, mids.filter((_, i) => i % Math.max(1, Math.ceil(mids.length / 5)) === 0)));
@@ -186,5 +188,5 @@ export function postReel(takes: ReelTakeInput[], s: RenderSettings, workDir: str
     reasons.push(`post error: ${(e as Error).message}`);
   }
   if (reasons.length) rmSync(outTmp, { force: true });
-  return { status: reasons.length ? "failed" : "ok", reasons, plan };
+  return { status: reasons.length ? "failed" : "ok", reasons, plan, encoder };
 }

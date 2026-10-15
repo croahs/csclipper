@@ -10,6 +10,9 @@
     "fadeSeconds": 0.25
   },
   "crosshairFromDemoSincePatch": 14182,
+  "post": {
+    "encoder": "auto"
+  },
   "clip": {
     "leadInSeconds": 4,
     "tailSeconds": 5.5

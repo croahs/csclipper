@@ -53,3 +53,39 @@ export function meanLuma(file: string, t: number): number {
   for (const v of px) sum += v;
   return sum / px.length;
 }
+
+let nvencAvailable: boolean | undefined;
+/**
+ * Whether h264_nvenc actually encodes here: a one-frame test encode, once per process. Listing it
+ * is not enough (FFmpeg 9 lists it but needs NVIDIA driver 610+; on 591 it fails to open).
+ */
+export function hasNvenc(): boolean {
+  if (nvencAvailable === undefined) {
+    const r = spawnSync("ffmpeg", ["-hide_banner", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x144:r=30", "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"], { encoding: "utf8" });
+    nvencAvailable = !r.error && r.status === 0;
+  }
+  return nvencAvailable;
+}
+
+/** Video encoder arguments for the final clip. NVENC -cq 19 at preset p5 stands in for x264 CRF 18. */
+export function videoArgs(encoder: "x264" | "nvenc", crf: number): string[] {
+  return encoder === "nvenc"
+    ? ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", String(crf + 1), "-b:v", "0", "-pix_fmt", "yuv420p"]
+    : ["-c:v", "libx264", "-preset", "slow", "-crf", String(crf), "-pix_fmt", "yuv420p"];
+}
+
+/**
+ * Runs a final encode: `build(videoArgs)` gives the whole FFmpeg argument list. With "auto",
+ * NVENC first when available and x264 if that fails (no GPU, driver, session limit).
+ * Returns the result and the encoder that produced the file.
+ */
+export function encodeFinal(encoder: "auto" | "x264" | "nvenc", crf: number, build: (video: string[]) => string[]): { status: number | null; stderr: string; encoder: "x264" | "nvenc" } {
+  const order: ("x264" | "nvenc")[] = encoder === "x264" ? ["x264"] : encoder === "nvenc" ? ["nvenc"] : hasNvenc() ? ["nvenc", "x264"] : ["x264"];
+  let last = { status: null as number | null, stderr: "", encoder: order[0] };
+  for (const e of order) {
+    const r = ff(build(videoArgs(e, crf)));
+    last = { ...r, encoder: e };
+    if (r.status === 0) return last;
+  }
+  return last;
+}
