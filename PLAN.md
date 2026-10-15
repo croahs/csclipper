@@ -149,9 +149,15 @@ For each moment above a threshold (or top N per demo):
 - `end_tick` = the moment's outcome event, not just its last kill: the
   last kill + 2.5 s, or the defuse/plant/round end that resolves a
   clutch, capped at round end + 1 s.
-- Overlapping moments merge. Hard cap 30 s; a longer moment is split,
-  and only the fragment that contains the outcome keeps the clutch
-  label.
+- Overlapping moments merge. A moment is never cut short: every kill
+  in it and its outcome event are inside the captured span, however
+  long. Length is controlled in post instead: stretches with no action
+  (no POV kill, damage dealt or taken, or weapon fire for more than a
+  few seconds) are fast-forwarded at a fixed high speed with the audio
+  muted, so the finished clip stays around 30 s while the action
+  windows around each kill play at normal speed. Decided by Peder on
+  2026-10-15 after a 1v2 clip came out with one kill and 30 s of
+  walking.
 - `pov` = your identity mapping, first-person spectate.
 - `id` = stable hash of (demo hash, round, start_tick, end_tick). Files
   are named by id; the title is metadata, so a title collision can
