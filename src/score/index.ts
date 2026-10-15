@@ -11,7 +11,7 @@ import { NOT_A_GUN, type Death, type ParsedDemo, type Round, type Team } from ".
 export type Weights = {
   killBase: Record<string, number>;
   speed: { referenceSeconds: number; pointsPerSecondFaster: number; max: number };
-  tightness: { windowSeconds: number; perKillInWindow: number; allWithinSeconds: number; allWithinBonus: number };
+  tightness: { windowSeconds: number; perKillBeyondTwo: number };
   clutch: { perEnemy: number; wonBonus: number; lostFactor: number };
   flags: { headshot: number; wallbang: number; thrusmoke: number; attackerblind: number };
   light: { noscope: number; airborne: number; oneBulletKill: number; flick: { minDegrees: number; pointsPer10Degrees: number; maxPerKill: number }; maxPerMoment: number };
@@ -117,9 +117,8 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
   if (run.length >= 2) {
     const avgGap = (run[run.length - 1].tick - run[0].tick) / (run.length - 1) / tickrate;
     b.speed = Math.round(Math.min(w.speed.max, Math.max(0, (w.speed.referenceSeconds - avgGap) * w.speed.pointsPerSecondFaster)) * 10) / 10;
-    b.tight = (run.length - 1) * w.tightness.perKillInWindow;
+    if (run.length >= 3) b.tight = (run.length - 2) * w.tightness.perKillBeyondTwo;
   }
-  if (n >= 2 && (kills[n - 1].tick - kills[0].tick) / tickrate <= w.tightness.allWithinSeconds) b.tight = (b.tight ?? 0) + w.tightness.allWithinBonus;
   if (clutch) b.clutch = clutch.vs * w.clutch.perEnemy * (clutch.won ? 1 : w.clutch.lostFactor) + (clutch.won ? w.clutch.wonBonus : 0);
   const f = w.flags;
   b.flags = kills.reduce((s, k) => s + (k.headshot ? f.headshot : 0) + (k.penetrated ? f.wallbang : 0) + (k.thrusmoke ? f.thrusmoke : 0) + (k.attackerblind ? f.attackerblind : 0), 0);

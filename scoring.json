@@ -6,7 +6,8 @@
     "2026-10-15 includeOvertime false: PLAN.md section 3 excludes overtime rounds; set true to rank them",
     "2026-10-15 per-round moments (Peder): all of his kills in a round are one moment, so clusterGapSeconds is gone; quick succession is a scoring signal instead",
     "2026-10-15 tightness: the most kills inside any windowSeconds (6 s) earn perKillInWindow each beyond the first, all kills within allWithinSeconds earn allWithinBonus, and speed now scores the tightest run, so a 3k in 4 s beats a 3k over 40 s by about 30 points (Peder: quick succession is worth more)",
-    "2026-10-15 light signals (Peder: a small bonus each, never enough to lift a weak round over a strong one): noscope moved from flags into light, airborne (attackerinair), one-bullet kills, flicks (yaw turned in the 100-200 ms before the kill shot above minDegrees); capped together at maxPerMoment, below the 20-point gap between kill counts"
+    "2026-10-15 light signals (Peder: a small bonus each, never enough to lift a weak round over a strong one): noscope moved from flags into light, airborne (attackerinair), one-bullet kills, flicks (yaw turned in the 100-200 ms before the kill shot above minDegrees); capped together at maxPerMoment, below the 20-point gap between kill counts",
+    "2026-10-15 recalibrated (Peder: keep minScore 40; anchor: the moments that scored about 40 in the 46-moment batch must land about 40 again, and a plain 2k must not gain a flat 18): tightness pays only from the third kill in the 6 s window (perKillBeyondTwo 15), allWithin bonus removed; a 2k scores as before (its pace is in speed), a 3k in 4 s still beats a 3k over 40 s by about 19"
   ],
   "killBase": {
     "1": 10,
@@ -22,11 +23,9 @@
     "max": 12
   },
   "tightness": {
-    "_note": "kills in quick succession: the best windowSeconds window, and all kills close together",
+    "_note": "kills in quick succession: each kill beyond the second inside the best windowSeconds window; a 2k's pace is already in speed",
     "windowSeconds": 6,
-    "perKillInWindow": 12,
-    "allWithinSeconds": 10,
-    "allWithinBonus": 6
+    "perKillBeyondTwo": 15
   },
   "clutch": {
     "perEnemy": 15,

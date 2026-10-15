@@ -36,10 +36,11 @@ test("all kills of a round are one moment, however far apart", () => {
   assert.deepEqual(ms[0].kills.map((k) => k.tick), [100, 4000, 8000]);
 });
 
-test("a 3k in 4 s beats a 3k over 40 s by a visible margin; both are one moment", () => {
+test("a 3k in 4 s beats a 3k over 40 s by a visible margin; a quick 2k gains only speed", () => {
   const fast = scoreKills(demo(), [kill(0), kill(128), kill(256)], undefined, false, w).score;
   const slow = scoreKills(demo(), [kill(0), kill(1280), kill(2560)], undefined, false, w).score;
-  assert.ok(fast - slow >= 25, `fast ${fast} vs slow ${slow}`);
+  assert.ok(fast - slow >= 15, `fast ${fast} vs slow ${slow}`);
+  assert.equal(scoreKills(demo(), [kill(0), kill(128)], undefined, false, w).breakdown.tight, undefined);
 });
 
 test("light signals are capped below the gap between kill counts", () => {

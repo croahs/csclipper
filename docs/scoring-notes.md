@@ -32,7 +32,7 @@ the round end do not count. A moment needs at least one POV kill.
 |---|---|---|
 | kills | `killBase[n]` × `weaponMultiplier[class]` | 1k…5k, times the class most of its kills used (pistol, deagle, scout, smg, shotgun, rifle, awp, knife) |
 | speed | `speed` | on the tightest run (below): (referenceSeconds − its average seconds between kills) × pointsPerSecondFaster, 0…max |
-| tight | `tightness` | the most kills inside any `windowSeconds` (6 s) window (ties: the fastest): `perKillInWindow` for each beyond the first; plus `allWithinBonus` when all kills fall within `allWithinSeconds`. A 3k in 4 s gets about 30 more than a 3k over 40 s, and both stay one clip |
+| tight | `tightness` | each kill beyond the second inside the best `windowSeconds` (6 s) window (ties: the fastest) earns `perKillBeyondTwo`; a 2k's pace is already in `speed`. A 3k in 4 s gets about 19 more than a 3k over 40 s, and both stay one clip |
 | clutch | `clutch` | vs × perEnemy, + wonBonus when won; × lostFactor when lost |
 | flags | `flags` | per kill: headshot, wallbang, through smoke, while blind |
 | light | `light` | small bonuses, capped together at `maxPerMoment` (8: well below the 20+ base points between kill counts, though with weapon multipliers a capped round can pass one with a kill more by a few points, e.g. a spread knife 2k with an airborne kill over a spread AWP 3k): per kill a no-scope, an airborne kill (`attackerinair`), a one-bullet kill (POV gun `weapon_fire` count since the previous kill, or 5 s before the first, is 1), and a flick on a gun kill (the largest POV yaw turn from 100–200 ms before the kill shot, his last gunshot within 1 s, to the shot, wrapped; none without a gunshot; above `flick.minDegrees` 25°, `pointsPer10Degrees` up to `maxPerKill`) |
@@ -89,9 +89,16 @@ tightness and light signals:
   R2, R5, R19 2k AK-47 (52.0, 46.0, 44.0). Six overtime rounds are
   excluded (`includeOvertime` false).
 
-The tightness bonus lifts most 2ks by 18 (two kills within 6 s and within
-10 s), so 116 moments across the 29 stored demos score 40 or more (63
-before). `batch.minScore` was set on the old scale.
+**Calibration anchor (Peder, 2026-10-15).** `batch.minScore` stays 40, and
+the scale is held to it: the moments that scored about 40 in the
+46-moment batch of 2026-10-15 (plain 2ks such as clip 25, de_ancient R9 at
+40.8, and clip 48, de_dust2 R17 at 44.8) must score about 40 again. A first
+per-round version gave every 2k a flat +18 for "tightness" and lifted 116
+moments over 40; tightness now pays only from the third kill in the 6 s
+window, and those 2ks score exactly what they did. Moments that gained
+kills under the per-round rule rise for that reason (e.g. clip 41, a 2k
+that is a 3k round, 40 to 67). With it, 98 moments across the 29 stored
+demos clear 40.
 
 ## Not scored yet
 
