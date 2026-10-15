@@ -292,8 +292,12 @@ FFmpeg only:
 
 `library/index.html` is generated with the clip index inlined, so it
 works opened straight from disk (a `fetch` of `index.json` over
-`file://` does not). Grid of clips with `<video>`, filters by
-map/kill count/score, sort by score or date. No server, no backend.
+`file://` does not). Layout decided by Peder 2026-10-15: a left
+sidebar with categories (kind: highlight, deaths, kills; map; match by
+date) and the sort; a main area where the selected clip's player fills
+most of the viewport; a compact list of the clips in the current
+category to pick from, with number, title, score and length. Keyboard
+next/previous. No server, no backend, no framework.
 
 ## Stack
 
