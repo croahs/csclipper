@@ -295,7 +295,14 @@ sidebar with categories (kind: highlight, deaths, kills; map; match by
 date) and the sort; a main area where the selected clip's player fills
 most of the viewport; a compact list of the clips in the current
 category to pick from, with number, title, score and length. Keyboard
-next/previous. No server, no backend, no framework.
+next/previous. A "newest" sort stays available at the top.
+Deleting while watching (decided 2026-10-15): `pnpm library` starts a
+minimal local server (Node, localhost only, no accounts) that serves
+the same page and accepts the page's delete action; opened straight
+from disk the page shows the equivalent `pnpm rm <no>` command
+instead. Delete moves the file to `library/trash/`, removes the index
+entry, and marks the moment as deleted in the ledger so no run renders
+it again; `pnpm trash --empty` frees the disk. No framework.
 
 ## Stack
 
