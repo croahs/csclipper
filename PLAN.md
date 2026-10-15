@@ -163,9 +163,9 @@ For each moment above a threshold (or top N per demo):
   taken), minus 4 s of lead-in (raised from 2 s by Peder, 2026-10-15).
   A re-render may override the lead-in per clip.
 - `end_tick` = the moment's outcome event, not just its last kill: the
-  last kill + 7.5 s (Peder: 2.5 s to 5.5 s, then to 7.5 s on
-  2026-10-15, clips ended too abruptly; applies to future clips only,
-  no rebuilds), or the defuse/plant/round end that resolves a
+  last kill + 5.5 s (Peder: 2.5 s to 5.5 s on 2026-10-15; briefly
+  7.5 s, set back to 5.5 the same day once the round-end cap that had
+  been cutting some clips short was removed), or the defuse/plant/round end that resolves a
   clutch, whichever is later. The tail is always honoured even when
 the last kill ends the round (the win banner and freeze time are part
 of the clip); the only cap is the next round's start. Changed
