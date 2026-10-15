@@ -5,10 +5,10 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { Refusal, STATE_DIR, captureSize, loadIdentities, loadSettings } from "../config.ts";
+import { Refusal, STATE_DIR, captureSize, loadCrosshairCutoff, loadIdentities, loadSettings } from "../config.ts";
 import { clipFacts } from "../parse/clip-facts.ts";
 import { MARGIN_TICKS, SETTLE_TICKS, render, validateCapture, type TickMapping } from "../render/controller/index.ts";
-import { SPECTATOR_PANELS, lookCfg } from "../render/controller/cfg.ts";
+import { SPECTATOR_PANELS, crosshairSource, lookCfg } from "../render/controller/cfg.ts";
 import { RenderLock } from "../render/controller/guards.ts";
 import { toolVersions } from "../render/versions.ts";
 import { post } from "../post/index.ts";
@@ -91,10 +91,15 @@ export async function prepareJob(o: JobInput) {
   const id = clipId(facts.demoSha256, round, startTick, endTick);
   if (spec && id !== spec.id) throw new Error(`clip id ${id} differs from the moment's ${spec.id}`);
   const title = spec ? spec.title : `${facts.map} · R${facts.round} · ticks ${startTick}-${endTick}`;
-  const look = lookCfg(ids.cs2Exe, ids.pov);
+  const cutoff = loadCrosshairCutoff();
+  const crosshair = crosshairSource(facts.patch, cutoff);
+  const look = lookCfg(ids.cs2Exe, ids.pov, crosshair);
   const versions = toolVersions(ids.cs2Exe, ids.hlaeExe);
   const { node: _node, ...outputVersions } = versions;
-  const renderInputs = { settings, versions: outputVersions, slot: facts.slot, lookCfgSha256: createHash("sha256").update(look).digest("hex"), marginTicks: MARGIN_TICKS, settleTicks: SETTLE_TICKS, spectatorPanels: SPECTATOR_PANELS, debugCommands };
+  const renderInputs = { settings, versions: outputVersions, slot: facts.slot, lookCfgSha256: createHash("sha256").update(look).digest("hex"), marginTicks: MARGIN_TICKS, settleTicks: SETTLE_TICKS, spectatorPanels: SPECTATOR_PANELS, debugCommands,
+    // "demo" adds nothing: its look hash simply lacks the crosshair convars (they never showed for these
+    // demos, M0.2), so the key changes only by those lines. "own" changes the picture (observer crosshair 0).
+    ...(crosshair === "own" ? { crosshair } : {}) };
   // The POV id is part of the key but never stored in the library.
   const renderKey = createHash("sha256").update(JSON.stringify({ ...renderInputs, pov: ids.pov })).digest("hex").slice(0, 16);
   /** A validated raw capture for this render key exists, so the job needs post only, no launch. */
@@ -111,12 +116,12 @@ export async function prepareJob(o: JobInput) {
     if (!existsSync(clipPath(held.id))) console.log(`library entry ${held.id} has no file; kept as done (pnpm clip --rerender ${held.id} re-makes it)`);
     return true;
   };
-  return { o, demo, spec, debugCommands, startTick, endTick, settings, ids, facts, round, id, title, look, versions, renderInputs, renderKey, inLibrary, hasCapture };
+  return { o, demo, spec, debugCommands, startTick, endTick, settings, ids, facts, round, id, title, look, crosshair, cutoff, versions, renderInputs, renderKey, inLibrary, hasCapture };
 }
 
 export async function clipJob(o: JobInput): Promise<JobResult> {
   const p = await prepareJob(o);
-  console.log(`clip ${p.id}: ${p.title} (slot ${p.facts.slot}, render key ${p.renderKey})`);
+  console.log(`clip ${p.id}: ${p.title} (slot ${p.facts.slot}, build ${p.facts.patch}: ${p.crosshair === "demo" ? "the demo's crosshair" : "his saved crosshair"}, render key ${p.renderKey})`);
   if (o.dryRun) {
     console.log(JSON.stringify({ id: p.id, title: p.title, facts: p.facts, renderInputs: p.renderInputs }, null, 2));
     return { status: "dry", id: p.id, title: p.title };
@@ -125,7 +130,7 @@ export async function clipJob(o: JobInput): Promise<JobResult> {
 }
 
 export async function runJob(prep: PreparedJob): Promise<JobResult> {
-  const { o, demo, spec, debugCommands, startTick, endTick, settings, ids, facts, round, id, title, look, versions, renderInputs, renderKey } = prep;
+  const { o, demo, spec, debugCommands, startTick, endTick, settings, ids, facts, round, id, title, look, crosshair, cutoff, versions, renderInputs, renderKey } = prep;
   // One clip run at a time, from the resume check to the index write.
   const clipLock = new RenderLock(path.join(STATE_DIR, ".clip.lock"));
   clipLock.acquire();
@@ -152,7 +157,7 @@ export async function runJob(prep: PreparedJob): Promise<JobResult> {
     } else {
       // The last word on --repost's no-launch promise, at the launch boundary itself.
       if (o.postOnly) throw new Refusal("post only: no completed capture for this job; nothing launched");
-      const r = await render({ title, demo, slot: facts.slot, startTick, endTick, workDir, lockFile: path.join(STATE_DIR, ".render.lock"), ids, settings, lookCfg: look, debugCommands, timeoutS: o.timeoutS });
+      const r = await render({ title, demo, slot: facts.slot, startTick, endTick, workDir, lockFile: path.join(STATE_DIR, ".render.lock"), ids, settings, lookCfg: look, crosshair, debugCommands, timeoutS: o.timeoutS });
       if (r.status !== "ok" || !r.mapping || !r.audio || !r.video) return fail(r.reasons, r.cleanupVerified);
       capture = { renderKey, mapping: r.mapping, video: r.video, audio: r.audio, workDir };
       writeJsonAtomic(path.join(workDir, "capture.json"), { renderKey, mapping: r.mapping, video: r.video, audio: r.audio });
@@ -170,6 +175,7 @@ export async function runJob(prep: PreparedJob): Promise<JobResult> {
       startTick, endTick, seconds: p.plan!.seconds, frames: p.plan!.frames, createdAt: new Date().toISOString(),
       renderKey, render: { ...renderInputs, node: versions.node, mapping: capture.mapping, trim: p.plan, workDir },
       timing: "scheduled",
+      crosshair: { source: crosshair, demoPatch: facts.patch, cutoff: cutoff ?? null },
     }, o.replaces);
     console.log(`ok: ${clipPath(id)} (${p.plan!.frames} frames, ${p.plan!.seconds.toFixed(3)} s; trimmed by the scheduled record start)`);
     return { status: "done", id, title, clip: clipPath(id) };

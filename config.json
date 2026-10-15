@@ -9,6 +9,7 @@
     "crf": 18,
     "fadeSeconds": 0.25
   },
+  "crosshairFromDemoSincePatch": 14182,
   "batch": {
     "topN": 2,
     "minScore": 40

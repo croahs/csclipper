@@ -20,7 +20,7 @@ import { captureSize, type Identities, type RenderSettings } from "../../config.
 import { TICKRATE } from "../../parse/clip-facts.ts";
 import { countFrames, decodeProblems, probe } from "../../post/ffmpeg.ts";
 import { FINISHED_RE, STARTED_RE, hlaeArgs, hlaeCapture, takeOutputs } from "../capture/hlae.ts";
-import { jobCfg } from "./cfg.ts";
+import { jobCfg, type CrosshairSource } from "./cfg.ts";
 import { RenderLock, guard } from "./guards.ts";
 import { OwnedTree, isRunning, key, killExact, type Proc } from "./processes.ts";
 
@@ -40,6 +40,7 @@ export type RenderJob = {
   ids: Identities;
   settings: RenderSettings;
   lookCfg: string;
+  crosshair: CrosshairSource;
   debugCommands?: string[];
   timeoutS?: number;
 };
@@ -115,13 +116,13 @@ export async function render(job: RenderJob): Promise<RenderResult> {
     mkdirSync(cap.takeDir, { recursive: true });
     writeFileSync(path.join(usrDir, "cfg", "croclip_look.cfg"), job.lookCfg);
     writeFileSync(path.join(usrDir, "cfg", `${cfgName}.cfg`), jobCfg({
-      title: job.title, hud: s.hud, debugCommands: job.debugCommands ?? [], lookCfgName: "croclip_look", captureSetup: cap.setup, recordStart: cap.start, recordEnd: cap.end,
+      title: job.title, hud: s.hud, debugCommands: job.debugCommands ?? [], lookCfgName: "croclip_look", crosshair: job.crosshair, captureSetup: cap.setup, recordStart: cap.start, recordEnd: cap.end,
       seekTick, slot: job.slot, recordStartTick, recordEndTick, quitTick,
     }));
     const size = captureSize(s);
     const csArgs = ["-insecure", "-novid", "-sw", "-width", String(size.width), "-height", String(size.height), "-condebug", "+exec", cfgName, "+playdemo", `"${job.demo}"`];
     args = hlaeArgs(ids.hlaeExe, ids.cs2Exe, csArgs);
-    writeFileSync(path.join(job.workDir, "job.json"), JSON.stringify({ title: job.title, demo: job.demo, startTick: job.startTick, endTick: job.endTick, slot: job.slot, recordStartTick, recordEndTick, seekTick, quitTick, settings: s, hlaeExe: ids.hlaeExe, hlaeArgs: args, timeoutS }, null, 2));
+    writeFileSync(path.join(job.workDir, "job.json"), JSON.stringify({ title: job.title, demo: job.demo, startTick: job.startTick, endTick: job.endTick, slot: job.slot, crosshair: job.crosshair, recordStartTick, recordEndTick, seekTick, quitTick, settings: s, hlaeExe: ids.hlaeExe, hlaeArgs: args, timeoutS }, null, 2));
     // Re-check right before launch: the account or a running CS2 may have changed.
     guard(ids);
   } catch (e) {

@@ -118,6 +118,22 @@ the spectated player (docs/spikes.md, M0.2 open items).
   library and has a completed capture (e.g. jobs a post change failed),
   ignoring the attempt limit; selected moments without a capture are
   listed, and a normal `pnpm go` renders them.
+- **Crosshair.** Demos recorded since CS2's 22 September 2026 update carry
+  the player's crosshair; older ones do not. The gate is the demo header's
+  `patch_version` against `config.json` → `crosshairFromDemoSincePatch`
+  (`crosshairSource`, `src/render/controller/cfg.ts`): at or above it,
+  the look cfg leaves out every `cl_crosshair*` / `crosshair` convar and
+  the job sets `cl_show_observer_crosshair 2` (the demo's crosshair);
+  below it, the look cfg keeps the main account's saved crosshair convars
+  and the job sets `cl_show_observer_crosshair 0` (the spectator's own,
+  i.e. his). Empty (absent, `null`, `""`) means always the demo's. The
+  value 14182 is inferred, not looked up: Valve's notes give no build
+  number, and the store's demos show 14181 on 15 September and 14182 from
+  23 September on (FACEIT match dates). The render key changes only where
+  the picture does: for "demo" the look hash lacks the crosshair lines
+  (they never showed), for "own" the inputs add `crosshair: "own"`. Each
+  library entry records `crosshair: { source, demoPatch, cutoff }`;
+  clips made before the policy have none and stay as they are.
 - **HUD.** `full` (default) aims at the HUD as in play
   (`docs/hud-reference-inplay.webp`): `cl_draw_only_deathnotices 0`,
   `cl_radar_square_when_spectating 0` in the cfg body (round, rotating

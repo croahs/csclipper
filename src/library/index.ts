@@ -38,6 +38,8 @@ export type ClipEntry = {
   // How the clip was trimmed: "scheduled" = by the scheduled record-start mapping (src/post);
   // absent = clips made before M3's simplification, timed from muzzle flash and gunshots.
   timing?: "scheduled";
+  // Where the crosshair in frame comes from (docs/modules.md, Crosshair); absent on clips made before the policy.
+  crosshair?: { source: "demo" | "own"; demoPatch: number; cutoff: number | null };
   renderKey: string; // hash of the render inputs below; resumes and skips work, never invalidates a finished clip
   render: Record<string, unknown>; // settings and tool versions
 };

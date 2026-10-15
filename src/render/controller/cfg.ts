@@ -24,13 +24,26 @@ function readConvars(file: string): [string, string][] {
   return out;
 }
 
-/** croclip_look.cfg body, from userdata/<main account id>/730/local/cfg/. */
-export function lookCfg(cs2Exe: string, pov: string): string {
+// --- crosshair --------------------------------------------------------------
+// Since CS2's 22 September 2026 update a demo carries the player's crosshair, so the
+// observer shows it (cl_show_observer_crosshair 2) and none of the main account's
+// cl_crosshair* convars are exec'd. Older demos do not: they get his saved crosshair
+// convars and cl_show_observer_crosshair 0, so the spectator's own (his) crosshair shows.
+export type CrosshairSource = "demo" | "own";
+const CROSSHAIR = /^(cl_crosshair|crosshair$)/;
+
+/** cutoff undefined (config empty): always the demo's crosshair. */
+export function crosshairSource(demoPatch: number, cutoff: number | undefined): CrosshairSource {
+  return cutoff === undefined || demoPatch >= cutoff ? "demo" : "own";
+}
+
+/** croclip_look.cfg body, from userdata/<main account id>/730/local/cfg/. Crosshair convars only for "own". */
+export function lookCfg(cs2Exe: string, pov: string, crosshair: CrosshairSource): string {
   const steamRoot = path.resolve(path.dirname(cs2Exe), "..", "..", "..", "..", "..", "..");
   const dir = path.join(steamRoot, "userdata", accountId(pov), "730", "local", "cfg");
   const sources = ["cs2_user_convars_0_slot0.vcfg", "cs2_machine_convars.vcfg"].map((f) => path.join(dir, f));
   for (const f of sources) if (!existsSync(f)) throw new Error(`main account convars not found: ${f}`);
-  const look = sources.flatMap(readConvars).filter(([k]) => LOOK.test(k));
+  const look = sources.flatMap(readConvars).filter(([k]) => LOOK.test(k) && (crosshair === "own" || !CROSSHAIR.test(k)));
   return ["// generated read-only from the main account's cs2_user_convars_0_slot0.vcfg + cs2_machine_convars.vcfg", ...look.map(([k, v]) => `${k} "${v}"`), ""].join("\n");
 }
 
@@ -50,6 +63,7 @@ export type JobCfgInput = {
   hud: "full" | "bare";
   debugCommands: string[]; // scheduled after spec_player, e.g. panel tree dumps
   lookCfgName: string;
+  crosshair: CrosshairSource;
   captureSetup: string[]; // capture mode's cfg-body lines (paths allowed here)
   recordStart: string; // quote-free commands, scheduled
   recordEnd: string;
@@ -83,7 +97,8 @@ export function jobCfg(j: JobCfgInput): string {
     "demo_ui_mode 0", // must run before playback starts; scheduled later it does nothing
     "spec_show_xray 0", // never xray (hard rule)
     "cl_spec_show_bindings 0", // no "[MOUSE]/[SPACE]" spectator hints
-    "cl_show_observer_crosshair 2", // everyone; the crosshair in frame comes from the demo
+    // "demo": everyone's, the crosshair in frame comes from the demo; "own": the spectator's (the look cfg's).
+    `cl_show_observer_crosshair ${j.crosshair === "demo" ? 2 : 0}`,
     "cl_drawhud 1",
     `cl_draw_only_deathnotices ${j.hud === "bare" ? 1 : 0}`, // "bare": crosshair and killfeed only
     "cl_radar_square_when_spectating 0", // round, rotating radar as in play (the look cfg sets it true)

@@ -34,6 +34,18 @@ export function loadBatch(file = path.join(ROOT, "config.json")): BatchSettings 
   return b;
 }
 
+/**
+ * Demos at or after this game build (header patch_version) show the player's own crosshair from
+ * the demo; older ones need it exec'd (docs/modules.md, Crosshair). Empty (absent, null or "")
+ * means always the demo's crosshair.
+ */
+export function loadCrosshairCutoff(file = path.join(ROOT, "config.json")): number | undefined {
+  const v = JSON.parse(readFileSync(file, "utf8")).crosshairFromDemoSincePatch as unknown;
+  if (v === undefined || v === null || v === "") return undefined;
+  if (!Number.isSafeInteger(v) || (v as number) < 0) throw new Error("config.json crosshairFromDemoSincePatch must be a build number (integer) or empty");
+  return v as number;
+}
+
 export function loadSettings(file = path.join(ROOT, "config.json")): RenderSettings {
   const r = JSON.parse(readFileSync(file, "utf8")).render as RenderSettings;
   for (const k of ["width", "height", "fps", "captureCrf", "crf", "fadeSeconds"] as const) {
