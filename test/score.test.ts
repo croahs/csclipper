@@ -40,6 +40,9 @@ test("a 3k in 4 s beats a 3k over 40 s by a visible margin; a quick 2k gains onl
   const fast = scoreKills(demo(), [kill(0), kill(128), kill(256)], undefined, false, w).score;
   const slow = scoreKills(demo(), [kill(0), kill(1280), kill(2560)], undefined, false, w).score;
   assert.ok(fast - slow >= 15, `fast ${fast} vs slow ${slow}`);
+  // The anchored scale (scoring-notes, Calibration anchor): 15 for the third kill in the window, nothing for a 2k.
+  assert.equal(scoreKills(demo(), [kill(0), kill(128), kill(256)], undefined, false, w).breakdown.tight, 15);
+  assert.equal(scoreKills(demo(), [kill(0), kill(64), kill(128), kill(192)], undefined, false, w).breakdown.tight, 30);
   assert.equal(scoreKills(demo(), [kill(0), kill(128)], undefined, false, w).breakdown.tight, undefined);
 });
 
