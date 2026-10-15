@@ -1,9 +1,11 @@
-// pnpm go [--dry-run] [--retry-failed] [--repost] [--timeout <s>] [--test-exit-after <s>]: the whole pipeline in
+// pnpm go [--dry-run] [--retry-failed] [--repost] [--settle-existing] [--timeout <s>] [--test-exit-after <s>]: the whole pipeline in
 // one command. Ingest demos/inbox/, parse and rank every registered demo,
 // render the selected moments (config.json batch: every one with score >= minScore,
 // else the best one when none reaches it and fallbackBest) that are not in the library yet, rewrite library/index.html.
 // Re-running resumes; with nothing new it launches nothing. --repost runs post
 // only, for jobs whose capture is complete (e.g. after a post change): no launch.
+// --settle-existing marks every registered demo processed (state/settled.json) and renders
+// nothing; later runs skip settled demos, so new rules apply from the next new demo.
 // Exit codes: 0 ok, 1 a job or demo failed, 2 refused (CS2 running, a guard,
 // or another pnpm go), 3 cleanup not verified (the batch stopped; check for cs2.exe by hand).
 import path from "node:path";
@@ -26,13 +28,20 @@ async function main(): Promise<number> {
   try {
     const testExit = flag("--test-exit-after");
     const { report: r, code } = await runBatch({
-      dryRun: args.includes("--dry-run"), retryFailed: args.includes("--retry-failed"), repostOnly: args.includes("--repost"), timeoutS,
+      dryRun: args.includes("--dry-run"), retryFailed: args.includes("--retry-failed"), repostOnly: args.includes("--repost"), settleExisting: args.includes("--settle-existing"), timeoutS,
       testExitAfterS: testExit === undefined ? undefined : Number(testExit),
     });
+    if (r.settledNow !== undefined) {
+      console.log(args.includes("--dry-run")
+        ? `would settle ${r.settledNow} demo(s) (dry run: nothing written)`
+        : `settled ${r.settledNow} demo(s) now, ${r.settled} in all: pnpm go skips them from here on (state/settled.json)`);
+      return code;
+    }
     console.log("\n== batch ==");
     console.log(`demos: ${r.demos} (${r.ingested} new), moments selected: ${r.selected}`);
     console.log(`rendered: ${r.rendered.length ? r.rendered.join(" | ") : "none"}`);
     console.log(`already in the library: ${r.skipped.length}`);
+    if (r.settled) console.log(`settled demos skipped: ${r.settled}`);
     if (r.emptyDemos.length) console.log(`no moment above the threshold: ${r.emptyDemos.join(", ")}`);
     for (const f of r.failed) console.log(`FAILED: ${f}`);
     for (const g of r.givenUp) console.log(`not retried (use --retry-failed): ${g}`);

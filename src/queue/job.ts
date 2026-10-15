@@ -29,6 +29,8 @@ export type JobInput = {
   postOnly?: boolean;
   /** Part of a pnpm go run: the page rewritten after this clip says the run is still going. */
   inBatch?: boolean;
+  /** pnpm clip --rerender --lead: the lead-in the spec was built with, recorded in the entry. */
+  leadOverride?: number;
   /** pnpm clip --rerender: the library clip this one replaces (moved to library/replaced/ on publish). */
   replaces?: string;
 };
@@ -228,6 +230,7 @@ function postAndPublish(prep: PreparedJob, capture: CaptureRecord & { workDir: s
     renderKey, render: { ...renderInputs, node: versions.node, mapping: capture.mapping, trim: p.plan, segments: p.segments!.map(({ startTick, endTick, speed, outSeconds }) => ({ startTick, endTick, speed, outSeconds })), workDir: capture.workDir },
     kind: "highlight", timing: "scheduled",
     crosshair: { source: crosshair, demoPatch: facts.patch, cutoff: cutoff ?? null },
+    ...(o.leadOverride !== undefined ? { leadOverride: o.leadOverride } : {}),
   }, o.replaces);
   // The page shows each clip as it lands; inside a pnpm go run it says the run is still going.
   try { writeLibraryPage({ running: !!o.inBatch }); } catch (e) { console.error(`library page not rewritten: ${(e as Error).message}`); }

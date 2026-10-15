@@ -36,6 +36,7 @@ export type ClipEntry = {
   createdAt: string;
   moment?: Record<string, unknown>; // rank, score and signals when the clip came from pnpm moments
   kind?: "highlight" | "deaths" | "kills"; // absent: highlight (clips made before the reels)
+  leadOverride?: number; // seconds of lead-in a re-render asked for instead of config.json → clip.leadInSeconds
   // How the clip was trimmed: "scheduled" = by the scheduled record-start mapping (src/post);
   // absent = clips made before M3's simplification, timed from muzzle flash and gunshots.
   timing?: "scheduled";

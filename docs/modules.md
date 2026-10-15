@@ -7,11 +7,11 @@
 ```
 pnpm grab [--dry-run] [--browser] [--last <n>]
 pnpm grab --login
-pnpm go [--dry-run] [--retry-failed] [--repost]
+pnpm go [--dry-run] [--retry-failed] [--repost] [--settle-existing]
 pnpm moments "<demo.dem>"
 pnpm clip "<demo.dem>" --top <n> [--timeout <s>] [--dry-run]
 pnpm clip "<demo.dem>" <startTick> <endTick> [same options]
-pnpm clip --rerender <no|id> [--timeout <s>] [--dry-run]
+pnpm clip --rerender <no|id> [--lead <s>] [--timeout <s>] [--dry-run]
 ```
 
 `pnpm grab` (PLAN.md's `pnpm fetch`; pnpm's own `fetch` command takes that
@@ -41,7 +41,9 @@ not failures; exit 1 means a source failed or ingest rejected a file.
 ingests the inbox, ranks every registered demo, renders the moments
 `config.json` → `batch` selects (every moment scoring at least `minScore`,
 40; when none in a demo does and `fallbackBest` is true, its single best)
-that the library does not hold yet, with one CS2 launch per demo for all
+that the library does not hold yet (demos settled by `pnpm go
+--settle-existing`, listed in `state/settled.json`, are skipped whole:
+rule changes apply from the next new demo, not to old ones), with one CS2 launch per demo for all
 of them (chained takes, below), and rewrites
 `library/index.html` (open it from disk). It refuses to start while CS2 runs
 and stops the whole batch on the first guard refusal (exit 2) or unverified
@@ -62,7 +64,9 @@ old clip to `library/replaced/` in the same index write that adds the new
 one, which keeps the old one's number (the file moves after that write). A hand-written range re-renders by
 its ticks; a ranked moment takes the ranked spec with its id, else the one
 sharing the most kills with it that shares none with another clip (a tie
-refuses). Every entry has `no`, the human clip number
+refuses). `--lead <s>` (ranked moments only, 0 to 30 s) builds that clip's spec with an s-second lead-in
+instead of `clip.leadInSeconds` (the moments cache is neither read nor
+written for it); the entry records `leadOverride`. Every entry has `no`, the human clip number
 ("clip 17"): sequential in the order clips entered the library, stable,
 never reused or renumbered (`nextNo` in `index.json` only grows; entries
 from before numbering got theirs oldest first). The page shows it on each

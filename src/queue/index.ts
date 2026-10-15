@@ -19,9 +19,13 @@ import type { ClipSpec } from "../clip/index.ts";
 import { ingest, readRegistry } from "../ingest/index.ts";
 import { cleanupUnverified } from "../render/controller/index.ts";
 import { imageRunning } from "../render/controller/processes.ts";
-import { recordFailure } from "../library/index.ts";
+import { recordFailure, writeJsonAtomic } from "../library/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
 import { prepareJob, runJobs, type JobResult, type PreparedJob } from "./job.ts";
+
+/** Demos marked processed by pnpm go --settle-existing: sha256 → when. pnpm go skips them. */
+const SETTLED = path.join(STATE_DIR, "settled.json");
+const readSettled = (): Record<string, string> => (existsSync(SETTLED) ? JSON.parse(readFileSync(SETTLED, "utf8")) : {});
 
 const LEDGER = path.join(STATE_DIR, "queue.json");
 const MAX_ATTEMPTS = 2; // the first try and one retry
@@ -41,20 +45,35 @@ export type BatchOptions = {
   repostOnly?: boolean;
   /** Test hook: end the process this many seconds into the first launched job (an interrupted run). */
   testExitAfterS?: number;
+  /** --settle-existing: mark every registered demo as processed (state/settled.json) and render nothing. */
+  settleExisting?: boolean;
 };
 export type BatchReport = {
   ingested: number; demos: number; selected: number;
   rendered: string[]; skipped: string[]; failed: string[]; givenUp: string[]; emptyDemos: string[]; demoErrors: string[];
   /** --repost: selected moments without a completed capture (a normal pnpm go renders them). */
   needsRender: string[];
+  /** Demos skipped because they are settled; --settle-existing: how many it settled now. */
+  settled: number; settledNow?: number;
   stoppedBy?: "refusal" | "cleanup"; pageError?: string;
 };
 
 /** Exit code: 0 ok, 1 a job or demo failed or was given up, 2 refused, 3 cleanup not verified. */
 export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchReport; code: number }> {
   // The whole batch refuses up front when CS2 runs: nothing is ingested or rendered.
-  if (!o.repostOnly && imageRunning("cs2.exe")) throw new Refusal("refusing: CS2 is already running");
-  const report: BatchReport = { ingested: 0, demos: 0, selected: 0, rendered: [], skipped: [], failed: [], givenUp: [], emptyDemos: [], demoErrors: [], needsRender: [] };
+  if (!o.repostOnly && !o.settleExisting && imageRunning("cs2.exe")) throw new Refusal("refusing: CS2 is already running");
+  const report: BatchReport = { ingested: 0, demos: 0, selected: 0, rendered: [], skipped: [], failed: [], givenUp: [], emptyDemos: [], demoErrors: [], needsRender: [], settled: 0 };
+  // --settle-existing: before ingest, so a demo still in the inbox is never settled unprocessed.
+  const settled = readSettled();
+  if (o.settleExisting) {
+    const now = new Date().toISOString();
+    let added = 0;
+    for (const d of Object.values(readRegistry())) if (!settled[d.sha256]) { settled[d.sha256] = now; added++; }
+    if (!o.dryRun) writeJsonAtomic(SETTLED, settled);
+    report.settledNow = added;
+    report.settled = Object.keys(settled).length;
+    return { report, code: 0 };
+  }
   const ing = await ingest();
   report.ingested = ing.added.length;
   for (const a of ing.added) console.log(`ingested ${a.originalName} → ${path.basename(a.file)}`);
@@ -67,7 +86,10 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   const queue: { demo: string; sha256: string; spec: ClipSpec }[] = [];
   const registry = Object.values(readRegistry()).sort((a, b) => a.addedAt.localeCompare(b.addedAt));
   report.demos = registry.length;
+  // Settled demos are done: their moments that were never rendered stay unrendered (Peder,
+  // 2026-10-15: rule changes apply from the next new demo, not retroactively).
   for (const d of registry) {
+    if (settled[d.sha256]) { report.settled++; continue; }
     try {
       const m = await buildMoments(d.file, pov);
       const picked = pickMoments(m.specs, batch);
