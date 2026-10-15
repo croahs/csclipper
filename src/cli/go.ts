@@ -48,6 +48,7 @@ async function main(): Promise<number> {
     }
     console.log(`already in the library: ${r.skipped.length}`);
     if (r.settled) console.log(`settled demos skipped: ${r.settled}`);
+    if (r.autoSettled.length) console.log(`settled now (pass finished): ${r.autoSettled.length} demo(s); rescoring adds no work for them (pnpm unsettle to reopen)`);
     if (r.emptyDemos.length) console.log(`no moment above the threshold: ${r.emptyDemos.join(", ")}`);
     for (const f of r.failed) console.log(`FAILED: ${f}`);
     for (const g of r.givenUp) console.log(`not retried (use --retry-failed): ${g}`);

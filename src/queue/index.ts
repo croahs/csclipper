@@ -61,6 +61,8 @@ export type BatchReport = {
   made: { kind: string; no?: number; title: string }[];
   /** Demos skipped because they are settled; --settle-existing: how many it settled now. */
   settled: number; settledNow?: number;
+  /** Demos this run settled because its pass over them finished (every selected moment rendered, held or failed for good). */
+  autoSettled: string[];
   stoppedBy?: "refusal" | "cleanup"; pageError?: string;
 };
 
@@ -68,7 +70,7 @@ export type BatchReport = {
 export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchReport; code: number }> {
   // The whole batch refuses up front when CS2 runs: nothing is ingested or rendered.
   if (!o.repostOnly && !o.settleExisting && imageRunning("cs2.exe")) throw new Refusal("refusing: CS2 is already running");
-  const report: BatchReport = { ingested: 0, demos: 0, selected: 0, rendered: [], skipped: [], failed: [], givenUp: [], emptyDemos: [], demoErrors: [], needsRender: [], made: [], settled: 0 };
+  const report: BatchReport = { ingested: 0, demos: 0, selected: 0, rendered: [], skipped: [], failed: [], givenUp: [], emptyDemos: [], demoErrors: [], needsRender: [], made: [], settled: 0, autoSettled: [] };
   // --settle-existing: before ingest, so a demo still in the inbox is never settled unprocessed.
   const settled = readSettled();
   if (o.settleExisting) {
@@ -96,7 +98,8 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   // Settled demos are done: their moments that were never rendered stay unrendered (Peder,
   // 2026-10-15: rule changes apply from the next new demo, not retroactively).
   for (const d of registry) {
-    if (settled[d.sha256]) { report.settled++; continue; }
+    // A repost only posts existing captures and never adds a render, so it looks at settled demos too.
+    if (settled[d.sha256] && !o.repostOnly) { report.settled++; continue; }
     try {
       const m = await buildMoments(d.file, pov);
       const picked = pickMoments(m.specs, batch);
@@ -121,8 +124,20 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   const reels = loadReels();
   let posting: Promise<void> = Promise.resolve();
   const kinds = o.noReels ? [] : (["deaths", "kills"] as const).filter((k) => reels[k].enabled);
+  // A finished pass settles its demo: later rescoring never adds work for it (only pnpm clip --rerender
+  // or pnpm unsettle do). Not on a dry run, a repost or a --no-reels pass (its reels are still owed),
+  // and not while a moment still has a retry left.
+  const settle = (sha: string) => {
+    if (o.dryRun || o.repostOnly || o.noReels) return;
+    const s = readSettled();
+    if (s[sha]) return;
+    s[sha] = new Date().toISOString();
+    writeJsonAtomic(SETTLED, s);
+    report.autoSettled.push(sha);
+  };
   demos: for (const [sha256, file] of demoFiles) {
     const items = queue.filter((q) => q.sha256 === sha256);
+    let open = false; // a moment of this demo failed in a way the next run retries
     type Ready = { unit: RenderUnit; kind: "highlight" | "deaths" | "kills"; key: string; prevStatus?: "running" | "done" | "failed"; attempts: number };
     const ready: Ready[] = [];
     for (const { demo, spec } of items) {
@@ -137,6 +152,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
         recordFailure(spec.id, { at: new Date().toISOString(), reasons: [reason], startTick: spec.startTick, endTick: spec.endTick, demo });
         report.failed.push(`${spec.title}: ${reason}`);
         code = Math.max(code, 1);
+        open = true;
         continue;
       }
       const key = `${prep.id}:${prep.renderKey}`;
@@ -167,6 +183,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
         recordFailure(`${kind}:${sha256}`, { at: new Date().toISOString(), reasons: [reason], startTick: 0, endTick: 0, demo: file });
         report.failed.push(`${kind} reel of ${path.basename(file)}: ${reason}`);
         code = Math.max(code, 1);
+        open = true;
         continue;
       }
       if (!unit) continue;
@@ -185,7 +202,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
       if (o.dryRun) { console.log(`would render: ${unit.title} (${unit.takes.length} takes)`); continue; }
       ready.push({ unit, kind, key, prevStatus: prev?.status, attempts: (prev?.attempts ?? 0) + 1 });
     }
-    if (!ready.length) continue;
+    if (!ready.length) { if (!open) settle(sha256); continue; }
     for (const r of ready) ledger[r.key] = { id: r.unit.id, renderKey: r.unit.renderKey, demoSha256: sha256, title: r.unit.title, status: "running", attempts: r.attempts, updatedAt: new Date().toISOString() };
     writeLedger(ledger);
     // Test hook, scoped to the first launch and cleared when it ends.
@@ -217,6 +234,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
       }
       writeLedger(ledger);
       code = Math.max(code, 1);
+      if (!open && ready.every((r) => r.attempts >= MAX_ATTEMPTS)) settle(sha256);
       if (cleanupUnverified()) { report.stoppedBy = "cleanup"; code = 3; break; }
       continue;
     }
@@ -231,18 +249,28 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
       else if (res.status === "skipped") report.skipped.push(res.title);
       else { report.failed.push(`${res.title}: ${res.reasons?.join("; ")}`); code = Math.max(code, 1); }
     };
+    // Final: rendered, held, or failed with no retry left.
+    const final = (r: Ready, res: JobResult) => res.status !== "failed" || r.attempts >= MAX_ATTEMPTS;
     const toPost: Ready[] = [];
+    let allFinal = !open;
     for (const [i, res] of results.entries()) {
       if (res.status === "captured") toPost.push(ready[i]);
-      else record(ready[i], res);
+      else { record(ready[i], res); if (!final(ready[i], res)) allFinal = false; }
     }
     writeLedger(ledger);
+    if (!toPost.length && allFinal) settle(sha256);
     // One post at a time: wait for the previous demo's, then start this one's and go on launching.
     if (toPost.length) {
       await posting;
       posting = postWorker(file, toPost.map((r) => ({ id: r.unit.id, title: r.unit.title, kind: r.kind }))).then((done) => {
-        for (const r of toPost) record(r, done.find((d) => d.id === r.unit.id) ?? { status: "failed", id: r.unit.id, title: r.unit.title, reasons: ["no result from the post worker"] });
+        let finalHere = allFinal;
+        for (const r of toPost) {
+          const res = done.find((d) => d.id === r.unit.id) ?? { status: "failed" as const, id: r.unit.id, title: r.unit.title, reasons: ["no result from the post worker"] };
+          record(r, res);
+          if (!final(r, res)) finalHere = false;
+        }
         writeLedger(ledger);
+        if (finalHere) settle(sha256);
       }).catch((e) => {
         // Never an unhandled rejection: it would end the process in the middle of the next launch.
         for (const r of toPost) report.failed.push(`${r.unit.title}: recording the post result failed: ${(e as Error).message}`);

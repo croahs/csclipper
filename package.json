@@ -18,7 +18,8 @@
     "victims": "tsx src/cli/reel.ts kills",
     "library": "tsx src/cli/library.ts",
     "drop": "tsx src/cli/drop.ts drop",
-    "trash": "tsx src/cli/drop.ts trash"
+    "trash": "tsx src/cli/drop.ts trash",
+    "unsettle": "tsx src/cli/unsettle.ts"
   },
   "dependencies": {
     "@laihoe/demoparser2": "^0.42.0",

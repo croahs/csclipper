@@ -40,7 +40,10 @@ otherwise and say so.
   settings or the method changed. Render keys exist to resume
   interrupted work and to skip what is already done, never to
   invalidate it. Re-rendering happens only on an explicit command that
-  names the clips.
+  names the clips. Likewise a demo is settled once a `pnpm go` pass over
+  it finishes (every selected moment rendered, held or failed for good):
+  rescoring later never adds work for it; only `pnpm clip --rerender` or
+  `pnpm unsettle` does (`state/settled.json`).
 - Done means verified on the surface Peder judges: the parsed table,
   the rendered mp4 played back, the library page opened from disk.
 - Claude-written changes get a Sol review before they are called done.

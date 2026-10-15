@@ -17,6 +17,7 @@ pnpm victims "<demo.dem>" [--timeout <s>] [--dry-run]
 pnpm library [--port <n>]
 pnpm drop <no>...
 pnpm trash --empty
+pnpm unsettle <demo sha256 prefix | clip no>...
 ```
 
 **Reels** (`src/reel/`). `pnpm go` makes two reels for every new demo, in
@@ -77,9 +78,13 @@ not failures; exit 1 means a source failed or ingest rejected a file.
 ingests the inbox, ranks every registered demo, renders the moments
 `config.json` → `batch` selects (every moment scoring at least `minScore`,
 40; when none in a demo does and `fallbackBest` is true, its single best)
-that the library does not hold yet (demos settled by `pnpm go
---settle-existing`, listed in `state/settled.json`, are skipped whole:
-rule changes apply from the next new demo, not to old ones), with one CS2 launch per demo for all
+that the library does not hold yet (settled demos, listed in
+`state/settled.json`, are skipped whole: a demo is settled when a pass
+over it finishes, with every selected moment rendered, held or failed
+for good (not on a dry run, a repost or a `--no-reels` pass), or by
+`pnpm go --settle-existing`; rule changes apply from the
+next new demo, never to settled ones; `pnpm unsettle <hash prefix | clip
+no>` reopens one), with one CS2 launch per demo for all
 of them (chained takes, below), and rewrites
 `library/index.html` (open it from disk). It refuses to start while CS2 runs
 and stops the whole batch on the first guard refusal (exit 2) or unverified
