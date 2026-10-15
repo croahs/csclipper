@@ -150,8 +150,9 @@ For each moment above a threshold (or top N per demo):
   before the first kill (your first `weapon_fire`, or damage dealt or
   taken), minus 2 s of lead-in.
 - `end_tick` = the moment's outcome event, not just its last kill: the
-  last kill + 2.5 s, or the defuse/plant/round end that resolves a
-  clutch, capped at round end + 1 s.
+  last kill + 5.5 s (Peder raised it from 2.5 s on 2026-10-15: clips
+  ended too abruptly), or the defuse/plant/round end that resolves a
+  clutch, whichever is later, capped at round end + 1 s.
 - Overlapping moments merge. A moment is never cut short: every kill
   in it and its outcome event are inside the captured span, however
   long. Length is controlled in post instead: stretches with no action
