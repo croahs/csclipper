@@ -9,7 +9,7 @@ import type { ClipRules } from "../config.ts";
 
 const ENGAGE_WINDOW_S = 5; // engagement signals this far before the first kill
 // Lead-in (before the engagement start) and tail (after the last kill): config.json → clip.
-const OUTCOME_TAIL_S = 1; // after a clutch's resolving event, and past round end at most
+const OUTCOME_TAIL_S = 1; // after a clutch's resolving event
 const OUTCOME_MAX_S = 25; // a POV plant/defuse this long after the last kill still resolves the clutch
 const ROUND_END_FOLLOWS_S = 5; // a round end this soon after the last kill is its outcome
 // Action windows: around each POV kill, damage dealt or taken, weapon fire and the outcome event.
@@ -92,7 +92,13 @@ function bounds(p: ParsedDemo, r: Round, m: Moment, rules: ClipRules): { start: 
     outcome = bomb ? bomb.tick : r.endTick - last <= ROUND_END_FOLLOWS_S * t ? r.endTick : last;
     end = Math.max(end, outcome + OUTCOME_TAIL_S * t);
   }
-  return { start: Math.round(start), end: Math.round(Math.min(end, r.endTick + OUTCOME_TAIL_S * t)), outcome, engage };
+  // The tail is always honoured, past the round end too (win banner, freeze time); the only cap is
+  // the next round's start (Peder, 2026-10-15: a round-ending last kill used to get 1 s, not 5.5).
+  const next = p.rounds.find((x) => x.n === r.n + 1);
+  // After the last round: the demo's end, less room for the capture margin. Never below round end + 1 s
+  // (a demo without round_start between two rounds gives the next round no real start).
+  const cap = Math.max(next ? next.startTick : p.demo.playbackTicks - 64, r.endTick + OUTCOME_TAIL_S * t);
+  return { start: Math.round(start), end: Math.round(Math.min(end, cap)), outcome, engage };
 }
 
 /**

@@ -14,10 +14,10 @@ export type Weights = {
   tightness: { windowSeconds: number; perKillBeyondTwo: number };
   clutch: { perEnemy: number; wonBonus: number; lostFactor: number };
   flags: { headshot: number; wallbang: number; thrusmoke: number; attackerblind: number };
-  style: { oneBulletKill: number; flick: number; flickMinDegrees: number; bigFlick: number; bigFlickMinDegrees: number; noscope: number; airborne: number };
+  style: { oneBulletKill: number; flick: number; flickMinDegrees: number; bigFlick: number; bigFlickMinDegrees: number; noscope: number; airborne: number; facing: number; behind: number; facingMaxDegrees: number };
   economy: { perLnRatio: number; min: number; max: number; pistolRounds: number[] };
   weaponMultiplier: Record<WeaponClass, number>;
-  roundWon: number;
+  roundOutcome: { won: number; lost: number };
   lowHp: { threshold: number; penaltyPerKill: number };
   threshold: number;
   includeOvertime: boolean;
@@ -138,17 +138,22 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
     const yaw = p.flicks.find((x) => x.killTick === k.tick)?.yawDegrees ?? 0;
     if (yaw >= st.bigFlickMinDegrees) f *= st.bigFlick;
     else if (yaw > st.flickMinDegrees) f *= st.flick;
+    // Facing: the victim looking at him (harder) or away (easier); unknown counts 1.
+    if (k.victimFacingDeg !== undefined) f *= k.victimFacingDeg <= st.facingMaxDegrees ? st.facing : st.behind;
     return f;
   });
   const extra = factor.reduce((a, f) => a + (f - 1), 0) / n; // the average factor beyond 1
-  if (extra > 0) b.style = Math.round(b.kills * extra * 10) / 10;
-  if (roundWon) b.roundWon = w.roundWon;
+  if (extra !== 0) b.style = Math.round(b.kills * extra * 10) / 10;
+
   const low = kills.filter((k) => k.victimHpBefore <= w.lowHp.threshold).length;
   if (low) b.lowHp = -low * w.lowHp.penaltyPerKill;
-  // Economy: the round's score scaled by the buy difference at freeze end; `economy` holds the change.
+  // Round factors on the round's whole score, each part showing its change: economy (the buy
+  // difference at freeze end), then the outcome (won or lost).
   const eco = economyFactor(p, kills[0]?.round, w);
   const sum = Object.values(b).reduce((a, x) => a + x, 0);
   if (eco !== 1) b.economy = Math.round(sum * (eco - 1) * 10) / 10;
+  const outcome = roundWon ? w.roundOutcome.won : w.roundOutcome.lost;
+  if (outcome !== 1) b.outcome = Math.round(sum * eco * (outcome - 1) * 10) / 10;
   return { score: Math.round(Object.values(b).reduce((a, x) => a + x, 0) * 10) / 10, breakdown: b };
 }
 

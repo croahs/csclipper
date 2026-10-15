@@ -114,6 +114,21 @@ test("economy scales the whole score; breakdown.economy is the change", () => {
   const base = scoreKills(even, ks, undefined, false, w);
   const eco = scoreKills(p, ks, undefined, false, w);
   assert.equal(base.breakdown.economy, undefined, "parity: no change");
-  assert.equal(eco.breakdown.economy, Math.round(base.score * (w.economy.max - 1) * 10) / 10);
+  // Both rounds were lost, so both scores also carry the outcome factor; economy is the change on the parts' sum.
+  const sum = base.score / w.roundOutcome.lost;
+  assert.ok(Math.abs(eco.breakdown.economy! - sum * (w.economy.max - 1)) < 0.2);
   assert.ok(Math.abs(eco.score - base.score * w.economy.max) < 0.2);
+});
+
+test("round outcome: x1.1 won, x0.9 lost, on the whole score", () => {
+  const ks = [kill(0), kill(2000)];
+  const won = scoreKills(demo(), ks, undefined, true, w).score, lost = scoreKills(demo(), ks, undefined, false, w).score;
+  assert.ok(Math.abs(won / lost - w.roundOutcome.won / w.roundOutcome.lost) < 0.01, `won ${won} lost ${lost}`);
+});
+
+test("facing: within 60 degrees x1.1, from behind x0.9, unknown x1", () => {
+  const at = (deg?: number) => scoreKills(demo(), [kill(0, { victimFacingDeg: deg })], undefined, false, w).breakdown.style;
+  assert.equal(at(30), Math.round(w.killBase["1"] * (w.style.facing - 1) * 10) / 10);
+  assert.equal(at(120), Math.round(w.killBase["1"] * (w.style.behind - 1) * 10) / 10, "negative: a kill from behind");
+  assert.equal(at(undefined), undefined);
 });
