@@ -46,9 +46,9 @@ test("a 3k in 4 s beats a 3k over 40 s by a visible margin; a quick 2k gains onl
   assert.equal(scoreKills(demo(), [kill(0), kill(128)], undefined, false, w).breakdown.tight, undefined);
 });
 
-test("style multiplies each kill's share: two one-tap flicks about double a plain 2k; a fully stylish 1k stays below a 3k", () => {
+test("style multiplies each kill's share: two one-tap flicks about double a plain 2k; a fully stylish 1k stays below a strong 3k", () => {
   const plain = scoreKills(demo(), [kill(0), kill(2000)], undefined, false, w).score;
-  const flicks = [0, 2000].map((t) => ({ killTick: t, yawDegrees: 90 }));
+  const flicks = [0, 2000].map((t) => ({ killTick: t, yawDegrees: 30 }));
   const stylish = scoreKills(demo({ fires: [0, 2000], flicks }), [kill(0), kill(2000)], undefined, false, w);
   assert.equal(stylish.breakdown.style, Math.round(w.killBase["2"] * (w.style.oneBulletKill * w.style.flick - 1) * 10) / 10);
   assert.ok(stylish.score >= 1.8 * plain, `stylish ${stylish.score} vs plain ${plain}`);
@@ -56,15 +56,27 @@ test("style multiplies each kill's share: two one-tap flicks about double a plai
   const mixed = scoreKills(demo({ fires: [2000] }), [kill(0), kill(2000)], undefined, false, w);
   assert.equal(mixed.breakdown.style, Math.round(mixed.breakdown.kills * (w.style.oneBulletKill - 1) / 2 * 10) / 10);
   const all = { noscope: true, airborne: true };
-  const one = scoreKills(demo({ fires: [0], flicks: [{ killTick: 0, yawDegrees: 90 }] }), [kill(0, all)], undefined, false, w).score;
+  const one = scoreKills(demo({ fires: [0], flicks: [{ killTick: 0, yawDegrees: 30 }] }), [kill(0, all)], undefined, false, w).score;
   const three = scoreKills(demo(), [kill(0), kill(1280), kill(2560)], undefined, false, w).score;
   assert.ok(one < three, `stylish 1k ${one} vs spread 3k ${three}`);
+  // With a big flick (45 degrees or more) the same 1k can pass a spread 3k, but not a strong (quick) 3k.
+  const big = scoreKills(demo({ fires: [0], flicks: [{ killTick: 0, yawDegrees: 60 }] }), [kill(0, all)], undefined, false, w).score;
+  const quick = scoreKills(demo(), [kill(0), kill(128), kill(256)], undefined, false, w).score;
+  assert.ok(big < quick, `big-flick 1k ${big} vs quick 3k ${quick}`);
 });
 
 test("grenade throws and knife swings are not bullets; an inferno kill is not a one-bullet kill", () => {
   const p = { ...demo(), fires: [{ tick: 50, round: 1, player: ME, weapon: "hegrenade" }, { tick: 100, round: 1, player: ME, weapon: "ak47" }] } as unknown as ParsedDemo;
   assert.equal(scoreKills(p, [kill(100)], undefined, false, w).breakdown.style, Math.round(w.killBase["1"] * (w.style.oneBulletKill - 1) * 10) / 10, "the grenade does not count");
   assert.equal(scoreKills(demo({ fires: [100] }), [kill(100, { weapon: "inferno" })], undefined, false, w).breakdown.style, undefined);
+});
+
+test("flick tiers: 15-45 degrees the flick factor, 45 or more the big-flick factor instead", () => {
+  const at = (deg: number) => scoreKills(demo({ flicks: [{ killTick: 100, yawDegrees: deg }] }), [kill(100)], undefined, false, w).breakdown.style;
+  const share = w.killBase["1"];
+  assert.equal(at(30), Math.round(share * (w.style.flick - 1) * 10) / 10);
+  assert.equal(at(45), Math.round(share * (w.style.bigFlick - 1) * 10) / 10);
+  assert.equal(at(90), at(45));
 });
 
 test("one-bullet kills count guns only; flicks below the threshold multiply nothing", () => {

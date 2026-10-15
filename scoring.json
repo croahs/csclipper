@@ -10,7 +10,8 @@
     "2026-10-15 recalibrated (Peder: keep minScore 40; anchor: the moments that scored about 40 in the 46-moment batch must land about 40 again, and a plain 2k must not gain a flat 18): tightness pays only from the third kill in the 6 s window (perKillBeyondTwo 15), allWithin bonus removed; a 2k scores as before (its pace is in speed), a 3k in 4 s still beats a 3k over 40 s by about 19",
     "2026-10-15 style as per-kill multipliers (Peder): the capped flat light bonuses are replaced by factors on each kill's share of the kill base: one-bullet kill 1.5, flick over 25 degrees 1.5, no-scope 1.4, airborne 1.3, stacking on the kill. Two one-tap flicks in a 2k score about double a plain 2k (kills 30 -> 67.5); a single kill with every style is about 41, below any strong 3k; plain kills keep factor 1, so the minScore 40 anchor holds",
     "2026-10-15 economy multiplier per round (Peder): the round's score times a capped function of enemy/own equipment value at freeze end (1 + 0.2 ln ratio, within 0.7..1.4); a farmed eco counts less, an eco won against a full buy more; within 25 percent of parity it moves the score at most 5 percent, so the minScore 40 anchor holds; pistol rounds 1 and 13 are parity",
-    "2026-10-15 flickMinDegrees 25 -> 15 (Peder): on the 29 stored demos only 2 of 531 gun kills turned more than 25 degrees into the kill shot, 8 more than 15; at 25 the flick almost never counted"
+    "2026-10-15 flickMinDegrees 25 -> 15 (Peder): on the 29 stored demos only 2 of 531 gun kills turned more than 25 degrees into the kill shot, 8 more than 15; at 25 the flick almost never counted",
+    "2026-10-15 two flick tiers (Peder): 15-45 degrees keeps flick 1.5; 45 degrees or more is a big flick, bigFlick 2.5 on that kill. On the 29 stored demos no gun kill reaches 45 (max 35 of 531), so nothing moves today"
   ],
   "killBase": {
     "1": 10,
@@ -42,10 +43,12 @@
     "attackerblind": 8
   },
   "style": {
-    "_note": "per-kill multipliers on that kill's share of the kill base; they stack on the kill (a one-tap flick is 1.5 x 1.5 = 2.25). A kill with none is 1.0, so plain rounds keep their scores",
+    "_note": "per-kill multipliers on that kill's share of the kill base; they stack on the kill (a one-tap flick is 1.5 x 1.5 = 2.25). A flick of bigFlickMinDegrees or more counts bigFlick instead of flick. A kill with none is 1.0, so plain rounds keep their scores",
     "oneBulletKill": 1.5,
     "flick": 1.5,
     "flickMinDegrees": 15,
+    "bigFlick": 2.5,
+    "bigFlickMinDegrees": 45,
     "noscope": 1.4,
     "airborne": 1.3
   },

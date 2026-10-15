@@ -14,7 +14,7 @@ export type Weights = {
   tightness: { windowSeconds: number; perKillBeyondTwo: number };
   clutch: { perEnemy: number; wonBonus: number; lostFactor: number };
   flags: { headshot: number; wallbang: number; thrusmoke: number; attackerblind: number };
-  style: { oneBulletKill: number; flick: number; flickMinDegrees: number; noscope: number; airborne: number };
+  style: { oneBulletKill: number; flick: number; flickMinDegrees: number; bigFlick: number; bigFlickMinDegrees: number; noscope: number; airborne: number };
   economy: { perLnRatio: number; min: number; max: number; pistolRounds: number[] };
   weaponMultiplier: Record<WeaponClass, number>;
   roundWon: number;
@@ -134,7 +134,10 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
     const from = i > 0 ? kills[i - 1].tick : k.tick - ENGAGE_S * tickrate;
     const bullets = p.fires.filter((x) => x.player === me && x.round === k.round && x.tick > from && x.tick <= k.tick && !NOT_A_GUN.test(x.weapon)).length;
     if (bullets === 1 && !NOT_A_GUN.test(k.weapon)) f *= st.oneBulletKill;
-    if ((p.flicks.find((x) => x.killTick === k.tick)?.yawDegrees ?? 0) > st.flickMinDegrees) f *= st.flick;
+    // Two flick tiers: a big flick (bigFlickMinDegrees or more) instead of a normal one.
+    const yaw = p.flicks.find((x) => x.killTick === k.tick)?.yawDegrees ?? 0;
+    if (yaw >= st.bigFlickMinDegrees) f *= st.bigFlick;
+    else if (yaw > st.flickMinDegrees) f *= st.flick;
     return f;
   });
   const extra = factor.reduce((a, f) => a + (f - 1), 0) / n; // the average factor beyond 1
