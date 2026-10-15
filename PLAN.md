@@ -377,6 +377,15 @@ with the same HUD, crosshair and TrueView rules, a small overlay per
 death (round, weapon, killer), concatenated with short fades into one
 library clip with its own number. All takes in one launch.
 
+**Victims reel** (decided 2026-10-15, after the deaths reel). The
+mirror image: one clip per demo showing every kill of Peder's from
+the victim's first person, 10 s before to 4 s after, same overlay and
+concatenation. Takes overlap when kills are close, so the chained
+controller must seek backwards between takes (a backward
+`demo_gototick` rewinds and fast-forwards internally; slower, works).
+After the victim's death the take shows what the game gives a dead
+player, normally the death camera; that is accepted.
+
 **M4. Sources and polish.** FACEIT auto-download, overlays, killfeed,
 montage builder, OBS fallback, Valve GC download, deferred scoring
 signals.
