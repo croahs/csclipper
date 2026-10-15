@@ -39,8 +39,9 @@ not failures; exit 1 means a source failed or ingest rejected a file.
 `pnpm go` is the one command: drop demos (`.dem`, or `.zip` / `.bz2` /
 `.gz` / `.zst`) into `demos/inbox/`, run it, come back to clips. It
 ingests the inbox, ranks every registered demo, renders the moments
-`config.json` → `batch` selects (score at least `minScore`, at most `topN`
-per demo) that the library does not hold yet, and rewrites
+`config.json` → `batch` selects (every moment scoring at least `minScore`,
+40; when none in a demo does and `fallbackBest` is true, its single best)
+that the library does not hold yet, and rewrites
 `library/index.html` (open it from disk). It refuses to start while CS2 runs
 and stops the whole batch on the first guard refusal (exit 2) or unverified
 cleanup (exit 3); exit 1 means a job or demo failed (`state/failures.json`).
@@ -90,7 +91,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `state/demos.json`, `state/queue.json`, `state/sources/<name>.json` | demo registry; job ledger; each source's progress |
 | `src/parse/demo.ts` | per-demo extraction, cached in `state/<demo sha256>/parse.json` |
 | `src/parse/clip-facts.ts` | what one render needs: tickrate, demo hash, map, POV slot at the clip's ticks, round |
-| `src/score/index.ts` | round context (1vX), kill clusters, scoring |
+| `src/score/index.ts` | round context (1vX), one moment per round, scoring |
 | `src/clip/` | clip specs (`index.ts`: boundaries, merge, action windows, id, title); `moments.ts` writes `moments.json` / `moments.txt` |
 | `src/render/controller/` | `index.ts` state machine, `guards.ts`, `processes.ts`, `cfg.ts` |
 | `src/render/capture/hlae.ts` | HLAE launch arguments and `mirv_streams` lines |

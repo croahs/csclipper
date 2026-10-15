@@ -26,12 +26,18 @@ export type RenderSettings = {
   fadeSeconds: number;
 };
 
-/** Which moments the batch renders per demo: score >= minScore, at most topN. */
-export type BatchSettings = { topN: number; minScore: number };
+/** Which moments the batch renders per demo: every one scoring minScore or more; none → the best one if fallbackBest. */
+export type BatchSettings = { minScore: number; fallbackBest: boolean };
 export function loadBatch(file = path.join(ROOT, "config.json")): BatchSettings {
   const b = JSON.parse(readFileSync(file, "utf8")).batch as BatchSettings;
-  if (!Number.isInteger(b?.topN) || b.topN < 0 || typeof b.minScore !== "number") throw new Error("config.json batch needs topN (integer >= 0) and minScore (number)");
-  return b;
+  if (typeof b?.minScore !== "number" || typeof b.fallbackBest !== "boolean") throw new Error("config.json batch needs minScore (number) and fallbackBest (true/false)");
+  return { minScore: b.minScore, fallbackBest: b.fallbackBest };
+}
+
+/** The batch's pick from a demo's ranked specs (best first). */
+export function pickMoments<T extends { score: number }>(ranked: T[], b: BatchSettings): T[] {
+  const over = ranked.filter((s) => s.score >= b.minScore);
+  return over.length || !b.fallbackBest ? over : ranked.slice(0, 1);
 }
 
 /**

@@ -17,7 +17,7 @@ import { readFileInfo } from "./fileinfo.ts";
 const require = createRequire(import.meta.url);
 const dp = require("@laihoe/demoparser2");
 
-const SCHEMA = 2;
+const SCHEMA = 4; // 3: airborne on deaths, POV flicks; 4: flicks from gunshots only
 const REGULATION_ROUNDS = 24; // MR12; later match rounds are overtime
 
 export type Team = "T" | "CT";
@@ -25,7 +25,11 @@ export type Death = {
   tick: number; round: number; attacker: string | null; victim: string; assister: string | null;
   weapon: string; headshot: boolean; penetrated: boolean; noscope: boolean; thrusmoke: boolean; attackerblind: boolean;
   distance: number; victimHpBefore: number; // victim's health before the killing hit (100 if unhurt this round)
+  airborne: boolean; // attackerinair on the death event
 };
+// The POV's view turn before each of his gun kills: the largest yaw change from 100-200 ms
+// before the kill shot (his last gunshot at or before the kill, within 1 s) to the shot itself.
+export type Flick = { killTick: number; shotTick: number; yawDegrees: number };
 export type Hurt = { tick: number; round: number; attacker: string | null; victim: string; dmg: number; health: number; weapon: string };
 export type Fire = { tick: number; round: number; player: string; weapon: string };
 export type BombEvent = { tick: number; round: number; player: string; kind: "planted" | "defused" };
@@ -52,12 +56,15 @@ export type ParsedDemo = {
   // Events are owned by the round they follow, up to the next round's start;
   // post-round events (after endTick) are kept, and scoring cuts at endTick.
   deaths: Death[]; hurts: Hurt[]; fires: Fire[]; bombs: BombEvent[]; blinds: Blind[];
+  flicks: Flick[];
 };
 
 const sid = (v: unknown) => (typeof v === "string" && /^\d{17}$/.test(v) ? v : null);
 const teamOf = (n: number): Team | null => (n === 2 ? "T" : n === 3 ? "CT" : null);
 const winnerOf = (w: unknown): Team | null => (w === "T" || w === "CT" ? w : null);
 const isKnife = (w: string) => w.startsWith("knife") || w === "bayonet";
+/** Weapons whose weapon_fire or kill is not a gunshot: knives, grenades and their fire, the bomb. */
+export const NOT_A_GUN = /^(knife|bayonet|hegrenade|flashbang|smokegrenade|molotov|incgrenade|inferno|decoy|c4|planted_c4|world)/;
 
 export function parseDir(sha256: string) {
   return path.join(STATE_DIR, sha256);
@@ -126,6 +133,7 @@ function extract(demo: string, sha256: string, pov: string, key: string): Parsed
       weapon: d.weapon, headshot: !!d.headshot, penetrated: (d.penetrated ?? 0) > 0, noscope: !!d.noscope,
       thrusmoke: !!d.thrusmoke, attackerblind: !!d.attackerblind, distance: d.distance ?? 0,
       victimHpBefore: prior.length ? prior[prior.length - 1].health : 100,
+      airborne: !!d.attackerinair,
     };
   });
   const fires: Fire[] = inMatch(dp.parseEvent(demo, "weapon_fire", [], []) as any[]).map((f) => ({ tick: f.tick, round: roundAt(f.tick), player: f.user_steamid, weapon: f.weapon }));
@@ -134,6 +142,24 @@ function extract(demo: string, sha256: string, pov: string, key: string): Parsed
     ...inMatch(dp.parseEvent(demo, "bomb_defused", [], []) as any[]).map((b) => ({ tick: b.tick, round: roundAt(b.tick), player: b.user_steamid, kind: "defused" as const })),
   ].sort((a, b) => a.tick - b.tick);
   const blinds: Blind[] = inMatch(dp.parseEvent(demo, "player_blind", [], []) as any[]).map((b) => ({ tick: b.tick, round: roundAt(b.tick), attacker: sid(b.attacker_steamid), victim: b.user_steamid, duration: b.blind_duration }));
+
+  // Flicks: the POV's yaw over the 100-200 ms before each kill shot (his last gunshot within 1 s
+  // before a gun kill; none, no flick), one parse for all of them. Offsets stay inside the window.
+  const FLICK_FROM = Math.ceil(0.1 * TICKRATE), FLICK_TO = Math.floor(0.2 * TICKRATE);
+  const shots = deaths.filter((d) => d.attacker === pov && !NOT_A_GUN.test(d.weapon)).flatMap((d) => {
+    const shot = fires.filter((f) => f.player === pov && f.round === d.round && f.tick <= d.tick && f.tick >= d.tick - TICKRATE && !NOT_A_GUN.test(f.weapon)).at(-1);
+    return shot ? [{ killTick: d.tick, shotTick: shot.tick }] : [];
+  });
+  const yawTicks = [...new Set(shots.flatMap((s) => Array.from({ length: FLICK_TO + 1 }, (_, i) => s.shotTick - i)))].filter((t) => t > 0);
+  const yaw = new Map<number, number>();
+  if (yawTicks.length) for (const row of dp.parseTicks(demo, ["yaw"], yawTicks, [pov]) as { tick: number; yaw: number }[]) yaw.set(row.tick, row.yaw);
+  const turn = (a: number, b: number) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
+  const flicks: Flick[] = shots.map((s) => {
+    const at = yaw.get(s.shotTick);
+    let max = 0;
+    for (let k = FLICK_FROM; k <= FLICK_TO; k++) { const before = yaw.get(s.shotTick - k); if (at !== undefined && before !== undefined) max = Math.max(max, turn(at, before)); }
+    return { ...s, yawDegrees: Math.round(max * 10) / 10 };
+  });
 
   for (const r of rounds) {
     // A knife round: shots were fired and every one was a knife swing.
@@ -151,7 +177,7 @@ function extract(demo: string, sha256: string, pov: string, key: string): Parsed
   return {
     schema: SCHEMA, key,
     demo: { path: demo, sha256, map: String(header.map_name), patch: String(header.patch_version), tickrate: TICKRATE, playbackTicks: info.playback_ticks },
-    identity, matchStartTick, preMatchRounds, rounds, deaths, hurts, fires, bombs, blinds,
+    identity, matchStartTick, preMatchRounds, rounds, deaths, hurts, fires, bombs, blinds, flicks,
   };
 }
 

@@ -70,7 +70,7 @@ function title(map: string, round: number, kills: Death[], clutch?: Clutch): str
 }
 
 /** Boundaries for one moment, before merging; outcome: the tick of what resolves it. */
-function bounds(p: ParsedDemo, r: Round, m: Moment, rules: ClipRules): { start: number; end: number; outcome: number } {
+function bounds(p: ParsedDemo, r: Round, m: Moment, rules: ClipRules): { start: number; end: number; outcome: number; engage: number } {
   const t = p.demo.tickrate;
   const me = p.identity.steamid;
   const first = m.kills[0].tick;
@@ -92,7 +92,7 @@ function bounds(p: ParsedDemo, r: Round, m: Moment, rules: ClipRules): { start: 
     outcome = bomb ? bomb.tick : r.endTick - last <= ROUND_END_FOLLOWS_S * t ? r.endTick : last;
     end = Math.max(end, outcome + OUTCOME_TAIL_S * t);
   }
-  return { start: Math.round(start), end: Math.round(Math.min(end, r.endTick + OUTCOME_TAIL_S * t)), outcome };
+  return { start: Math.round(start), end: Math.round(Math.min(end, r.endTick + OUTCOME_TAIL_S * t)), outcome, engage };
 }
 
 /**
@@ -135,8 +135,9 @@ export function clipSpecs(p: ParsedDemo, ms: Moment[], w: Weights, rules: ClipRu
   const drafts: Draft[] = ms.map((m) => {
     const b = bounds(p, p.rounds.find((r) => r.n === m.round)!, m, rules);
     const last = m.kills[m.kills.length - 1].tick;
-    // The tail after the last kill plays in full even when a later clutch outcome extends the span.
-    const tails = [{ startTick: last, endTick: Math.round(last + rules.tailSeconds * p.demo.tickrate) }];
+    // The lead-in (span start to the engagement) and the tail after the last kill always play in full,
+    // even when other actions or a later clutch outcome sit around them.
+    const tails = [{ startTick: b.start, endTick: b.engage }, { startTick: last, endTick: Math.round(last + rules.tailSeconds * p.demo.tickrate) }];
     return { round: m.round, kills: m.kills, clutch: m.clutch, roundWon: m.roundWon, start: b.start, end: b.end, outcomes: [b.outcome], tails };
   });
   // Merge overlapping drafts of the same round.
@@ -154,7 +155,7 @@ export function clipSpecs(p: ParsedDemo, ms: Moment[], w: Weights, rules: ClipRu
   }
   // No cap: a moment is never cut short (PLAN.md §4); post fast-forwards the stretches without action.
   const specs = merged.map((d) => {
-    const s = scoreKills(d.kills, d.clutch, d.roundWon, w, t);
+    const s = scoreKills(p, d.kills, d.clutch, d.roundWon, w);
     return {
       id: clipId(p.demo.sha256, d.round, d.start, d.end),
       rank: 0,

@@ -15,8 +15,8 @@
     "tailSeconds": 5.5
   },
   "batch": {
-    "topN": 2,
-    "minScore": 40
+    "minScore": 40,
+    "fallbackBest": true
   },
   "sources": {
     "faceit": {

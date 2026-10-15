@@ -82,6 +82,24 @@ const str = (o: Record<string, unknown>, k: string, what: string): string => {
 };
 type HistoryItem = { matchId: string; finishedAt?: number; status?: string };
 
+/**
+ * When each FACEIT match finished (unix seconds), by match id: state/sources/matches.json,
+ * written whenever a source lists match history (not on dry runs). The library page groups
+ * clips by match with it; a demo of any source carries its match id in its file name.
+ */
+export function recordMatchDates(ctx: SourceContext, items: HistoryItem[]) {
+  if (ctx.dryRun) return;
+  const file = path.join(path.dirname(ctx.stateFile), "matches.json");
+  const known: Record<string, number> = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+  let changed = false;
+  for (const it of items) if (it.finishedAt && known[it.matchId] !== it.finishedAt) { known[it.matchId] = it.finishedAt; changed = true; }
+  if (!changed) return;
+  mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmp, JSON.stringify(known, null, 1) + "\n");
+  renameSync(tmp, file);
+}
+
 /** The first error code in a FACEIT error body ({"errors":[{"code":…}]}), if any. */
 function errorCode(body: unknown): string | undefined {
   const errs = body && typeof body === "object" ? (body as { errors?: unknown }).errors : undefined;
@@ -193,6 +211,7 @@ export function faceitSource(o: FaceitOptions): Source {
           if (!MATCH_ID.test(matchId)) throw new Error(`FACEIT match history: match id with an unexpected form: ${JSON.stringify(matchId.slice(0, 80))}`);
           return { matchId, finishedAt: typeof it.finished_at === "number" ? it.finished_at : undefined, status: typeof it.status === "string" ? it.status : undefined };
         });
+        recordMatchDates(ctx, items);
         for (const it of items) {
           if (firstRun && fresh.length >= o.maxMatchesPerRun) { olderNeighbour = it.matchId; found = true; break; }
           if (it.matchId === state.lastMatchId) { found = true; break; }
@@ -386,6 +405,7 @@ export function faceitBackfill(o: BackfillOptions): Source {
         }
         if (body.items.length < HISTORY_PAGE) break;
       }
+      recordMatchDates(ctx, items);
       const inbox = existsSync(ctx.inbox) ? readdirSync(ctx.inbox).filter((n) => !n.startsWith(".")) : [];
       const held = (id: string) => o.haveMatch(id) || inbox.some((n) => n.includes(id));
       const known = new Map(items.map((m) => [m.matchId, m]));

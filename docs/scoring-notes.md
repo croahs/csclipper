@@ -17,11 +17,12 @@ launch. `pnpm clip "<demo.dem>" --top <n>` renders the n-th row.
 
 ## How a score is built
 
-A moment is a kill cluster in one round: the POV player's kills with at
-most `clusterGapSeconds` between consecutive kills. A clutch is a round
-property: from the moment the POV is the last one alive on the team with
-enemies alive (1vX), all later kills, plus any cluster chaining into it,
-form one clutch moment. Knife rounds and pre-match rounds never count;
+A moment is one round: all of the POV player's kills in it, however far
+apart (Peder, 2026-10-15), so a 5k is always one clip and the stretches
+between kills are fast-forwarded in post. Quick succession is scored, not
+used to split: see `tight` below. The clutch state (1vX: the POV the last
+one alive on the team with enemies alive) is a property of the round.
+Knife rounds and pre-match rounds never count;
 overtime only with `includeOvertime`. Teamkills, suicides and kills after
 the round end do not count. A moment needs at least one POV kill.
 
@@ -30,11 +31,17 @@ the round end do not count. A moment needs at least one POV kill.
 | Part | From `scoring.json` | Meaning |
 |---|---|---|
 | kills | `killBase[n]` × `weaponMultiplier[class]` | 1k…5k, times the class most of its kills used (pistol, deagle, scout, smg, shotgun, rifle, awp, knife) |
-| speed | `speed` | (referenceSeconds − average seconds between kills) × pointsPerSecondFaster, 0…max |
+| speed | `speed` | on the tightest run (below): (referenceSeconds − its average seconds between kills) × pointsPerSecondFaster, 0…max |
+| tight | `tightness` | the most kills inside any `windowSeconds` (6 s) window (ties: the fastest): `perKillInWindow` for each beyond the first; plus `allWithinBonus` when all kills fall within `allWithinSeconds`. A 3k in 4 s gets about 30 more than a 3k over 40 s, and both stay one clip |
 | clutch | `clutch` | vs × perEnemy, + wonBonus when won; × lostFactor when lost |
-| flags | `flags` | per kill: headshot, wallbang, no-scope, through smoke, while blind |
+| flags | `flags` | per kill: headshot, wallbang, through smoke, while blind |
+| light | `light` | small bonuses, capped together at `maxPerMoment` (8: well below the 20+ base points between kill counts, though with weapon multipliers a capped round can pass one with a kill more by a few points, e.g. a spread knife 2k with an airborne kill over a spread AWP 3k): per kill a no-scope, an airborne kill (`attackerinair`), a one-bullet kill (POV gun `weapon_fire` count since the previous kill, or 5 s before the first, is 1), and a flick on a gun kill (the largest POV yaw turn from 100–200 ms before the kill shot, his last gunshot within 1 s, to the shot, wrapped; none without a gunshot; above `flick.minDegrees` 25°, `pointsPer10Degrees` up to `maxPerKill`) |
 | roundWon | `roundWon` | the POV's team won the round |
 | lowHp | `lowHp` | − penaltyPerKill for each victim at or below threshold HP before the killing hit |
+
+Known confounders of the flick signal: recoil (a spray pulls the view, though
+mostly in pitch) and strafing while turning both add yaw that is not a
+flick; the threshold and the small cap keep their effect minor.
 
 `threshold` marks moments as `aboveThreshold` in `moments.json`.
 
@@ -45,9 +52,9 @@ the round end do not count. A moment needs at least one POV kill.
    (which moment moved, and in which demo), re-run. Parsing is cached, so a
    re-run takes seconds.
 3. Typical levers: a clutch that ranks above a cleaner multikill → lower
-   `clutch.perEnemy` or raise `lowHp.penaltyPerKill`; spread-out multikills
-   splitting into singles → raise `clusterGapSeconds`; pistol rounds too
-   high → lower `weaponMultiplier.pistol`.
+   `clutch.perEnemy` or raise `lowHp.penaltyPerKill`; spread-out rounds
+   ranking too close to tight ones → raise `tightness.perKillInWindow`;
+   pistol rounds too high → lower `weaponMultiplier.pistol`.
 
 Clip boundaries (`src/clip/index.ts`), not weights: start = first
 engagement (POV shot or damage dealt/taken) within 5 s before the first
@@ -60,43 +67,34 @@ overlapping moments in a round merge; nothing is cut short, however long
 (post fast-forwards the stretches without action: `docs/modules.md`,
 Fast-forward).
 
-## What the current weights pick (2026-10-15)
+## What the current weights pick (2026-10-15, one moment per round)
 
-Top five per demo, from `pnpm moments`:
+Top three per demo, from `pnpm moments` after the per-round rule and the
+tightness and light signals:
 
-**de_inferno, October (`1-8e8743a8…`)** — the render test demo. Peder's two
-earlier hand-picks are #2 and #3.
+- **de_inferno, October (`1-8e8743a8…`)**, the render test demo: #1 R1 3k
+  Glock in a lost 1v2 (104.7; the two hand-picked R1 kills and a third now
+  form one round), #2 R16 2k M4A1-S, 1v2 won (78.0; its victims were at 4
+  and 10 HP, −12), #3 R8 3k AK-47 (61.0; kills 11.5 s and 9 s apart, so no
+  tightness bonus).
+- **de_cache, May (`1-0c14eb44…`)**: #1 R13 5k Glock, 1v3 won (241.4; was
+  a 4k before the round became one moment), #2 R12 3k AK-47 (81.0), #3 R11
+  2k M4A1-S (34.0).
+- **de_cache, May (`1-898d9c8a…`)**: #1 R24 4k AK-47 (152.5, tight 42),
+  #2 R6 3k AWP (69.5), #3 R7 2k Tec-9 (41.5).
+- **de_anubis, May (`1-e6aac266…`)**: #1 R13 5k USP-S (192.4), #2 R7 3k
+  Tec-9, 1v2 won (118.8; library clip 10 has 2 of those kills), #3 R16 2k
+  MP9 (68.3).
+- **de_anubis, October (`e3dc4b4e…`)**: still no multikill above 2k; #1–#3
+  R2, R5, R19 2k AK-47 (52.0, 46.0, 44.0). Six overtime rounds are
+  excluded (`includeOvertime` false).
 
-| # | Round | Score | Moment | Ticks |
-|---|---|---|---|---|
-| 1 | R16 | 78.0 | 2k M4A1-S, 1v2 clutch won, ends on his defuse | 101411–103117 |
-| 2 | R8 | 61.0 | 3k AK-47 (hand-picked in M0) | 52692–54302 |
-| 3 | R1 | 48.4 | 2k Glock, all HS (hand-picked in M0) | 5733–6103 |
-| 4 | R1 | 23.5 | Glock kill, 1v2 clutch lost | 7652–7984 |
-| 5 | R13 | 22.5 | USP-S kill, HS | 80078–80366 |
-
-Open question for Peder: #1's two victims were at 4 and 10 HP (teammates
-had hit them), costing it 12 points; it still outranks the 3k because the
-won 1v2 is worth 50. If that feels wrong, raise `lowHp.penaltyPerKill` or
-lower `clutch.perEnemy`.
-
-**de_cache, May (`1-0c14eb44…`)**: #1 R13 4k Glock 1v3 clutch won (176.6;
-hand-picked in M0.3), #2 R12 2k AK-47 (34.0), #3 R12 AK-47 wallbang (28.0),
-#4 R10 2k M4A1-S (26.0), #5 R13 Glock kill (22.5).
-
-**de_cache, May (`1-898d9c8a…`)**: #1 R24 4k AK-47 all HS (110.5), #2 R15 2k
-M4A1-S (28.0), #3/#4 R6 AWP kills through smoke (25.0), #5 R7 Tec-9 (22.5).
-
-**de_anubis, May (`1-e6aac266…`)**: #1 R13 5k USP-S (147.5), #2 R7 Tec-9
-kill in a won 1v2 (66.5), #3 R16 2k MP9 all HS (50.3), #4 R6 2k AWP (35.0),
-#5 R5 2k AWP (29.0).
-
-**de_anubis, October (`1-4f41ff3c…`)**: no multikill above 2k; #1/#2 R2 and
-R12 2k AK-47 (34.0), #3 R11 2k in a lost 1v3 (31.5), #4 R5 2k (28.0), #5 R19
-2k (26.0). Six overtime rounds are excluded (`includeOvertime` false).
+The tightness bonus lifts most 2ks by 18 (two kills within 6 s and within
+10 s), so 116 moments across the 29 stored demos score 40 or more (63
+before). `batch.minScore` was set on the old scale.
 
 ## Not scored yet
 
-Deferred in `PLAN.md`: flick angle, trades, saved-a-teammate. Not possible
+Deferred in `PLAN.md`: trades, saved-a-teammate. Not possible
 as clips: a clutch won without a POV kill (the render's timing measure needs
 POV shots).

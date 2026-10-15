@@ -3,16 +3,70 @@
   "_changes": [
     "2026-10-15 first weights (M2), from PLAN.md's first-ranking signals",
     "2026-10-15 clusterGapSeconds 6 -> 12: the hand-picked round-8 3k on the October de_inferno demo (M0 interval B) has kills 11.5 s and 9.0 s apart and fell apart into three single kills at 6",
-    "2026-10-15 includeOvertime false: PLAN.md section 3 excludes overtime rounds; set true to rank them"
+    "2026-10-15 includeOvertime false: PLAN.md section 3 excludes overtime rounds; set true to rank them",
+    "2026-10-15 per-round moments (Peder): all of his kills in a round are one moment, so clusterGapSeconds is gone; quick succession is a scoring signal instead",
+    "2026-10-15 tightness: the most kills inside any windowSeconds (6 s) earn perKillInWindow each beyond the first, all kills within allWithinSeconds earn allWithinBonus, and speed now scores the tightest run, so a 3k in 4 s beats a 3k over 40 s by about 30 points (Peder: quick succession is worth more)",
+    "2026-10-15 light signals (Peder: a small bonus each, never enough to lift a weak round over a strong one): noscope moved from flags into light, airborne (attackerinair), one-bullet kills, flicks (yaw turned in the 100-200 ms before the kill shot above minDegrees); capped together at maxPerMoment, below the 20-point gap between kill counts"
   ],
-  "clusterGapSeconds": 12,
-  "killBase": { "1": 10, "2": 30, "3": 55, "4": 80, "5": 110 },
-  "speed": { "referenceSeconds": 3, "pointsPerSecondFaster": 4, "max": 12 },
-  "clutch": { "perEnemy": 15, "wonBonus": 20, "lostFactor": 0.3 },
-  "flags": { "headshot": 2, "wallbang": 8, "noscope": 10, "thrusmoke": 8, "attackerblind": 8 },
-  "weaponMultiplier": { "pistol": 1.25, "deagle": 1.35, "scout": 1.2, "smg": 1.1, "shotgun": 1.0, "rifle": 1.0, "awp": 0.9, "knife": 1.6, "other": 1.0 },
+  "killBase": {
+    "1": 10,
+    "2": 30,
+    "3": 55,
+    "4": 80,
+    "5": 110
+  },
+  "speed": {
+    "_note": "scored on the tightest run (the best tightness window), not the whole round",
+    "referenceSeconds": 3,
+    "pointsPerSecondFaster": 4,
+    "max": 12
+  },
+  "tightness": {
+    "_note": "kills in quick succession: the best windowSeconds window, and all kills close together",
+    "windowSeconds": 6,
+    "perKillInWindow": 12,
+    "allWithinSeconds": 10,
+    "allWithinBonus": 6
+  },
+  "clutch": {
+    "perEnemy": 15,
+    "wonBonus": 20,
+    "lostFactor": 0.3
+  },
+  "flags": {
+    "headshot": 2,
+    "wallbang": 8,
+    "thrusmoke": 8,
+    "attackerblind": 8
+  },
+  "light": {
+    "_note": "small bonuses, capped together at maxPerMoment; kill count, pace, clutch and outcome stay the backbone",
+    "noscope": 3,
+    "airborne": 3,
+    "oneBulletKill": 2,
+    "flick": {
+      "minDegrees": 25,
+      "pointsPer10Degrees": 1,
+      "maxPerKill": 2
+    },
+    "maxPerMoment": 8
+  },
+  "weaponMultiplier": {
+    "pistol": 1.25,
+    "deagle": 1.35,
+    "scout": 1.2,
+    "smg": 1.1,
+    "shotgun": 1.0,
+    "rifle": 1.0,
+    "awp": 0.9,
+    "knife": 1.6,
+    "other": 1.0
+  },
   "roundWon": 8,
-  "lowHp": { "threshold": 30, "penaltyPerKill": 6 },
+  "lowHp": {
+    "threshold": 30,
+    "penaltyPerKill": 6
+  },
   "threshold": 30,
   "includeOvertime": false
 }

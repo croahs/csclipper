@@ -13,7 +13,7 @@
 // twice is not retried until --retry-failed.
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { Refusal, STATE_DIR, loadBatch, loadIdentities } from "../config.ts";
+import { Refusal, STATE_DIR, loadBatch, loadIdentities, pickMoments } from "../config.ts";
 import { buildMoments } from "../clip/moments.ts";
 import type { ClipSpec } from "../clip/index.ts";
 import { ingest, readRegistry } from "../ingest/index.ts";
@@ -70,7 +70,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   for (const d of registry) {
     try {
       const m = await buildMoments(d.file, pov);
-      const picked = m.specs.filter((s) => s.score >= batch.minScore).slice(0, batch.topN);
+      const picked = pickMoments(m.specs, batch);
       console.log(`${m.parsed.demo.map} ${d.originalName}: ${m.specs.length} moments, ${picked.length} selected${m.cached ? " (cached)" : ""}`);
       if (!picked.length) report.emptyDemos.push(d.originalName);
       for (const spec of picked) queue.push({ demo: d.file, sha256: d.sha256, spec });

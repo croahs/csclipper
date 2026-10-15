@@ -30,6 +30,12 @@ test("windows: a keep stretch (the tail after the last kill) plays at normal spe
   assert.deepEqual(w, [{ startTick: 0, endTick: 1352 }, { startTick: 2872, endTick: 3064 }]);
 });
 
+test("windows: a kept lead-in is never fast-forwarded, whatever lies inside it", () => {
+  // Lead-in 10 s (640 ticks): span 640..1632, engagement (the kill) at 1280; an earlier shot at 704.
+  const w = actionWindows(demo({ kills: [1280], fires: [704] }), 1, 640, 1632, [], [{ startTick: 640, endTick: 1280 }]);
+  assert.deepEqual(w, [{ startTick: 640, endTick: 1632 }]);
+});
+
 test("windows: actions within 4 s of each other play through; a longer gap splits", () => {
   // The kill's window ends at 1096; a fire at 1480 opens one at 1352: a gap of 256 ticks = 4 s, merged.
   assert.equal(actionWindows(demo({ kills: [1000], fires: [1480] }), 1, 0, 9000).length, 1);

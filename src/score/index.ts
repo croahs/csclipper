@@ -1,17 +1,20 @@
-// Scoring (PLAN.md §3): round context (clutch state, outcome) and kill
-// clusters, scored with the weights in scoring.json. First-ranking signals
-// only; flick angle, trades and "saved a teammate" are deferred.
+// Scoring (PLAN.md §3): one moment per round with all of the POV's kills in it,
+// scored with the weights in scoring.json: kill count, pace (the tightest run
+// inside the round), clutch, outcome, flags and weapon as the backbone, and
+// small capped bonuses for no-scopes, airborne kills, one-bullet kills and
+// flicks. Trades and "saved a teammate" are deferred.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { ROOT } from "../config.ts";
-import type { Death, ParsedDemo, Round, Team } from "../parse/demo.ts";
+import { NOT_A_GUN, type Death, type ParsedDemo, type Round, type Team } from "../parse/demo.ts";
 
 export type Weights = {
-  clusterGapSeconds: number;
   killBase: Record<string, number>;
   speed: { referenceSeconds: number; pointsPerSecondFaster: number; max: number };
+  tightness: { windowSeconds: number; perKillInWindow: number; allWithinSeconds: number; allWithinBonus: number };
   clutch: { perEnemy: number; wonBonus: number; lostFactor: number };
-  flags: { headshot: number; wallbang: number; noscope: number; thrusmoke: number; attackerblind: number };
+  flags: { headshot: number; wallbang: number; thrusmoke: number; attackerblind: number };
+  light: { noscope: number; airborne: number; oneBulletKill: number; flick: { minDegrees: number; pointsPer10Degrees: number; maxPerKill: number }; maxPerMoment: number };
   weaponMultiplier: Record<WeaponClass, number>;
   roundWon: number;
   lowHp: { threshold: number; penaltyPerKill: number };
@@ -84,7 +87,23 @@ export function povKills(p: ParsedDemo, r: Round): Death[] {
     .sort((a, b) => a.tick - b.tick);
 }
 
-export function scoreKills(kills: Death[], clutch: Clutch | undefined, roundWon: boolean, w: Weights, tickrate: number): Pick<Moment, "score" | "breakdown"> {
+const ENGAGE_S = 5; // the first kill's bullets count from this long before it
+
+/** The most kills inside any `windowS` window (ties: the shortest such run), and that run's kills. */
+export function tightestRun(kills: Death[], windowS: number, tickrate: number): Death[] {
+  let best: Death[] = kills.slice(0, 1);
+  for (let i = 0; i < kills.length; i++) {
+    let j = i;
+    while (j + 1 < kills.length && kills[j + 1].tick - kills[i].tick <= windowS * tickrate) j++;
+    const span = (r: Death[]) => r[r.length - 1].tick - r[0].tick;
+    const run = kills.slice(i, j + 1);
+    if (run.length > best.length || (run.length === best.length && span(run) < span(best))) best = run;
+  }
+  return best;
+}
+
+export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undefined, roundWon: boolean, w: Weights): Pick<Moment, "score" | "breakdown"> {
+  const tickrate = p.demo.tickrate;
   const b: Record<string, number> = {};
   const n = kills.length;
   const base = w.killBase[String(Math.min(n, 5))] ?? 0;
@@ -93,13 +112,31 @@ export function scoreKills(kills: Death[], clutch: Clutch | undefined, roundWon:
   for (const k of kills) counts.set(weaponClass(k.weapon), (counts.get(weaponClass(k.weapon)) ?? 0) + 1);
   const cls = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "other";
   b.kills = Math.round(base * (w.weaponMultiplier[cls] ?? 1) * 10) / 10;
-  if (n >= 2) {
-    const avgGap = (kills[n - 1].tick - kills[0].tick) / (n - 1) / tickrate;
+  // Pace: kills in quick succession are worth more than the same kills spread over the round.
+  const run = tightestRun(kills, w.tightness.windowSeconds, tickrate);
+  if (run.length >= 2) {
+    const avgGap = (run[run.length - 1].tick - run[0].tick) / (run.length - 1) / tickrate;
     b.speed = Math.round(Math.min(w.speed.max, Math.max(0, (w.speed.referenceSeconds - avgGap) * w.speed.pointsPerSecondFaster)) * 10) / 10;
+    b.tight = (run.length - 1) * w.tightness.perKillInWindow;
   }
+  if (n >= 2 && (kills[n - 1].tick - kills[0].tick) / tickrate <= w.tightness.allWithinSeconds) b.tight = (b.tight ?? 0) + w.tightness.allWithinBonus;
   if (clutch) b.clutch = clutch.vs * w.clutch.perEnemy * (clutch.won ? 1 : w.clutch.lostFactor) + (clutch.won ? w.clutch.wonBonus : 0);
   const f = w.flags;
-  b.flags = kills.reduce((s, k) => s + (k.headshot ? f.headshot : 0) + (k.penetrated ? f.wallbang : 0) + (k.noscope ? f.noscope : 0) + (k.thrusmoke ? f.thrusmoke : 0) + (k.attackerblind ? f.attackerblind : 0), 0);
+  b.flags = kills.reduce((s, k) => s + (k.headshot ? f.headshot : 0) + (k.penetrated ? f.wallbang : 0) + (k.thrusmoke ? f.thrusmoke : 0) + (k.attackerblind ? f.attackerblind : 0), 0);
+  // Light signals: a small bonus each, capped together so they never outweigh the backbone.
+  const l = w.light;
+  const me = p.identity.steamid;
+  let light = 0;
+  for (const [i, k] of kills.entries()) {
+    if (k.noscope) light += l.noscope;
+    if (k.airborne) light += l.airborne;
+    const from = i > 0 ? kills[i - 1].tick : k.tick - ENGAGE_S * tickrate;
+    const bullets = p.fires.filter((x) => x.player === me && x.round === k.round && x.tick > from && x.tick <= k.tick && !NOT_A_GUN.test(x.weapon)).length;
+    if (bullets === 1 && !NOT_A_GUN.test(k.weapon)) light += l.oneBulletKill;
+    const flick = p.flicks.find((x) => x.killTick === k.tick)?.yawDegrees ?? 0;
+    if (flick > l.flick.minDegrees) light += Math.min(l.flick.maxPerKill, ((flick - l.flick.minDegrees) / 10) * l.flick.pointsPer10Degrees);
+  }
+  if (light) b.light = Math.round(Math.min(l.maxPerMoment, light) * 10) / 10;
   if (roundWon) b.roundWon = w.roundWon;
   const low = kills.filter((k) => k.victimHpBefore <= w.lowHp.threshold).length;
   if (low) b.lowHp = -low * w.lowHp.penaltyPerKill;
@@ -107,15 +144,13 @@ export function scoreKills(kills: Death[], clutch: Clutch | undefined, roundWon:
 }
 
 /**
- * Moments per round: a clutch is a round property, so all POV kills from the
- * clutch start form one moment; other kills form clusters of kills at most
- * clusterGapSeconds apart. Knife rounds are excluded, overtime unless
- * includeOvertime (PLAN.md §3 excludes it). A moment needs a POV kill (a
- * clutch won without one is not a clip).
+ * One moment per round (Peder, 2026-10-15): all of the POV's kills in it, however far
+ * apart, with the round's clutch state. Knife rounds are excluded, overtime unless
+ * includeOvertime (PLAN.md §3 excludes it). A moment needs a POV kill (a clutch won
+ * without one is not a clip).
  */
 export function moments(p: ParsedDemo, w: Weights): Moment[] {
   const out: Moment[] = [];
-  const gap = w.clusterGapSeconds * p.demo.tickrate;
   for (const r of p.rounds.filter((x) => x.phase === "regular" || (x.phase === "overtime" && w.includeOvertime))) {
     const team = povTeam(p, r);
     if (!team) continue;
@@ -123,21 +158,7 @@ export function moments(p: ParsedDemo, w: Weights): Moment[] {
     if (!kills.length) continue;
     const roundWon = r.winner === team;
     const clutch = clutchState(p, r);
-    const clutchKills = clutch ? kills.filter((k) => k.tick >= clutch.fromTick) : [];
-    const rest = kills.filter((k) => !clutchKills.includes(k));
-    const clusters: Death[][] = [];
-    for (const k of rest) {
-      const last = clusters[clusters.length - 1];
-      if (last && k.tick - last[last.length - 1].tick <= gap) last.push(k);
-      else clusters.push([k]);
-    }
-    // Kills just before the clutch start that chain into it belong to it.
-    if (clutchKills.length && clusters.length) {
-      const last = clusters[clusters.length - 1];
-      if (clutchKills[0].tick - last[last.length - 1].tick <= gap) clutchKills.unshift(...clusters.pop()!);
-    }
-    for (const c of clusters) out.push({ round: r.n, kills: c, roundWon, ...scoreKills(c, undefined, roundWon, w, p.demo.tickrate) });
-    if (clutch && (clutchKills.length || clutch.won)) out.push({ round: r.n, kills: clutchKills, clutch, roundWon, ...scoreKills(clutchKills, clutch, roundWon, w, p.demo.tickrate) });
+    out.push({ round: r.n, kills, ...(clutch ? { clutch } : {}), roundWon, ...scoreKills(p, kills, clutch, roundWon, w) });
   }
-  return out.filter((m) => m.kills.length).sort((a, b) => b.score - a.score);
+  return out.sort((a, b) => b.score - a.score);
 }

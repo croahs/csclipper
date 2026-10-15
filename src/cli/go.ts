@@ -1,7 +1,7 @@
 // pnpm go [--dry-run] [--retry-failed] [--repost] [--timeout <s>] [--test-exit-after <s>]: the whole pipeline in
 // one command. Ingest demos/inbox/, parse and rank every registered demo,
-// render the selected moments (config.json batch: score >= minScore, at most
-// topN per demo) that are not in the library yet, rewrite library/index.html.
+// render the selected moments (config.json batch: every one with score >= minScore,
+// else the best one when none reaches it and fallbackBest) that are not in the library yet, rewrite library/index.html.
 // Re-running resumes; with nothing new it launches nothing. --repost runs post
 // only, for jobs whose capture is complete (e.g. after a post change): no launch.
 // Exit codes: 0 ok, 1 a job or demo failed, 2 refused (CS2 running, a guard,
