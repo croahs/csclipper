@@ -21,7 +21,7 @@ import { cleanupUnverified } from "../render/controller/index.ts";
 import { imageRunning } from "../render/controller/processes.ts";
 import { recordFailure } from "../library/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
-import { prepareJob, runJob, type PreparedJob } from "./job.ts";
+import { prepareJob, runJobs, type JobResult, type PreparedJob } from "./job.ts";
 
 const LEDGER = path.join(STATE_DIR, "queue.json");
 const MAX_ATTEMPTS = 2; // the first try and one retry
@@ -87,79 +87,89 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   let code = 0;
   let launchedOne = false;
   const ledger = readLedger();
-  for (const { demo, sha256, spec } of queue) {
-    let prep: PreparedJob;
-    let done: boolean;
-    try {
-      prep = await prepareJob({ demo, spec, timeoutS: o.timeoutS, postOnly: o.repostOnly, inBatch: true });
-      done = prep.inLibrary();
-    } catch (e) {
-      // Nothing was launched: record it and go on with the next job.
-      const reason = (e as Error).message;
-      recordFailure(spec.id, { at: new Date().toISOString(), reasons: [reason], startTick: spec.startTick, endTick: spec.endTick, demo });
-      report.failed.push(`${spec.title}: ${reason}`);
-      code = Math.max(code, 1);
-      continue;
+  // One launch per demo (chained takes): its jobs are gated one by one, then rendered together.
+  const byDemo = new Map<string, typeof queue>();
+  for (const q of queue) byDemo.set(q.sha256, [...(byDemo.get(q.sha256) ?? []), q]);
+  demos: for (const [sha256, items] of byDemo) {
+    type Ready = { prep: PreparedJob; spec: ClipSpec; key: string; prevStatus?: "running" | "done" | "failed"; attempts: number };
+    const ready: Ready[] = [];
+    for (const { demo, spec } of items) {
+      let prep: PreparedJob;
+      let done: boolean;
+      try {
+        prep = await prepareJob({ demo, spec, timeoutS: o.timeoutS, postOnly: o.repostOnly, inBatch: true });
+        done = prep.inLibrary();
+      } catch (e) {
+        // Nothing was launched: record it and go on with the next job.
+        const reason = (e as Error).message;
+        recordFailure(spec.id, { at: new Date().toISOString(), reasons: [reason], startTick: spec.startTick, endTick: spec.endTick, demo });
+        report.failed.push(`${spec.title}: ${reason}`);
+        code = Math.max(code, 1);
+        continue;
+      }
+      const key = `${prep.id}:${prep.renderKey}`;
+      const prev = ledger[key];
+      // Completed output wins over the ledger (e.g. a run died after publishing).
+      if (done) {
+        if (prev?.status !== "done") { ledger[key] = { ...(prev ?? { id: prep.id, renderKey: prep.renderKey, demoSha256: sha256, title: spec.title, attempts: 0 }), status: "done", updatedAt: new Date().toISOString() }; writeLedger(ledger); }
+        report.skipped.push(spec.title);
+        continue;
+      }
+      if (prev?.status === "running") console.log(`${spec.title}: interrupted on an earlier run, retrying`);
+      if (o.repostOnly && !prep.hasCapture()) { report.needsRender.push(spec.title); continue; }
+      // Post costs no launch, so a repost is not held back by the attempt limit.
+      if (prev && prev.attempts >= MAX_ATTEMPTS && !o.retryFailed && !o.repostOnly) {
+        report.givenUp.push(`${spec.title} (${prev.attempts} attempts: ${prev.lastReasons?.join("; ") ?? "interrupted"})`);
+        continue;
+      }
+      if (o.dryRun) { console.log(`would render: #${spec.rank} ${spec.title} (score ${spec.score})`); continue; }
+      ready.push({ prep, spec, key, prevStatus: prev?.status, attempts: (prev?.attempts ?? 0) + 1 });
     }
-    const key = `${prep.id}:${prep.renderKey}`;
-    const prev = ledger[key];
-    // Completed output wins over the ledger (e.g. a run died after publishing).
-    if (done) {
-      if (prev?.status !== "done") { ledger[key] = { ...(prev ?? { id: prep.id, renderKey: prep.renderKey, demoSha256: sha256, title: spec.title, attempts: 0 }), status: "done", updatedAt: new Date().toISOString() }; writeLedger(ledger); }
-      report.skipped.push(spec.title);
-      continue;
-    }
-    if (prev?.status === "running") console.log(`${spec.title}: interrupted on an earlier run, retrying`);
-    if (o.repostOnly && !prep.hasCapture()) { report.needsRender.push(spec.title); continue; }
-    // Post costs no launch, so a repost is not held back by the attempt limit.
-    if (prev && prev.attempts >= MAX_ATTEMPTS && !o.retryFailed && !o.repostOnly) {
-      report.givenUp.push(`${spec.title} (${prev.attempts} attempts: ${prev.lastReasons?.join("; ") ?? "interrupted"})`);
-      continue;
-    }
-    if (o.dryRun) { console.log(`would render: #${spec.rank} ${spec.title} (score ${spec.score})`); continue; }
-    const attempts = (prev?.attempts ?? 0) + 1;
-    ledger[key] = { id: prep.id, renderKey: prep.renderKey, demoSha256: sha256, title: spec.title, status: "running", attempts, updatedAt: new Date().toISOString() };
+    if (!ready.length) continue;
+    for (const r of ready) ledger[r.key] = { id: r.prep.id, renderKey: r.prep.renderKey, demoSha256: sha256, title: r.spec.title, status: "running", attempts: r.attempts, updatedAt: new Date().toISOString() };
     writeLedger(ledger);
-    // Test hook, scoped to the first job that may launch and cleared when it ends.
+    // Test hook, scoped to the first launch and cleared when it ends.
     const testTimer = o.testExitAfterS !== undefined && !launchedOne
       ? setTimeout(() => { console.error(`test: ending the process ${o.testExitAfterS}s into the job (--test-exit-after)`); process.exit(130); }, o.testExitAfterS * 1000)
       : undefined;
     launchedOne = true;
-    let r;
+    let results: JobResult[];
     try {
-      r = await runJob(prep);
+      results = await runJobs(ready.map((r) => r.prep));
     } catch (e) {
       clearTimeout(testTimer);
       const reason = (e as Error).message;
       if (e instanceof Refusal) {
-        // Refused before any launch: the attempt does not count, and the batch stops.
-        ledger[key] = { ...ledger[key], status: prev?.status ?? "failed", attempts: attempts - 1, lastReasons: [reason], updatedAt: new Date().toISOString() };
+        // Refused before any launch: the attempts do not count, and the batch stops.
+        for (const r of ready) ledger[r.key] = { ...ledger[r.key], status: r.prevStatus ?? "failed", attempts: r.attempts - 1, lastReasons: [reason], updatedAt: new Date().toISOString() };
         writeLedger(ledger);
         console.error(reason);
         report.stoppedBy = "refusal";
         code = 2;
         break;
       }
-      // Anything else may have happened after a launch: the attempt counts.
-      ledger[key] = { ...ledger[key], status: "failed", lastReasons: [reason], updatedAt: new Date().toISOString() };
+      // Anything else may have happened after a launch: the attempts count.
+      for (const r of ready) {
+        ledger[r.key] = { ...ledger[r.key], status: "failed", lastReasons: [reason], updatedAt: new Date().toISOString() };
+        recordFailure(r.prep.id, { at: new Date().toISOString(), reasons: [reason], startTick: r.prep.startTick, endTick: r.prep.endTick, demo: r.prep.demo });
+        report.failed.push(`${r.spec.title}: ${reason}`);
+      }
       writeLedger(ledger);
-      recordFailure(prep.id, { at: new Date().toISOString(), reasons: [reason], startTick: prep.startTick, endTick: prep.endTick, demo });
-      report.failed.push(`${spec.title}: ${reason}`);
       code = Math.max(code, 1);
       if (cleanupUnverified()) { report.stoppedBy = "cleanup"; code = 3; break; }
       continue;
     }
     clearTimeout(testTimer);
-    ledger[key] = { ...ledger[key], status: r.status === "failed" ? "failed" : "done", attempts: r.status === "skipped" ? attempts - 1 : attempts, lastReasons: r.reasons, updatedAt: new Date().toISOString() };
-    writeLedger(ledger);
-    if (r.status === "done") report.rendered.push(r.title);
-    else if (r.status === "skipped") report.skipped.push(r.title);
-    else {
-      report.failed.push(`${r.title}: ${r.reasons?.join("; ")}`);
-      code = Math.max(code, 1);
-      // An unverified cleanup may have left a game running: stop everything.
-      if (r.cleanupVerified === false || cleanupUnverified()) { report.stoppedBy = "cleanup"; code = 3; break; }
+    for (const [i, res] of results.entries()) {
+      const r = ready[i];
+      ledger[r.key] = { ...ledger[r.key], status: res.status === "failed" ? "failed" : "done", attempts: res.status === "skipped" ? r.attempts - 1 : r.attempts, lastReasons: res.reasons, updatedAt: new Date().toISOString() };
+      if (res.status === "done") report.rendered.push(res.title);
+      else if (res.status === "skipped") report.skipped.push(res.title);
+      else { report.failed.push(`${res.title}: ${res.reasons?.join("; ")}`); code = Math.max(code, 1); }
     }
+    writeLedger(ledger);
+    // An unverified cleanup may have left a game running: stop everything.
+    if (results.some((x) => x.cleanupVerified === false) || cleanupUnverified()) { report.stoppedBy = "cleanup"; code = 3; break demos; }
   }
   if ((report.demoErrors.length || report.givenUp.length) && code === 0) code = 1;
   // The page is rewritten even after a stop; its own failure never hides the batch's exit code.

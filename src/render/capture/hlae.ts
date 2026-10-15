@@ -8,26 +8,32 @@ const fwd = (p: string) => p.replaceAll("\\", "/");
 
 export type HlaeCapture = {
   takeDir: string;
-  videoPath: string;
+  videoPaths: string[]; // one per take
   setup: string[]; // cfg-body lines
+  select: (take: number) => string; // quote-free: points the recorder at that take's video
   start: string; // scheduled at the record-start tick
   end: string; // scheduled at the record-end tick
 };
 
-export function hlaeCapture(workDir: string, s: RenderSettings): HlaeCapture {
+/**
+ * One ffmpeg settings entry per take (croclip0, croclip1, ...), each writing its own video
+ * file, defined in the cfg body where quotes are allowed; switching between them is a
+ * quote-free command a take's cfg can run. HLAE's WAV lands in a take folder per record start.
+ */
+export function hlaeCapture(workDir: string, s: RenderSettings, takes = 1): HlaeCapture {
   const takeDir = path.join(workDir, "hlae");
-  const videoPath = path.join(takeDir, "video.mp4");
+  const videoPaths = Array.from({ length: takes }, (_, i) => path.join(takeDir, takes === 1 ? "video.mp4" : `video${i}.mp4`));
   return {
     takeDir,
-    videoPath,
+    videoPaths,
     setup: [
       `mirv_streams record name "${fwd(takeDir)}"`,
       "mirv_streams record startMovieWav 1",
-      `mirv_streams settings add ffmpeg croclip "-c:v libx264 -preset veryfast -crf ${s.captureCrf} -pix_fmt yuv420p {QUOTE}${fwd(videoPath)}{QUOTE}"`,
-      "mirv_streams record screen settings croclip",
+      ...videoPaths.map((v, i) => `mirv_streams settings add ffmpeg croclip${i} "-c:v libx264 -preset veryfast -crf ${s.captureCrf} -pix_fmt yuv420p {QUOTE}${fwd(v)}{QUOTE}"`),
       "mirv_streams record screen enabled 1",
       `mirv_streams record fps ${s.fps}`,
     ],
+    select: (i) => `mirv_streams record screen settings croclip${i}`,
     start: "mirv_streams record start",
     end: "mirv_streams record end",
   };
@@ -45,10 +51,10 @@ export function hlaeArgs(hlaeExe: string, cs2Exe: string, csArgs: string[]): str
   ];
 }
 
-/** The single take folder HLAE wrote this attempt (the work dir is fresh per attempt). */
-export function takeOutputs(c: HlaeCapture): { takes: string[]; wav?: string } {
+/** The take folders HLAE wrote this attempt, in order (the work dir is fresh per attempt), and their WAVs. */
+export function takeOutputs(c: HlaeCapture): { takes: string[]; wavs: string[] } {
   const takes = existsSync(c.takeDir) ? readdirSync(c.takeDir).filter((d) => d.startsWith("take")).sort() : [];
-  return { takes, wav: takes.length === 1 ? path.join(c.takeDir, takes[0], "audio.wav") : undefined };
+  return { takes, wavs: takes.map((t) => path.join(c.takeDir, t, "audio.wav")) };
 }
 
 // Console evidence lines (CS2 build 14190, HLAE 2.192.8).

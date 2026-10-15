@@ -1,15 +1,17 @@
-// Replay controller: one guarded CS2 launch per job, driven by a generated cfg
-// and HLAE tick scheduling, as an explicit state machine.
+// Replay controller: one guarded CS2 launch per job, driven by generated cfgs
+// and HLAE tick scheduling, as an explicit state machine. A job is one or more
+// takes of the same demo (chained takes, PLAN.md §5), each with its own seek,
+// spectated slot and output:
 //
-//   launched → loaded → seeked → capturing → stopped → exited → validated
+//   launched → loaded → (seeked → capturing → stopped) per take → exited → validated
 //
 // Evidence per state: an owned cs2.exe (launched), console.log lines
 // ("Host activate: Playing Demo", "Demo Skipping finished at tick <seek>",
-// "[Movie] Started recording movie" or the video file, "Finishing movie …
-// [N frames"), the owned cs2.exe gone (exited), and the raw outputs checked
-// (validated). "Settled" and "POV locked" have no observable evidence: the
-// seek lands SETTLE_TICKS before the record start and spec_player runs 17
-// ticks after the seek; frames are checked on the output instead.
+// "[Movie] Started recording movie" or the take's video file, "Finishing movie …
+// [N frames", counted per take), the owned cs2.exe gone (exited), and the raw
+// outputs checked per take (validated). "Settled" and "POV locked" have no
+// observable evidence: the seek lands SETTLE_TICKS before the record start and
+// spec_player runs 17 ticks after the seek; frames are checked on the output instead.
 //
 // Exit codes the CLI derives from this: Refusal = 2 (nothing launched),
 // cleanupVerified false = 3 (a game process may still be running; the lock stays).
@@ -20,7 +22,7 @@ import { captureSize, type Identities, type RenderSettings } from "../../config.
 import { TICKRATE } from "../../parse/clip-facts.ts";
 import { countFrames, decodeProblems, probe } from "../../post/ffmpeg.ts";
 import { FINISHED_RE, STARTED_RE, hlaeArgs, hlaeCapture, takeOutputs } from "../capture/hlae.ts";
-import { jobCfg, type CrosshairSource } from "./cfg.ts";
+import { jobCfgs, type CrosshairSource } from "./cfg.ts";
 import { RenderLock, guard } from "./guards.ts";
 import { OwnedTree, isRunning, key, killExact, type Proc } from "./processes.ts";
 
@@ -29,12 +31,13 @@ export const MARGIN_TICKS = 32;
 /** The seek lands this far before the record start. */
 export const SETTLE_TICKS = 2 * TICKRATE;
 
+/** One take: the requested ticks and the spectator slot to watch them from. */
+export type TakeSpec = { startTick: number; endTick: number; slot: number };
+
 export type RenderJob = {
   title: string;
   demo: string;
-  slot: number;
-  startTick: number;
-  endTick: number;
+  takes: TakeSpec[]; // in render order (chosen to keep backward seeks few)
   workDir: string; // fresh per attempt; must not exist
   lockFile: string;
   ids: Identities;
@@ -48,19 +51,17 @@ export type RenderJob = {
 /** As scheduled: frame k of the raw capture should show tick recordStartTick + k * tickrate / fps. Post measures the actual origin. */
 export type TickMapping = { tickrate: number; fps: number; recordStartTick: number; recordEndTick: number; frames: number };
 
-const STATES = ["launched", "loaded", "seeked", "capturing", "stopped", "exited"] as const;
-type State = (typeof STATES)[number];
+/** One take's raw outputs, checked against HLAE's frame count; reasons [] when usable. */
+export type TakeResult = { video: string; audio?: string; mapping?: TickMapping; reasons: string[] };
 
 export type RenderResult = {
-  status: "ok" | "failed";
+  status: "ok" | "failed"; // failed: something in the launch went wrong; each take still says whether its own capture is usable
   reasons: string[];
   cleanupVerified: boolean;
   owned: string[];
-  states: Partial<Record<State | "validated", string>>;
+  states: Record<string, string>; // state (per take: "seeked#1" …) → time reached
   logLive: boolean;
-  video?: string;
-  audio?: string;
-  mapping?: TickMapping;
+  takes: TakeResult[];
   wallSeconds: number;
 };
 
@@ -92,12 +93,14 @@ const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(
 
 export async function render(job: RenderJob): Promise<RenderResult> {
   const { ids, settings: s } = job;
-  const recordStartTick = job.startTick - MARGIN_TICKS;
-  const recordEndTick = job.endTick + MARGIN_TICKS;
-  const seekTick = recordStartTick - SETTLE_TICKS;
-  const quitTick = recordEndTick + TICKRATE;
-  const clipSeconds = (recordEndTick - recordStartTick) / TICKRATE;
-  const timeoutS = job.timeoutS ?? Math.max(180, 120 + 4 * clipSeconds);
+  if (!job.takes.length) throw new Error("a render job needs at least one take");
+  const plan = job.takes.map((t) => {
+    const recordStartTick = t.startTick - MARGIN_TICKS;
+    const recordEndTick = t.endTick + MARGIN_TICKS;
+    return { ...t, recordStartTick, recordEndTick, seekTick: recordStartTick - SETTLE_TICKS, seconds: (recordEndTick - recordStartTick) / TICKRATE };
+  });
+  const clipSeconds = plan.reduce((n, t) => n + t.seconds, 0);
+  const timeoutS = job.timeoutS ?? Math.max(180, 120 + plan.length * 60 + 4 * clipSeconds);
 
   // Refuse before anything is written or launched.
   const lock = new RenderLock(job.lockFile);
@@ -108,21 +111,24 @@ export async function render(job: RenderJob): Promise<RenderResult> {
   const stamp = String(t0);
   const cfgName = `croclip_${stamp}`; // unique per launch: proves console.log is this launch's
   const usrDir = path.join(job.workDir, "usrlocal"); // USRLOCALCSGO: the game's user config goes here
-  const cap = hlaeCapture(job.workDir, s);
+  const cap = hlaeCapture(job.workDir, s, plan.length);
   let args: string[];
   try {
     if (existsSync(job.workDir)) throw new Error(`work dir already exists: ${job.workDir}`);
     mkdirSync(path.join(usrDir, "cfg"), { recursive: true });
     mkdirSync(cap.takeDir, { recursive: true });
     writeFileSync(path.join(usrDir, "cfg", "croclip_look.cfg"), job.lookCfg);
-    writeFileSync(path.join(usrDir, "cfg", `${cfgName}.cfg`), jobCfg({
+    const cfgs = jobCfgs({
       title: job.title, hud: s.hud, debugCommands: job.debugCommands ?? [], lookCfgName: "croclip_look", crosshair: job.crosshair, captureSetup: cap.setup, recordStart: cap.start, recordEnd: cap.end,
-      seekTick, slot: job.slot, recordStartTick, recordEndTick, quitTick,
-    }));
+      takes: plan.map((t, i) => ({ seekTick: t.seekTick, slot: t.slot, recordStartTick: t.recordStartTick, recordEndTick: t.recordEndTick, select: cap.select(i) })),
+      takeCfgName: (i) => `${cfgName}_t${i}`,
+    });
+    writeFileSync(path.join(usrDir, "cfg", `${cfgName}.cfg`), cfgs.main);
+    for (const t of cfgs.takes) writeFileSync(path.join(usrDir, "cfg", `${t.name}.cfg`), t.body);
     const size = captureSize(s);
     const csArgs = ["-insecure", "-novid", "-sw", "-width", String(size.width), "-height", String(size.height), "-condebug", "+exec", cfgName, "+playdemo", `"${job.demo}"`];
     args = hlaeArgs(ids.hlaeExe, ids.cs2Exe, csArgs);
-    writeFileSync(path.join(job.workDir, "job.json"), JSON.stringify({ title: job.title, demo: job.demo, startTick: job.startTick, endTick: job.endTick, slot: job.slot, crosshair: job.crosshair, recordStartTick, recordEndTick, seekTick, quitTick, settings: s, hlaeExe: ids.hlaeExe, hlaeArgs: args, timeoutS }, null, 2));
+    writeFileSync(path.join(job.workDir, "job.json"), JSON.stringify({ title: job.title, demo: job.demo, takes: plan, crosshair: job.crosshair, settings: s, hlaeExe: ids.hlaeExe, hlaeArgs: args, timeoutS }, null, 2));
     // Re-check right before launch: the account or a running CS2 may have changed.
     guard(ids);
   } catch (e) {
@@ -199,18 +205,25 @@ export async function render(job: RenderJob): Promise<RenderResult> {
       return text.includes(`+exec ${cfgName} `) ? text : undefined;
     } catch { return undefined; }
   };
-  const evidence: Record<State, (log: string) => boolean> = {
-    launched: () => tree!.games().length > 0,
-    loaded: (log) => log.includes("Host activate: Playing Demo"),
-    seeked: (log) => new RegExp(`Demo Skipping finished at tick ${seekTick}\\b`).test(log),
-    capturing: (log) => STARTED_RE.test(log) || existsSync(cap.videoPath),
-    stopped: (log) => FINISHED_RE.test(log),
-    exited: () => false, // decided from the process snapshot below
-  };
-  // Seconds allowed from the previous state; log-based ones only once the log is seen live.
-  const limit: Record<State, number> = { launched: 60, loaded: 120, seeked: 90, capturing: 30, stopped: 30 + 4 * clipSeconds, exited: 30 };
+  const count = (log: string, re: RegExp) => (log.match(new RegExp(re.source, "g")) ?? []).length;
+  // A seek tick may repeat (the same take twice): take i's seek is reached when the log
+  // has as many "finished at tick" lines for it as takes 0..i seek there.
+  const seekCount = (i: number) => plan.slice(0, i + 1).filter((t) => t.seekTick === plan[i].seekTick).length;
+  type Step = { name: string; logBased: boolean; limitS: number; reached: (log: string) => boolean };
+  const steps: Step[] = [
+    { name: "launched", logBased: false, limitS: 60, reached: () => tree!.games().length > 0 },
+    { name: "loaded", logBased: true, limitS: 120, reached: (log) => log.includes("Host activate: Playing Demo") },
+    ...plan.flatMap((t, i): Step[] => {
+      const tag = plan.length > 1 ? `#${i}` : "";
+      return [
+        { name: `seeked${tag}`, logBased: true, limitS: 90, reached: (log) => count(log, new RegExp(`Demo Skipping finished at tick ${t.seekTick}\\b`)) >= seekCount(i) },
+        { name: `capturing${tag}`, logBased: false, limitS: 30, reached: (log) => count(log, STARTED_RE) >= i + 1 || existsSync(cap.videoPaths[i]) },
+        { name: `stopped${tag}`, logBased: true, limitS: 30 + 4 * t.seconds, reached: (log) => count(log, FINISHED_RE) >= i + 1 },
+      ];
+    }),
+  ];
   const states: RenderResult["states"] = {};
-  const reachedAt: Partial<Record<State, number>> = {};
+  let next = 0; // the first step not reached yet
   const reasons: string[] = [];
   let logLive = false;
   let failure: string | undefined;
@@ -234,24 +247,21 @@ export async function render(job: RenderJob): Promise<RenderResult> {
       if (!tree.rooted && Date.now() > rootDeadline) { failure = "HLAE loader never seen as this controller's child"; break; }
       const log = readLog();
       if (log !== undefined) logLive = true;
-      for (const st of STATES) {
-        if (reachedAt[st] !== undefined) continue;
-        if (st === "exited" || !evidence[st](log ?? "")) break;
-        reachedAt[st] = prevAt = Date.now();
-        states[st] = new Date(prevAt).toISOString();
-        console.log(`[controller] ${st} after ${Math.round((prevAt - t0) / 1000)}s`);
+      while (next < steps.length && steps[next].reached(log ?? "")) {
+        prevAt = Date.now();
+        states[steps[next].name] = new Date(prevAt).toISOString();
+        console.log(`[controller] ${steps[next].name} after ${Math.round((prevAt - t0) / 1000)}s`);
+        next++;
       }
       const games = tree.games();
       if (games.length > 0 && !games.some((g) => isRunning(g, snap))) {
-        reachedAt.exited = Date.now();
         states.exited = new Date().toISOString();
         console.log(`[controller] exited after ${Math.round((Date.now() - t0) / 1000)}s`);
         break;
       }
-      const next = STATES.find((st) => reachedAt[st] === undefined)!;
-      const logBased = next === "loaded" || next === "seeked" || next === "stopped";
-      if ((!logBased || logLive) && Date.now() - prevAt > limit[next] * 1000) { failure = `timeout waiting for ${next} (${limit[next]}s)`; break; }
-      if (Date.now() - t0 > timeoutS * 1000) { failure = `job timeout ${timeoutS}s waiting for ${next}`; break; }
+      const waiting = next < steps.length ? steps[next] : { name: "exited", logBased: false, limitS: 30 };
+      if ((!waiting.logBased || logLive) && Date.now() - prevAt > waiting.limitS * 1000) { failure = `timeout waiting for ${waiting.name} (${waiting.limitS}s)`; break; }
+      if (Date.now() - t0 > timeoutS * 1000) { failure = `job timeout ${timeoutS}s waiting for ${waiting.name}`; break; }
     }
   } catch (e) {
     failure = `controller error: ${(e as Error).message}`;
@@ -268,27 +278,35 @@ export async function render(job: RenderJob): Promise<RenderResult> {
   const finalLog = readLog() ?? "";
   if (!cleanupVerified) reasons.push("cleanup not verified");
   if (failure) reasons.push(failure);
-  for (const st of STATES) if (st !== "launched" && st !== "exited" && !evidence[st](finalLog)) reasons.push(`no evidence for ${st} in console.log`);
-  const { takes, wav } = takeOutputs(cap);
-  if (takes.length !== 1) reasons.push(`expected one take folder, found ${takes.length}`);
-  const finished = finalLog.match(FINISHED_RE);
-  const expectedFrames = ((recordEndTick - recordStartTick) * s.fps) / TICKRATE;
-  let mapping: TickMapping | undefined;
-  if (!reasons.length) {
+  if (!finalLog.includes("Host activate: Playing Demo")) reasons.push("no evidence for loaded in console.log");
+  // Per take: its own "Finishing movie" line (in order), take folder, WAV and video.
+  const { takes: folders, wavs } = takeOutputs(cap);
+  if (folders.length !== plan.length) reasons.push(`expected ${plan.length} take folder(s), found ${folders.length}`);
+  const finishes = [...finalLog.matchAll(new RegExp(FINISHED_RE.source, "g"))];
+  const size = captureSize(s);
+  const takes: TakeResult[] = plan.map((t, i) => {
+    // Takes record in order, so take i's folder is the i-th even when the chain stopped early.
+    const r: TakeResult = { video: cap.videoPaths[i], audio: wavs[i], reasons: [] };
+    // A take that finished is judged on its own outputs even when a later take failed; only an
+    // unverified cleanup (a game may still be writing) voids them all.
+    if (!cleanupVerified) { r.reasons.push("cleanup not verified"); return r; }
+    const f = finishes[i];
+    if (!f) { r.reasons.push(`no "Finishing movie" line for take ${i}`); return r; }
+    if (count(finalLog, new RegExp(`Demo Skipping finished at tick ${t.seekTick}\\b`)) < seekCount(i)) r.reasons.push(`no evidence for take ${i}'s seek to ${t.seekTick}`);
     try {
-      const frames = Number(finished![1]);
-      if (Number(finished![2]) !== s.fps) reasons.push(`HLAE recorded at ${finished![2]} fps, expected ${s.fps}`);
-      if (Math.abs(frames - expectedFrames) > 3) reasons.push(`HLAE finished ${frames} frames, expected ${expectedFrames.toFixed(1)}`);
-      const size = captureSize(s);
-      reasons.push(...validateCapture(cap.videoPath, wav, frames, s.fps, `${size.width}x${size.height}`));
-      mapping = { tickrate: TICKRATE, fps: s.fps, recordStartTick, recordEndTick, frames };
-    } catch (e) { reasons.push(`validation error: ${(e as Error).message}`); }
-  }
-  if (!reasons.length) states.validated = new Date().toISOString();
+      const frames = Number(f[1]);
+      const expected = ((t.recordEndTick - t.recordStartTick) * s.fps) / TICKRATE;
+      if (Number(f[2]) !== s.fps) r.reasons.push(`HLAE recorded take ${i} at ${f[2]} fps, expected ${s.fps}`);
+      if (Math.abs(frames - expected) > 3) r.reasons.push(`HLAE finished ${frames} frames for take ${i}, expected ${expected.toFixed(1)}`);
+      r.reasons.push(...validateCapture(r.video, r.audio, frames, s.fps, `${size.width}x${size.height}`));
+      r.mapping = { tickrate: TICKRATE, fps: s.fps, recordStartTick: t.recordStartTick, recordEndTick: t.recordEndTick, frames };
+    } catch (e) { r.reasons.push(`validation error: ${(e as Error).message}`); }
+    return r;
+  });
+  if (!reasons.length && takes.every((t) => !t.reasons.length)) states.validated = new Date().toISOString();
   const result: RenderResult = {
     status: reasons.length ? "failed" : "ok",
-    reasons, cleanupVerified, owned, states, logLive,
-    video: cap.videoPath, audio: wav, mapping,
+    reasons, cleanupVerified, owned, states, logLive, takes,
     wallSeconds: Math.round((Date.now() - t0) / 1000),
   };
   try { writeFileSync(path.join(job.workDir, "render.json"), JSON.stringify(result, null, 2)); }

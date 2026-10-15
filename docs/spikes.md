@@ -754,3 +754,41 @@ money, weapon list and killfeed present; flashes on frames 180 and 238 as
 expected. Still visible (no id reaches them): names above the card avatars,
 the health number under each card, the marker under the observed player's
 card. The "1 vs 0" line under the score in the 2023 reference is not drawn.
+
+## Chained takes: one launch, several takes (2026-10-15)
+
+**Pass.** One guarded launch renders every take of a demo (PLAN.md §5).
+CS2 PatchVersion 1.41.9.1 (ClientVersion 2000932), HLAE 2.192.8.0,
+FFmpeg 9.0.1 (gyan.dev essentials), demoparser2 0.42.0.
+
+Mechanism (`src/render/controller/cfg.ts` `jobCfgs`):
+- The main cfg schedules take 0.
+- Each take's record end schedules `exec <next take cfg>`. That cfg runs
+  `mirv_cmd clear`, points the recorder at its own ffmpeg settings slot
+  (`mirv_streams record screen settings croclipN`, each slot defined with
+  its own video path in the main cfg body), then `demo_gototick` (forward
+  or back), and schedules its own spectate, panel styling, record and
+  next step.
+- Clearing before every seek means a backward seek never replays an earlier
+  take's commands. Clearing from inside a scheduled `exec` works.
+
+Command: a scratch script calling the real `render()` (guards included) on
+the 11 Oct de_mirage demo (`9fa533e0…`, build 14190). Takes: R5 2k
+(ticks 36673–37403) → R10 3k (59854–62360) → R5 again (a rewind of about
+23,000 ticks). The R5 and R10 clips were then posted by `runJobs` from
+their captures and are library clips 50 and 51.
+
+| Measure | Result |
+|---|---|
+| Launch, all three takes, to game gone | 77 s (load 13 s, take 0 seek 6 s after load) |
+| Forward seek, take 0 → 1 (record end → "Demo Skipping finished") | 2.2 s |
+| Backward seek, take 1 → 2 (23k ticks back) | 1.2 s: a rewind is no slower than a forward seek |
+| Frames per take vs requested | 746 / 2411 / 746: exact; every take validated |
+| First frames after a seek | not black (mean luma 113–141 from frame 0) |
+| Audio | WAV length = video length per take (±0.01 s); normal level (−22 to −25 dB) in the first 300 ms, so no silent gap after a seek |
+| Repeat of R5 after the rewind vs the first R5 | frame-aligned (PSNR 32.4 dB at offset 0, 23.5 at +1); not bit-identical (25–32 dB): playback detail differs, timing does not |
+| Settle | the existing 2 s (`SETTLE_TICKS`) was enough after both forward and backward seeks; no longer settle needed |
+
+Checked on the output: clip 51 shows all three kills in the killfeed at
+their windows and the round win; clip 50 shows both kills. The second take
+spectated its own slot after the seek.

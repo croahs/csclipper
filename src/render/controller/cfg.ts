@@ -58,26 +58,42 @@ export const SPECTATOR_PANELS = [
   "panelId=HudSpecplayer__Avatar", // centre circle avatar; the team emblem shows instead, as in play
 ];
 
+/** One take: seek, settle, spectate `slot`, record [recordStartTick, recordEndTick]. */
+export type CfgTake = {
+  seekTick: number;
+  slot: number;
+  recordStartTick: number;
+  recordEndTick: number;
+  select: string; // quote-free command that points the recorder at this take's output
+};
+
 export type JobCfgInput = {
   title: string;
   hud: "full" | "bare";
-  debugCommands: string[]; // scheduled after spec_player, e.g. panel tree dumps
+  debugCommands: string[]; // scheduled after the first take's spec_player, e.g. panel tree dumps
   lookCfgName: string;
   crosshair: CrosshairSource;
   captureSetup: string[]; // capture mode's cfg-body lines (paths allowed here)
   recordStart: string; // quote-free commands, scheduled
   recordEnd: string;
-  seekTick: number;
-  slot: number;
-  recordStartTick: number;
-  recordEndTick: number;
-  quitTick: number;
+  takes: CfgTake[];
+  takeCfgName: (i: number) => string; // the cfg file (without .cfg) that runs take i >= 1
 };
 
 // CS Demo Manager #1343: the game may skip ticks before ~96 after load.
 export const FIRST_SCHEDULE = 96;
+/** After a take's record end: the next take's cfg runs this many ticks later; after the last, quit. */
+export const CHAIN_AFTER_TICKS = 16;
+export const QUIT_AFTER_TICKS = 64;
 
-export function jobCfg(j: JobCfgInput): string {
+/**
+ * The cfgs of one launch (chained takes, PLAN.md §5): the main cfg sets everything up and
+ * schedules take 0; each take's record end schedules `exec` of the next take's cfg, which
+ * clears every scheduled command, points the recorder at its own output, seeks (forward or
+ * back) and schedules its own spectate and record; the last take schedules quit. Clearing
+ * first means a backward seek never replays an earlier take's commands.
+ */
+export function jobCfgs(j: JobCfgInput): { main: string; takes: { name: string; body: string }[] } {
   // HLAE's mirv_cmd joins its arguments with spaces and the console strips
   // quotes, so only quote-free commands are scheduled; paths go in the body.
   // HLAE runs every command whose tick lies in (previous frame tick, this frame
@@ -86,11 +102,31 @@ export function jobCfg(j: JobCfgInput): string {
     if (/["\n;]/.test(cmd)) throw new Error(`scheduled command must be quote-free and single: ${cmd}`);
     return `mirv_cmd addAtTick ${tick} ${cmd}`;
   };
-  if (!(FIRST_SCHEDULE < j.seekTick && j.seekTick + 24 + j.debugCommands.length < j.recordStartTick - 8 && j.recordStartTick < j.recordEndTick && j.recordEndTick < j.quitTick)) {
-    throw new Error("job ticks out of order");
-  }
-  return [
-    `// croclipper job ${j.title}`,
+  if (!j.takes.length) throw new Error("a job needs at least one take");
+  const schedule = (i: number): string[] => {
+    const t = j.takes[i];
+    const debug = i === 0 ? j.debugCommands : [];
+    if (/["\n;]/.test(t.select)) throw new Error(`take select must be quote-free: ${t.select}`);
+    if (!((i > 0 || FIRST_SCHEDULE < t.seekTick) && t.seekTick + 24 + debug.length < t.recordStartTick - 8 && t.recordStartTick < t.recordEndTick)) {
+      throw new Error(`take ${i}: ticks out of order`);
+    }
+    const last = i === j.takes.length - 1;
+    return [
+      // Take 0 seeks once the demo has loaded; a later take's cfg runs mid-playback and seeks at once.
+      ...(i === 0 ? [at(FIRST_SCHEDULE, `demo_gototick ${t.seekTick}`)] : ["mirv_cmd clear", t.select, `demo_gototick ${t.seekTick}`]),
+      // Never on the seek tick itself (CS Demo Manager #1238).
+      at(t.seekTick + 16, "spec_mode 1"),
+      at(t.seekTick + 17, `spec_player ${t.slot}`),
+      ...debug.map((c, k) => at(t.seekTick + 24 + k, c)),
+      // HLAE panel styling needs the HUD to exist, so it runs after spec_player, before recording.
+      ...(j.hud === "full" ? SPECTATOR_PANELS.map((p) => at(t.recordStartTick - 8, `mirv_panorama panelStyle ${p} opacity=0`)) : []),
+      at(t.recordStartTick, j.recordStart),
+      at(t.recordEndTick, j.recordEnd),
+      last ? at(t.recordEndTick + QUIT_AFTER_TICKS, "quit") : at(t.recordEndTick + CHAIN_AFTER_TICKS, `exec ${j.takeCfgName(i + 1)}`),
+    ];
+  };
+  const main = [
+    `// croclipper job ${j.title}: ${j.takes.length} take(s)`,
     "mirv_cmd clear",
     "sv_cheats 1",
     `exec ${j.lookCfgName}`, // crosshair, viewmodel, HUD colour, radar; the fixed settings below win
@@ -115,17 +151,14 @@ export function jobCfg(j: JobCfgInput): string {
     "engine_no_focus_sleep 0",
     "volume 0.5",
     ...j.captureSetup,
-    at(FIRST_SCHEDULE, `demo_gototick ${j.seekTick}`),
-    // Never on the seek tick itself (CS Demo Manager #1238).
-    at(j.seekTick + 16, "spec_mode 1"),
-    at(j.seekTick + 17, `spec_player ${j.slot}`),
-    ...j.debugCommands.map((c, i) => at(j.seekTick + 24 + i, c)),
-    // HLAE panel styling needs the HUD to exist, so it runs after spec_player, before recording.
-    ...(j.hud === "full" ? SPECTATOR_PANELS.map((p) => at(j.recordStartTick - 8, `mirv_panorama panelStyle ${p} opacity=0`)) : []),
-    at(j.recordStartTick, j.recordStart),
-    at(j.recordEndTick, j.recordEnd),
-    at(j.quitTick, "quit"),
+    j.takes[0].select,
+    ...schedule(0),
     "mirv_cmd print",
     "",
   ].join("\n");
+  const takes = j.takes.slice(1).map((_, k) => ({
+    name: j.takeCfgName(k + 1),
+    body: [`// croclipper job ${j.title}: take ${k + 1}`, ...schedule(k + 1), "mirv_cmd print", ""].join("\n"),
+  }));
+  return { main, takes };
 }

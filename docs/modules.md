@@ -41,7 +41,8 @@ not failures; exit 1 means a source failed or ingest rejected a file.
 ingests the inbox, ranks every registered demo, renders the moments
 `config.json` → `batch` selects (every moment scoring at least `minScore`,
 40; when none in a demo does and `fallbackBest` is true, its single best)
-that the library does not hold yet, and rewrites
+that the library does not hold yet, with one CS2 launch per demo for all
+of them (chained takes, below), and rewrites
 `library/index.html` (open it from disk). It refuses to start while CS2 runs
 and stops the whole batch on the first guard refusal (exit 2) or unverified
 cleanup (exit 3); exit 1 means a job or demo failed (`state/failures.json`).
@@ -192,6 +193,21 @@ the spectated player (docs/spikes.md, M0.2 open items).
   CS2 install each launch; the job cfg has a per-launch name
   (`croclip_<ms>`), and the log counts as this launch's only when its
   `[CommandLine]` line carries that name.
+- **Chained takes.** One launch renders every take of a demo
+  (`runJobs`, `src/queue/job.ts`): the jobs the library does not hold and
+  that have no validated capture, in tick order. The main cfg schedules
+  take 0; each take's record end runs the next take's cfg
+  (`croclip_<ms>_t<i>`), which clears every scheduled command, points the
+  recorder at its own ffmpeg slot (`croclip<i>`, video `video<i>.mp4`),
+  seeks with `demo_gototick` (forward or back) and schedules its own
+  spectate (its own slot), record and next step; the last quits. The
+  state machine waits for each take's seek, start and "Finishing movie"
+  in turn. A take is validated on its own: a usable take is kept even
+  when another take of the launch failed; an unverified cleanup voids
+  them all. Each clip's attempt dir gets its own `capture.json` pointing
+  into the shared `state/render/launch-<demo>-<ms>/`. Measured on
+  2026-10-15 (`docs/spikes.md`): seeks take 1–2 s either way, a rewind
+  is frame-aligned, and the 2 s settle is enough.
 
 ## Decisions made in M2
 

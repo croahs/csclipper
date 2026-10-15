@@ -132,8 +132,20 @@ export async function clipJob(o: JobInput): Promise<JobResult> {
   return runJob(p);
 }
 
+/** One clip: runJobs with a single job. */
 export async function runJob(prep: PreparedJob): Promise<JobResult> {
-  const { o, demo, spec, debugCommands, startTick, endTick, settings, ids, facts, round, id, title, look, crosshair, cutoff, versions, renderInputs, renderKey } = prep;
+  return (await runJobs([prep]))[0];
+}
+
+/**
+ * Jobs of ONE demo, with one launch for all of them (chained takes, PLAN.md §5): each
+ * job the library does not hold and that has no validated capture becomes a take, in
+ * tick order so the game only seeks forward; then every job with a capture is posted
+ * and published as before. Results come back in the order of `preps`.
+ */
+export async function runJobs(preps: PreparedJob[]): Promise<JobResult[]> {
+  if (!preps.length) return [];
+  if (preps.some((p) => p.facts.demoSha256 !== preps[0].facts.demoSha256)) throw new Error("runJobs: jobs of more than one demo");
   // One clip run at a time, from the resume check to the index write.
   const clipLock = new RenderLock(path.join(STATE_DIR, ".clip.lock"));
   clipLock.acquire();
@@ -141,52 +153,85 @@ export async function runJob(prep: PreparedJob): Promise<JobResult> {
   const releaseClipLock = () => clipLock.release();
   process.on("exit", releaseClipLock);
   try {
-    // Resume: the clip is done when the library holds it (any render key); force (--rerender) makes it again.
-    if (!o.force && prep.inLibrary()) { console.log(`already in the library: ${clipPath(id)}`); return { status: "skipped", id, title, clip: clipPath(id) }; }
-
     const attempt = String(Date.now());
-    let workDir = path.join(STATE_DIR, "render", id, attempt);
-    const fail = (reasons: string[], cleanupVerified = true): JobResult => {
-      try { recordFailure(id, { at: new Date().toISOString(), reasons, workDir, startTick, endTick, demo }); }
+    const results = new Map<string, JobResult>();
+    const captures = new Map<string, CaptureRecord & { workDir: string }>();
+    const fail = (p: PreparedJob, reasons: string[], workDir: string, cleanupVerified = true): JobResult => {
+      try { recordFailure(p.id, { at: new Date().toISOString(), reasons, workDir, startTick: p.startTick, endTick: p.endTick, demo: p.demo }); }
       catch (e) { console.error(`could not record the failure: ${(e as Error).message}`); }
-      console.error(`FAILED: ${reasons.join("; ")}\nwork dir: ${workDir}`);
-      return { status: "failed", id, title, reasons, cleanupVerified };
+      console.error(`FAILED ${p.title}: ${reasons.join("; ")}\nwork dir: ${workDir}`);
+      return { status: "failed", id: p.id, title: p.title, reasons, cleanupVerified };
     };
 
-    let capture = o.force ? undefined : completedCapture(id, renderKey, `${captureSize(settings).width}x${captureSize(settings).height}`);
-    if (capture) {
-      workDir = capture.workDir;
-      console.log(`render stage already done in ${workDir}; resuming at post`);
-    } else {
-      // The last word on --repost's no-launch promise, at the launch boundary itself.
-      if (o.postOnly) throw new Refusal("post only: no completed capture for this job; nothing launched");
-      const r = await render({ title, demo, slot: facts.slot, startTick, endTick, workDir, lockFile: path.join(STATE_DIR, ".render.lock"), ids, settings, lookCfg: look, crosshair, debugCommands, timeoutS: o.timeoutS });
-      if (r.status !== "ok" || !r.mapping || !r.audio || !r.video) return fail(r.reasons, r.cleanupVerified);
-      capture = { renderKey, mapping: r.mapping, video: r.video, audio: r.audio, workDir };
-      writeJsonAtomic(path.join(workDir, "capture.json"), { renderKey, mapping: r.mapping, video: r.video, audio: r.audio });
-      console.log(`render ok in ${r.wallSeconds}s`);
+    const toRender: PreparedJob[] = [];
+    for (const p of preps) {
+      // Resume: the clip is done when the library holds it (any render key); force (--rerender) makes it again.
+      if (!p.o.force && p.inLibrary()) { console.log(`already in the library: ${p.title}`); results.set(p.id, { status: "skipped", id: p.id, title: p.title, clip: clipPath(p.id) }); continue; }
+      const c = p.o.force ? undefined : completedCapture(p.id, p.renderKey, `${captureSize(p.settings).width}x${captureSize(p.settings).height}`);
+      if (c) { console.log(`${p.title}: render stage already done in ${c.workDir}; resuming at post`); captures.set(p.id, c); }
+      else toRender.push(p);
     }
 
-    ensureClipsDir();
-    const tmp = clipTmpPath(id, attempt);
-    const p = post(capture.video, capture.audio, capture.mapping, startTick, endTick, settings, tmp, spec?.windows);
-    if (p.status !== "ok") return fail(p.reasons);
+    if (toRender.length) {
+      // The last word on --repost's no-launch promise, at the launch boundary itself.
+      if (toRender.some((p) => p.o.postOnly)) throw new Refusal("post only: no completed capture for a job; nothing launched");
+      const order = [...toRender].sort((x, y) => x.startTick - y.startTick);
+      const first = order[0];
+      const launchDir = order.length === 1 ? path.join(STATE_DIR, "render", first.id, attempt) : path.join(STATE_DIR, "render", `launch-${first.facts.demoSha256.slice(0, 12)}-${attempt}`);
+      const r = await render({
+        title: order.length === 1 ? first.title : `${first.facts.map} · ${order.length} takes`,
+        demo: first.demo, takes: order.map((p) => ({ startTick: p.startTick, endTick: p.endTick, slot: p.facts.slot })),
+        workDir: launchDir, lockFile: path.join(STATE_DIR, ".render.lock"), ids: first.ids, settings: first.settings,
+        lookCfg: first.look, crosshair: first.crosshair, debugCommands: order.length === 1 ? first.debugCommands : [],
+        timeoutS: first.o.timeoutS,
+      });
+      console.log(`render ${r.status} in ${r.wallSeconds}s (${order.length} take(s))`);
+      for (const [i, p] of order.entries()) {
+        const t = r.takes[i];
+        // A take with a usable capture is kept even when another take of the launch failed.
+        if (!r.cleanupVerified || !t || t.reasons.length || !t.mapping || !t.audio) {
+          results.set(p.id, fail(p, [...r.reasons, ...(t?.reasons ?? ["no take result"])], launchDir, r.cleanupVerified));
+          continue;
+        }
+        // Each clip's own attempt dir records its capture, pointing into the shared launch dir.
+        const workDir = order.length === 1 ? launchDir : path.join(STATE_DIR, "render", p.id, attempt);
+        const record: CaptureRecord = { renderKey: p.renderKey, mapping: t.mapping, video: t.video, audio: t.audio };
+        writeJsonAtomic(path.join(workDir, "capture.json"), record);
+        captures.set(p.id, { ...record, workDir });
+      }
+    }
 
-    publish(tmp, {
-      id, file: `clips/${id}.mp4`, title, map: facts.map, demo, demoSha256: facts.demoSha256, round,
-      ...(spec ? { moment: { rank: spec.rank, score: spec.score, breakdown: spec.breakdown, kills: spec.kills, killTicks: spec.killTicks, weapons: spec.weapons, flags: spec.flags, ...(spec.clutch ? { clutch: { vs: spec.clutch.vs, won: spec.clutch.won } } : {}) } } : {}),
-      startTick, endTick, seconds: p.plan!.seconds, frames: p.plan!.frames, createdAt: new Date().toISOString(),
-      renderKey, render: { ...renderInputs, node: versions.node, mapping: capture.mapping, trim: p.plan, segments: p.segments!.map(({ startTick, endTick, speed, outSeconds }) => ({ startTick, endTick, speed, outSeconds })), workDir },
-      kind: "highlight", timing: "scheduled",
-      crosshair: { source: crosshair, demoPatch: facts.patch, cutoff: cutoff ?? null },
-    }, o.replaces);
-    // The page shows each clip as it lands; inside a pnpm go run it says the run is still going.
-    try { writeLibraryPage({ running: !!o.inBatch }); } catch (e) { console.error(`library page not rewritten: ${(e as Error).message}`); }
-    const ff = p.segments!.filter((x) => x.speed !== 1);
-    console.log(`ok: ${clipPath(id)} (${p.plan!.seconds.toFixed(1)} s from ${((endTick - startTick) / capture.mapping.tickrate).toFixed(1)} s of play${ff.length ? `, ${ff.length} stretch(es) fast-forwarded` : ""}; trimmed by the scheduled record start)`);
-    return { status: "done", id, title, clip: clipPath(id) };
+    for (const p of preps) {
+      if (results.has(p.id)) continue;
+      const c = captures.get(p.id)!;
+      // A post that throws fails its own clip only; the others keep their results.
+      try { results.set(p.id, postAndPublish(p, c, attempt, (reasons) => fail(p, reasons, c.workDir))); }
+      catch (e) { results.set(p.id, fail(p, [`post error: ${(e as Error).message}`], c.workDir)); }
+    }
+    return preps.map((p) => results.get(p.id)!);
   } finally {
     clipLock.release();
     process.off("exit", releaseClipLock);
   }
+}
+
+function postAndPublish(prep: PreparedJob, capture: CaptureRecord & { workDir: string }, attempt: string, fail: (reasons: string[]) => JobResult): JobResult {
+  const { o, demo, spec, startTick, endTick, settings, facts, round, id, title, crosshair, cutoff, versions, renderInputs, renderKey } = prep;
+  ensureClipsDir();
+  const tmp = clipTmpPath(id, attempt);
+  const p = post(capture.video, capture.audio, capture.mapping, startTick, endTick, settings, tmp, spec?.windows);
+  if (p.status !== "ok") return fail(p.reasons);
+  publish(tmp, {
+    id, file: `clips/${id}.mp4`, title, map: facts.map, demo, demoSha256: facts.demoSha256, round,
+    ...(spec ? { moment: { rank: spec.rank, score: spec.score, breakdown: spec.breakdown, kills: spec.kills, killTicks: spec.killTicks, weapons: spec.weapons, flags: spec.flags, ...(spec.clutch ? { clutch: { vs: spec.clutch.vs, won: spec.clutch.won } } : {}) } } : {}),
+    startTick, endTick, seconds: p.plan!.seconds, frames: p.plan!.frames, createdAt: new Date().toISOString(),
+    renderKey, render: { ...renderInputs, node: versions.node, mapping: capture.mapping, trim: p.plan, segments: p.segments!.map(({ startTick, endTick, speed, outSeconds }) => ({ startTick, endTick, speed, outSeconds })), workDir: capture.workDir },
+    kind: "highlight", timing: "scheduled",
+    crosshair: { source: crosshair, demoPatch: facts.patch, cutoff: cutoff ?? null },
+  }, o.replaces);
+  // The page shows each clip as it lands; inside a pnpm go run it says the run is still going.
+  try { writeLibraryPage({ running: !!o.inBatch }); } catch (e) { console.error(`library page not rewritten: ${(e as Error).message}`); }
+  const ff = p.segments!.filter((x) => x.speed !== 1);
+  console.log(`ok: ${clipPath(id)} (${p.plan!.seconds.toFixed(1)} s from ${((endTick - startTick) / capture.mapping.tickrate).toFixed(1)} s of play${ff.length ? `, ${ff.length} stretch(es) fast-forwarded` : ""}; trimmed by the scheduled record start)`);
+  return { status: "done", id, title, clip: clipPath(id) };
 }
