@@ -131,15 +131,16 @@ Score per moment from, first ranking only:
 |---|---|
 | kill count in cluster (2k…5k) | multikills are the backbone |
 | time between kills | fast 3k > slow 3k |
-| clutch state (1vX, won) | highest-value single signal |
+| clutch state (1vX, won) | highest-value single signal, but scaled by X and by kills in the clutch: a 1v1 with one kill is small, 1v3+ is big (recalibrated 2026-10-15 after clip 90) |
 | headshot, wallbang, no-scope, through smoke, while blind | flavour, straight from the death event |
 | weapon class (pistol/Deagle/scout vs rifle vs AWP) | difficulty |
 | round won after the moment | impact |
-| victim already low HP (reconstructed from `player_hurt` before the kill) | penalty |
+| victim already low HP (reconstructed from `player_hurt` before the kill) | penalty, capped, and reduced when the earlier damage was your own |
 | style multipliers per kill: no-scope, airborne (`attackerinair`), one-bullet kill, flick (yaw turned in the 100–200 ms before the shot, angle-wrapped, above a threshold). Each scales that kill's base value (about 1.3–1.5× each) and they stack multiplicatively | decided 2026-10-15: two one-tap flicks roughly double a boring 2k, while a single stylish kill cannot lift a weak round over a strong one, because multipliers only scale what is there. Replaces the earlier flat capped bonuses |
 
 | economy: ratio of the enemy team's equipment value to your team's at freeze end (per-player equipment values from the demo). Kills against a much richer team scale the round up; kills against a much poorer team scale it down. A round-level multiplier, capped (about 0.7–1.4×) | decided by Peder 2026-10-15: kills on an eco are easy, kills while on an eco are hard |
 
+| direction spread: yaw turned between consecutive kills in a run (kills in several directions within seconds) | added 2026-10-15 from clip 29; the per-kill flick window misses it |
 | facing: whether the victim was looking at you at the kill tick (victim view yaw against the vector from victim to attacker, within about 60 degrees = facing). A small per-kill multiplier: facing slightly up, from behind slightly down | decided by Peder 2026-10-15: few bullets in the back is easy, less impressive |
 
 Still deferred: trades, "saved a teammate".
