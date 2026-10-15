@@ -9,7 +9,7 @@
 //            sources.faceit.via "browser") through Peder's logged-in FACEIT session in
 //            the installed Chrome/Edge, profile state/browser-profile (docs/faceit-api.md)
 //   --last n backfill: the demos of the last n FACEIT matches through the browser session,
-//            one at a time with 10-20 s between downloads, skipping those already stored;
+//            one at a time with 4-8 s between downloads (config.json sources.faceit.pauseSeconds), skipping those already stored;
 //            resumable (state/sources/faceit-backfill.json)
 //   --login  opens that profile in a plain browser window to sign in; waits until it is closed
 // Pending items (a missing scope, a logged-out browser, a demo not uploaded yet) are listed, not failures.
@@ -57,7 +57,11 @@ function sources(): Source[] {
     const b = findBrowser();
     if (!b) throw new Error("--last needs Google Chrome or Microsoft Edge installed (it downloads through the browser session)");
     // The backfill replaces the normal FACEIT run for this invocation.
-    out.push(faceitBackfill({ apiKey: faceitKey, steamId64: loadIdentities().pov, last: backfillLast, demos: browserDemos({ browser: b, headless: conf.faceit?.headless === true }), haveMatch }));
+    // Pause between downloads: config.json → sources.faceit.pauseSeconds [min, max] (default 4-8 s), one at a time.
+    const [lo, hi] = Array.isArray(conf.faceit?.pauseSeconds) ? conf.faceit.pauseSeconds : [4, 8];
+    if (!(lo >= 0 && hi >= lo)) throw new Error("config.json sources.faceit.pauseSeconds must be [min, max] seconds");
+    const pauseMs = () => (lo + Math.random() * (hi - lo)) * 1000;
+    out.push(faceitBackfill({ apiKey: faceitKey, steamId64: loadIdentities().pov, last: backfillLast, demos: browserDemos({ browser: b, headless: conf.faceit?.headless === true }), haveMatch, pauseMs }));
   } else if (faceitKey) out.push(faceitSource({ apiKey: faceitKey, steamId64: loadIdentities().pov, maxMatchesPerRun: conf.faceit?.maxMatchesPerRun ?? 5, demos, haveMatch }));
   else console.log(`faceit: skipped. ${NO_KEY}`);
   return out;

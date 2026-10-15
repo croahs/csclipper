@@ -355,7 +355,7 @@ export type BackfillOptions = {
   demos: DemoProvider;
   /** Whether the store already holds this match's demo (by match id in a stored file name). */
   haveMatch: (matchId: string) => boolean;
-  /** Milliseconds to wait before each download after the first (default: random 10-20 s). */
+  /** Milliseconds to wait before each download after the first (default: random 4-8 s; grab passes config.json → sources.faceit.pauseSeconds). */
   pauseMs?: () => number;
   transport?: Transport;
 };
@@ -418,7 +418,7 @@ export function faceitBackfill(o: BackfillOptions): Source {
       if (!resume) { state.last = o.last; state.selection = todo.map((m) => m.matchId); save(); }
       const wanted = todo.filter((m) => !held(m.matchId));
       ctx.log(`faceit-backfill: last ${todo.length} matches${resume ? " (resuming the saved selection)" : ""}, ${todo.length - wanted.length} already held or not finished, ${wanted.length} to fetch`);
-      const pause = o.pauseMs ?? (() => 10_000 + Math.random() * 10_000);
+      const pause = o.pauseMs ?? (() => 4_000 + Math.random() * 4_000);
       try {
         for (const [i, m] of wanted.entries()) {
           if (i > 0 && !ctx.dryRun) await new Promise((r) => setTimeout(r, pause()));

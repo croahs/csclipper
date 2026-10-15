@@ -24,7 +24,8 @@
   },
   "sources": {
     "faceit": {
-      "maxMatchesPerRun": 5
+      "maxMatchesPerRun": 5,
+      "pauseSeconds": [4, 8]
     }
   }
 }

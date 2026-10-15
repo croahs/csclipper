@@ -63,7 +63,7 @@ the Downloads API (needs a scope FACEIT did not grant) or, with `--browser`
 logged-in FACEIT session in the installed Chrome or Edge, signed in once
 with `pnpm grab --login` (`docs/faceit-api.md`). `--last <n>` backfills
 instead: the demos of the last n FACEIT matches through the browser
-session, oldest first, one at a time with a random 10–20 s pause between
+session, oldest first, one at a time with a random 4–8 s pause (`sources.faceit.pauseSeconds`) between
 downloads, skipping matches already in the store (match id in a stored
 file name; ingest drops content duplicates) and stopping on the first
 failure with a screenshot in `state/browser-failures/`; a rerun resumes
