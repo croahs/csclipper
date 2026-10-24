@@ -89,9 +89,17 @@ function sources(): Source[] {
 async function main(): Promise<number> {
   // One grab at a time, --login included: sources advance their state across a
   // whole run, and the browser profile can only be open once.
+  // A lock left by a grab that was killed (its pid is gone) is taken over; it guards no game process.
   const lock = new RenderLock(path.join(STATE_DIR, ".grab.lock"));
-  lock.acquire();
-  const release = () => lock.release();
+  const stale = lock.acquire({ takeOverDead: true });
+  if (stale !== undefined) console.log(`removed a stale .grab.lock from pid ${stale}, which is no longer running`);
+  // Ctrl-C or a closed terminal also releases the render lock the Valve source may hold
+  // (release() only removes a lock holding this pid).
+  const renderLock = new RenderLock(path.join(STATE_DIR, ".render.lock"));
+  const release = () => { renderLock.release(); lock.release(); };
+  const onSignal = (sig: NodeJS.Signals) => { release(); console.error(`pnpm grab stopped (${sig}); locks released`); process.exit(130); };
+  const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"];
+  for (const sig of signals) process.on(sig, onSignal);
   process.on("exit", release);
   try {
     if (steamLoginOnly) {
@@ -133,8 +141,9 @@ async function main(): Promise<number> {
     console.log("inbox ingested; run pnpm go to rank and render");
     return code;
   } finally {
-    lock.release();
+    release();
     process.off("exit", release);
+    for (const sig of signals) process.off(sig, onSignal);
   }
 }
 

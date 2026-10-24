@@ -362,6 +362,15 @@ re-made. Only a guard refusal gives
   the attempt back. Locks (`state/.go.lock`, `.clip.lock`, `.render.lock`)
   are released on normal exit, errors and signals; a hard-killed run leaves
   them, to be deleted by hand after checking no cs2.exe / HLAE.exe is left.
+  `pnpm grab`'s `state/.grab.lock` guards no game process, so a run whose
+  pid is gone (a closed terminal tab is a hard kill) is taken over by the
+  next grab, which says so. The takeover is serialized by an exclusive
+  `.grab.lock.takeover` file, held only while the stale lock is replaced;
+  a grab hard-killed inside that moment (milliseconds, and only after an
+  earlier crash) strands it, and later grabs refuse until both files are
+  deleted by hand. Ctrl-C releases `.grab.lock` and any `.render.lock` the
+  Valve source holds; a hard kill while that GC session is up leaves
+  `.render.lock`, handled like any other.
 - **Library page.** `src/library/page.html` (committed) with the clip
   index inlined as JSON, every `<` escaped, so it works from `file://`;
   videos load by relative path. One static dark file, plain CSS and JS:

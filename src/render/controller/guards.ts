@@ -26,21 +26,53 @@ export function guard(ids: Identities) {
 }
 
 // An exclusive lock file holding the controller's pid. Any existing lock
-// refuses; a stale one is removed by hand after checking that no cs2.exe /
-// HLAE.exe is left (never automatically: two controllers could race).
+// refuses; a stale render lock is removed by hand after checking that no
+// cs2.exe / HLAE.exe is left (never automatically: two controllers could race,
+// and a dead controller can leave the game running). A lock that guards no game
+// process (pnpm grab's) may opt into takeOverDead: a lock whose pid is no longer
+// running is replaced, and acquire() returns that pid.
+/** Whether a process with this pid exists (EPERM: it exists, owned by someone else). */
+function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
+}
+
 export class RenderLock {
   constructor(readonly file: string) {}
 
-  acquire() {
+  acquire(opts: { takeOverDead?: boolean } = {}): number | undefined {
     mkdirSync(path.dirname(this.file), { recursive: true });
+    if (this.claim()) return undefined;
+    const holder = this.holder();
+    const pid = /^\d+$/.test(holder) ? Number(holder) : undefined;
+    // Only for a pid known to be gone: an empty or unreadable lock, or a live pid, refuses.
+    if (!opts.takeOverDead || pid === undefined || pid === process.pid || pidAlive(pid)) throw this.refusal(holder);
+    // Recovery is serialized by an exclusive .takeover file: only its holder may remove the stale
+    // lock, and it writes its own lock before letting go, so a contender that gets the takeover
+    // next re-reads a live pid and refuses instead of deleting a lock that was just taken.
+    const guard = `${this.file}.takeover`;
+    let g: number;
+    try { g = openSync(guard, "wx"); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new Refusal(`refusing: another process is recovering ${this.file} (${guard} exists; if nothing is running, delete both by hand)`);
+      throw e;
+    }
+    try {
+      if (this.holder() === holder) { try { rmSync(this.file); } catch {} }
+      if (!this.claim()) throw this.refusal(this.holder());
+      return pid;
+    } finally {
+      try { closeSync(g); } catch {}
+      try { rmSync(guard); } catch {}
+    }
+  }
+
+  /** Create the lock with this pid, exclusively; false when it already exists. */
+  private claim(): boolean {
     let fd: number;
     try {
       fd = openSync(this.file, "wx");
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      let holder = "";
-      try { holder = readFileSync(this.file, "utf8"); } catch {}
-      throw new Refusal(`refusing: ${this.file} exists (pid ${holder || "?"}); if no controller is running and no cs2.exe/HLAE.exe is left, delete it by hand`);
+      if ((e as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw e;
     }
     // The file is ours from here: a failed pid write (a full disk) removes it again rather than
     // leaving a lock nobody holds.
@@ -52,6 +84,15 @@ export class RenderLock {
       throw e;
     }
     closeSync(fd);
+    return true;
+  }
+
+  private holder(): string {
+    try { return readFileSync(this.file, "utf8"); } catch { return ""; }
+  }
+
+  private refusal(holder: string): Refusal {
+    return new Refusal(`refusing: ${this.file} exists (pid ${holder || "?"}); if no controller is running and no cs2.exe/HLAE.exe is left, delete it by hand`);
   }
 
   release() {
