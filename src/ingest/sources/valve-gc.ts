@@ -67,14 +67,27 @@ export async function steamLogin(ids: Identities, file = SESSION_FILE): Promise<
   session.loginTimeout = 5 * 60_000;
   const start = await session.startWithQR();
   if (!start.qrChallengeUrl) throw new Error("Steam returned no QR challenge");
-  console.log("Scan this with the Steam app signed in as the ALT account (RENDER_STEAM_ID64), not the main one:\n");
-  qrcode.generate(start.qrChallengeUrl, { small: true });
+  const show = (url: string) => {
+    console.log("\nScan this with the Steam app signed in as the ALT account (RENDER_STEAM_ID64), not the main one:\n");
+    qrcode.generate(url, { small: true });
+  };
+  show(start.qrChallengeUrl);
+  // Steam replaces the challenge every ~20 s; steam-session only passes the new URL on in its
+  // "poll response" debug event, so a stale code ("Failed to load QR info") is redrawn from there.
+  // Only newChallengeUrl is read from that body, never logged.
+  let current = start.qrChallengeUrl;
+  let scanned = false;
+  const redraw = (msg: string, body?: { newChallengeUrl?: string }) => {
+    const next = msg === "poll response" && !scanned ? body?.newChallengeUrl : undefined;
+    if (next && next !== current) { current = next; show(next); }
+  };
+  session.on("debug", redraw);
   await new Promise<void>((resolve, reject) => {
-    session.on("remoteInteraction", () => console.log("Scanned; approve the login in the app."));
+    session.on("remoteInteraction", () => { scanned = true; console.log("Scanned; approve the login in the app."); });
     session.on("authenticated", () => resolve());
     session.on("timeout", () => reject(new Error("the QR login timed out after 5 minutes; run pnpm grab --steam-login again")));
     session.on("error", (e: Error) => reject(e));
-  });
+  }).finally(() => session.off("debug", redraw));
   refuseUnlessAlt(session.steamID?.getSteamID64(), ids);
   refuseUnlessAlt(tokenAccount(session.refreshToken), ids);
   saveToken(file, session.refreshToken);
