@@ -9,9 +9,10 @@ how to run it. Model and review roles come from
 ## The standing order
 
 "Jeg har spilt cs, lag mine klipp" (or any demo dropped in
-`demos/inbox/`) means, without asking: `pnpm grab` (FACEIT through the
-browser profile, Valve MM through the alt's GC login, plus the folder
-scan), then `pnpm go` for every new demo: every highlight scoring 40 or
+`demos/inbox/`) means, without asking: `pnpm grab` (Valve MM through
+the alt's GC login, plus the folder scan; FACEIT demos arrive through
+that scan after Peder's own "Watch demo" click, since FACEIT's bot check
+blocks the browser profile, 2026-10-24), then `pnpm go` for every new demo: every highlight scoring 40 or
 more (at least one, the best, when none does), the deaths reel and the
 kills reel from the victims' view. Report what was
 made, with clip numbers. Launches are budgeted per demo (one launch

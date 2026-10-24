@@ -8,6 +8,8 @@
     "node": ">=22"
   },
   "scripts": {
+    "prep": "tsx src/cli/setup.ts",
+    "check": "tsx src/cli/setup.ts --check",
     "clip": "tsx src/cli/clip.ts",
     "typecheck": "tsc -p .",
     "moments": "tsx src/cli/moments.ts",

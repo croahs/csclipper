@@ -5,6 +5,8 @@
 ## Running
 
 ```
+pnpm prep                      (first time on a PC: tools, .env; pnpm check reports only)
+pnpm check
 pnpm grab [--dry-run] [--browser] [--last <n>]
 pnpm grab --login
 pnpm grab --steam-login
@@ -25,9 +27,10 @@ pnpm unsettle <demo sha256 prefix | clip no>...
 the same launch as its highlights (`config.json` → `reels`, each with
 `enabled`, `beforeSeconds`, `afterSeconds`; `--no-reels` skips them for
 one run): **deaths**, every death of
-his from his killer's first person (7 s before, 4 s after; a suicide or a
-world death from his own view), and **kills**, every kill of his from the
-victim's first person (7 s before, 2 s after; after the death the game
+the POV player from the killer's first person (7 s before, 4 s after; a
+suicide or a world death from the POV player's own view), and **kills**,
+every kill by the POV player from the victim's first person (7 s before,
+2 s after; after the death the game
 shows its death camera). Each take spectates that player's slot with the
 same HUD, crosshair and TrueView rules as a highlight, carries a line of
 text (round, weapon, the other player; Segoe UI Semibold, `drawtext` with
@@ -52,18 +55,37 @@ key (with a confirm), opened from disk it shows the `pnpm drop <no>`
 command to copy. Index writes (publish, delete) take a short lock,
 `state/.index.lock`, so a delete during a run is never lost.
 
+`pnpm prep` (PLAN.md M5; pnpm's own `setup` and `doctor` commands take the
+obvious names, so `pnpm check` is the report-only form) makes a PC ready:
+Steam and CS2 from the registry and `libraryfolders.vdf`, the pinned HLAE
+and FFmpeg downloaded into `tools/` with their sha256 checked (the pins
+and hashes are constants in `src/cli/setup.ts`; a new pin goes there and
+in `docs/spikes.md`), `tools/hlae/ffmpeg/ffmpeg.ini` written when there
+is none, and `.env` created from `.env.example` with `HLAE_EXE` and
+`CS2_EXE` filled and the two SteamIDs asked for. A value that is set is
+never changed. Both forms end with one line per requirement (Node, Steam,
+CS2, the `.env` keys, HLAE, the FFmpeg HLAE captures through, the FFmpeg
+post encodes with and whether it has NVENC, the POV account's saved CS2
+convars, which account Steam is logged in with, cs2.exe / HLAE.exe
+running, a browser for `--browser`), never an ID or a key, and exit 1
+when a required one is missing.
+
 `pnpm grab` (PLAN.md's `pnpm fetch`; pnpm's own `fetch` command takes that
 name) runs the demo sources, each writing new demos into `demos/inbox/`,
 then ingests the inbox; it renders nothing. Sources: **folders** copies new
 demos, read-only, from watched folders (default CS2's `game/csgo/`, where
-the FACEIT client's "Watch demo" and manual downloads land, and
-`~/Downloads`; `config.json` → `sources.folders.dirs` overrides), skipping
+the FACEIT client's "Watch demo" and manual downloads land, its `replays/`,
+where the Watch tab's downloads land, and `~/Downloads`; `config.json` →
+`sources.folders.dirs` overrides; not recursive), skipping
 any whose content is already in the store; **faceit** (with
 `FACEIT_API_KEY`) lists new FACEIT matches and downloads their demos, by
 the Downloads API (needs a scope FACEIT did not grant) or, with `--browser`
-(or `config.json` → `sources.faceit.via: "browser"`), through Peder's
+(or `config.json` → `sources.faceit.via: "browser"`), through the user's
 logged-in FACEIT session in the installed Chrome or Edge, signed in once
-with `pnpm grab --login` (`docs/faceit-api.md`). `--last <n>` backfills
+with `pnpm grab --login` (`docs/faceit-api.md`); since 2026-10-24 that
+click runs a Cloudflare bot check that fails in the automated browser, so
+the source stops within 30 s of the click with every new match pending
+and its room link printed, and the demo is downloaded by hand (below). `--last <n>` backfills
 instead: the demos of the last n FACEIT matches through the browser
 session, oldest first, one at a time with a random 4–8 s pause (`sources.faceit.pauseSeconds`) between
 downloads, skipping matches already in the store (match id in a stored
@@ -150,7 +172,8 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | Path | What |
 |---|---|
 | `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds` |
-| `.env` | identities and tool paths (`.env.example`; M0.2 setup in `docs/spikes.md`) |
+| `.env` | identities and tool paths (`.env.example`; `pnpm prep` fills it; M0.2 setup in `docs/spikes.md`) |
+| `src/cli/setup.ts` | `pnpm prep` / `pnpm check`: tool pins with their sha256, Steam and CS2 lookup, the requirement report |
 | `scoring.json` | ranking weights; tuning and current picks in `docs/scoring-notes.md` |
 | `src/cli/go.ts`, `src/cli/clip.ts`, `src/cli/moments.ts` | the entries |
 | `src/ingest/` | watch folder (`index.ts`), the source contract (`sources.ts`), sources (`sources/folders.ts`, `sources/faceit.ts` with its browser path `sources/faceit-browser.ts`, `sources/valve.ts` with its Steam login and GC client `sources/valve-gc.ts`) |
@@ -217,7 +240,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
   the job sets `cl_show_observer_crosshair 2` (the demo's crosshair);
   below it, the look cfg keeps the main account's saved crosshair convars
   and the job sets `cl_show_observer_crosshair 0` (the spectator's own,
-  i.e. his). Empty (absent, `null`, `""`) means always the demo's. The
+  i.e. the main account's). Empty (absent, `null`, `""`) means always the demo's. The
   value 14182 is inferred, not looked up: Valve's notes give no build
   number, and the store's demos show 14181 on 15 September and 14182 from
   23 September on (FACEIT match dates). The render key changes only where
@@ -279,10 +302,12 @@ the spectated player (docs/spikes.md, M0.2 open items).
   18) whenever a one-frame test encode works on either FFmpeg, else x264
   (`-preset slow -crf 18`); a failed NVENC encode falls back to x264 and
   logs why. The entry's `render.encoder` says which made it. Post runs
-  the FFmpeg in PATH (`POST_FFMPEG`, the same system build HLAE's capture
-  pipe uses via `tools/hlae/ffmpeg/ffmpeg.ini`, which the render key
-  names). The probe tries that one first, then the pinned
-  `tools/ffmpeg/ffmpeg.exe` (`nvencFfmpeg()`): FFmpeg 9 opens NVENC only
+  the FFmpeg in PATH (`postFfmpeg()`, on this machine the same system
+  build HLAE's capture pipe uses via `tools/hlae/ffmpeg/ffmpeg.ini`, which
+  the render key names), else the pinned `tools/ffmpeg/ffmpeg.exe` that
+  `pnpm prep` downloads (on a fresh PC `ffmpeg.ini` points at it too). The
+  NVENC probe tries the post FFmpeg first, then the pin
+  (`nvencFfmpeg()`): FFmpeg 9 opens NVENC only
   on NVIDIA driver 610+, and the pin is FFmpeg 7.1.1, which also works on
   older drivers (it did on 591.86). With driver 617.42 the system FFmpeg
   9.0.1 passes and the pin goes unused. Pin source:

@@ -153,7 +153,7 @@ export async function prepareJob(o: JobInput) {
 
 export async function clipJob(o: JobInput): Promise<JobResult> {
   const p = await prepareJob(o);
-  console.log(`clip ${p.id}: ${p.title} (slot ${p.facts.slot}, build ${p.facts.patch}: ${p.crosshair === "demo" ? "the demo's crosshair" : "his saved crosshair"}, render key ${p.renderKey})`);
+  console.log(`clip ${p.id}: ${p.title} (slot ${p.facts.slot}, build ${p.facts.patch}: ${p.crosshair === "demo" ? "the demo's crosshair" : "your saved crosshair"}, render key ${p.renderKey})`);
   if (o.dryRun) {
     console.log(JSON.stringify({ id: p.id, title: p.title, facts: p.facts, renderInputs: p.renderInputs }, null, 2));
     return { status: "dry", id: p.id, title: p.title };

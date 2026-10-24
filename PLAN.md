@@ -14,7 +14,8 @@ folded in below, so this is the version to build from.
 - **Game:** Counter-Strike 2. CS:GO demos are out of scope.
 - **Footage:** real in-game video (the demo replayed in CS2 and
   captured), not 2D radar renders. Decided.
-- **Machine:** this Windows 11 PC, with CS2 installed. The renderer
+- **Machine:** a Windows 11 PC with CS2 installed (this one first;
+  others' since M5). The renderer
   takes over the game while it runs, so rendering is a "while you are
   not playing" job. It must detect a running CS2 and refuse, never
   reuse or kill your session.
@@ -417,6 +418,53 @@ player, normally the death camera; that is accepted.
 **M4. Sources and polish.** FACEIT auto-download, overlays, killfeed,
 montage builder, OBS fallback, Valve GC download, deferred scoring
 signals.
+
+**M5. Sharing** (decided 2026-10-25). Other players run it on their
+own Windows PC from the public repo (github.com/croahs/csclipper).
+Still one player per install, no accounts, no service. Nobody needs
+Claude, Claude for Chrome or any AI tool: the FACEIT browser path is
+Playwright driving the user's own Chrome or Edge profile.
+
+Decisions:
+
+- The alt-account rule stays for everyone: `RENDER_STEAM_ID64` must be
+  a second Steam account, logged in while clips render. A free account
+  with CS2 added is enough. The ban guard is not softened for strangers.
+- The folders source is the documented way to get FACEIT demos: click
+  "Watch demo" in the FACEIT client or the match room, the file lands
+  in CS2's `game/csgo/` or in Downloads, `pnpm go` takes it from there.
+  No key, no browser profile, no extra install. The automated browser
+  path is retired as the hands-off way: since 2026-10-24 FACEIT runs a
+  Cloudflare Turnstile check behind "Watch demo" that fails in the
+  Playwright-driven browser (diagnosed 2026-10-25, `docs/faceit-api.md`),
+  and nothing here answers a bot check. The code stays, stops within
+  30 s of the click as blocked and prints the room link; it comes back on
+  its own if FACEIT drops the check.
+- v1 distribution is `git clone`, `pnpm install`, `pnpm prep`. A
+  one-line PowerShell bootstrap (winget Node, corepack pnpm, clone) comes
+  after two or three people have gone through v1. No installer, no
+  bundled exe at this scale.
+
+Phases:
+
+1. **Runnable by someone else.** `pnpm prep`: finds Steam and CS2 from
+   the registry and `libraryfolders.vdf`, downloads the pinned HLAE and
+   FFmpeg zips with sha256 checks into `tools/`, writes HLAE's
+   `ffmpeg.ini` to the pinned FFmpeg when there is none, fills `.env`
+   (prompts for the two SteamIDs, never overwrites a value that is
+   set). Post falls back to the pinned FFmpeg when PATH has none.
+   `pnpm check` (= `pnpm prep --check`; pnpm's own `setup` and `doctor` take those names) writes nothing and reports
+   every requirement, including the logged-in Steam account and whether
+   the POV account's CS2 convars exist on this machine; its output is
+   what goes into an issue. A README for humans, MIT license, issue
+   template, and "you" / "the player" instead of Peder in user-facing
+   text. Verified on a machine that is not this one. The setup command
+   touches tool paths that the launch uses, so Sol reviews it.
+2. **FACEIT for others.** Done 2026-10-25 for the diagnosis: the path
+   is blocked by a bot check, not a locator, and is retired (above).
+   Left: match dates on the library page from the demo file when there
+   is no FACEIT key.
+3. **Easy tier.** The bootstrap script, after v1 feedback.
 
 ## Who does what
 

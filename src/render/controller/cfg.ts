@@ -3,9 +3,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { accountId } from "../../config.ts";
+import { steamPath } from "../../steam.ts";
 
 // --- the player's own look, from the MAIN account's convars (read only) -------
-// The alt has none of Peder's settings, and a demo is drawn with the
+// The alt has none of the player's settings, and a demo is drawn with the
 // spectator's config. Only look-related convars are copied; split-screen
 // variants (name$N) are skipped. Nothing is ever written to userdata.
 const LOOK = /^(cl_crosshair|crosshair$|cl_grenadecrosshair|cl_ironsight_|viewmodel_|cl_prefer_lefthanded$|cl_showloadout$|hud_showtargetid$|cl_hud_color$|cl_hud_radar_|cl_radar_|safezone[xy]$|cl_teamid_overhead|cl_show_clan_in_death_notice$)/;
@@ -27,8 +28,8 @@ function readConvars(file: string): [string, string][] {
 // --- crosshair --------------------------------------------------------------
 // Since CS2's 22 September 2026 update a demo carries the player's crosshair, so the
 // observer shows it (cl_show_observer_crosshair 2) and none of the main account's
-// cl_crosshair* convars are exec'd. Older demos do not: they get his saved crosshair
-// convars and cl_show_observer_crosshair 0, so the spectator's own (his) crosshair shows.
+// cl_crosshair* convars are exec'd. Older demos do not: they get the main account's saved crosshair
+// convars and cl_show_observer_crosshair 0, so the spectator's own (the main account's) crosshair shows.
 export type CrosshairSource = "demo" | "own";
 const CROSSHAIR = /^(cl_crosshair|crosshair$)/;
 
@@ -37,9 +38,13 @@ export function crosshairSource(demoPatch: number, cutoff: number | undefined): 
   return cutoff === undefined || demoPatch >= cutoff ? "demo" : "own";
 }
 
-/** croclip_look.cfg body, from userdata/<main account id>/730/local/cfg/. Crosshair convars only for "own". */
+/**
+ * croclip_look.cfg body, from the Steam install's userdata/<main account id>/730/local/cfg/.
+ * Crosshair convars only for "own". The Steam install comes from the registry; when that cannot
+ * be read, CS2's own library root is assumed to be it (true for a single-library Steam).
+ */
 export function lookCfg(cs2Exe: string, pov: string, crosshair: CrosshairSource): string {
-  const steamRoot = path.resolve(path.dirname(cs2Exe), "..", "..", "..", "..", "..", "..");
+  const steamRoot = steamPath() ?? path.resolve(path.dirname(cs2Exe), "..", "..", "..", "..", "..", "..");
   const dir = path.join(steamRoot, "userdata", accountId(pov), "730", "local", "cfg");
   const sources = ["cs2_user_convars_0_slot0.vcfg", "cs2_machine_convars.vcfg"].map((f) => path.join(dir, f));
   for (const f of sources) if (!existsSync(f)) throw new Error(`main account convars not found: ${f}`);

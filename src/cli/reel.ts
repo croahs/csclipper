@@ -1,6 +1,6 @@
-// pnpm deaths <demo.dem> [--timeout <s>] [--dry-run]: the deaths reel (every death of his,
+// pnpm deaths <demo.dem> [--timeout <s>] [--dry-run]: the deaths reel (every death of the POV,
 //   from the killer's first person).
-// pnpm victims <demo.dem> [--timeout <s>] [--dry-run]: the kills reel (every kill of his,
+// pnpm victims <demo.dem> [--timeout <s>] [--dry-run]: the kills reel (every kill by the POV,
 //   from the victim's first person).
 // One guarded launch for all the reel's takes (src/reel), then post and library. pnpm go
 // makes both for every new demo by itself (config.json reels); these make one for any demo

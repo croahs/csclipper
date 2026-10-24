@@ -17,7 +17,7 @@ import { readFileInfo } from "./fileinfo.ts";
 const require = createRequire(import.meta.url);
 const dp = require("@laihoe/demoparser2");
 
-const SCHEMA = 8; // 8: his yaw at each kill; 3: airborne on deaths, POV flicks; 4: flicks from gunshots only; 5: names on deaths; 6: equipment per team; 7: victim facing
+const SCHEMA = 8; // 8: the POV's yaw at each kill; 3: airborne on deaths, POV flicks; 4: flicks from gunshots only; 5: names on deaths; 6: equipment per team; 7: victim facing
 const REGULATION_ROUNDS = 24; // MR12; later match rounds are overtime
 
 export type Team = "T" | "CT";
@@ -27,13 +27,13 @@ export type Death = {
   distance: number; victimHpBefore: number; // victim's health before the killing hit (100 if unhurt this round)
   airborne: boolean; // attackerinair on the death event
   attackerName: string; victimName: string; // as the death event names them (reel overlays)
-  // POV kills only: the angle between the victim's view (yaw) and the line from the victim to him,
+  // POV kills only: the angle between the victim's view (yaw) and the line from the victim to the POV,
   // the tick before the kill; undefined when the parser has no position or angle for either.
   victimFacingDeg?: number;
-  povYaw?: number; // POV kills only: his view yaw the tick before the kill (direction spread)
+  povYaw?: number; // POV kills only: the POV's view yaw the tick before the kill (direction spread)
 };
-// The POV's view turn before each of his gun kills: the largest yaw change from 100-200 ms
-// before the kill shot (his last gunshot at or before the kill, within 1 s) to the shot itself.
+// The POV's view turn before each gun kill: the largest yaw change from 100-200 ms
+// before the kill shot (the POV's last gunshot at or before the kill, within 1 s) to the shot itself.
 export type Flick = { killTick: number; shotTick: number; yawDegrees: number };
 export type Hurt = { tick: number; round: number; attacker: string | null; victim: string; dmg: number; health: number; weapon: string };
 export type Fire = { tick: number; round: number; player: string; weapon: string };
@@ -150,7 +150,7 @@ function extract(demo: string, sha256: string, pov: string, key: string): Parsed
   ].sort((a, b) => a.tick - b.tick);
   const blinds: Blind[] = inMatch(dp.parseEvent(demo, "player_blind", [], []) as any[]).map((b) => ({ tick: b.tick, round: roundAt(b.tick), attacker: sid(b.attacker_steamid), victim: b.user_steamid, duration: b.blind_duration }));
 
-  // Flicks: the POV's yaw over the 100-200 ms before each kill shot (his last gunshot within 1 s
+  // Flicks: the POV's yaw over the 100-200 ms before each kill shot (the POV's last gunshot within 1 s
   // before a gun kill; none, no flick), one parse for all of them. Offsets stay inside the window.
   const FLICK_FROM = Math.ceil(0.1 * TICKRATE), FLICK_TO = Math.floor(0.2 * TICKRATE);
   const shots = deaths.filter((d) => d.attacker === pov && !NOT_A_GUN.test(d.weapon)).flatMap((d) => {
@@ -171,7 +171,7 @@ function extract(demo: string, sha256: string, pov: string, key: string): Parsed
   // Facing: for each POV kill, the victim's yaw against the direction to the POV, the tick before.
   // Victims without a SteamID (bots, a dropped player) have no angles to ask for.
   const povKillsAll = deaths.filter((d) => d.attacker === pov && d.victim !== pov && sid(d.victim));
-  // (his yaw is read with the facing data; a kill of a player without a SteamID gets neither)
+  // (the POV's yaw is read with the facing data; a kill of a player without a SteamID gets neither)
   if (povKillsAll.length) {
     type Pos = { tick: number; steamid: string; X: number; Y: number; yaw: number };
     const at = new Map<string, Pos>();

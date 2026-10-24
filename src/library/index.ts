@@ -37,7 +37,7 @@ export type ClipEntry = {
   moment?: Record<string, unknown>; // rank, score and signals when the clip came from pnpm moments
   kind?: "highlight" | "deaths" | "kills"; // absent: highlight (clips made before the reels)
   leadOverride?: number;
-  reel?: { takes: { round: number; tick: number; weapon: string; player: string }[] }; // a reel's takes: who killed him (deaths) or whom he killed (kills) // seconds of lead-in a re-render asked for instead of config.json → clip.leadInSeconds
+  reel?: { takes: { round: number; tick: number; weapon: string; player: string }[] }; // a reel's takes: who killed the POV (deaths) or whom the POV killed (kills) // seconds of lead-in a re-render asked for instead of config.json → clip.leadInSeconds
   // How the clip was trimmed: "scheduled" = by the scheduled record-start mapping (src/post);
   // absent = clips made before M3's simplification, timed from muzzle flash and gunshots.
   timing?: "scheduled";

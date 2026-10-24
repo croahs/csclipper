@@ -1,10 +1,10 @@
-// FACEIT demos through Peder's own logged-in browser session (FACEIT does not
+// FACEIT demos through the user's own logged-in browser session (FACEIT does not
 // grant the Downloads API for non-commercial use). Two parts:
 //
 // - login(): starts the installed Google Chrome (else Microsoft Edge) as a
 //   plain process, not automated, on a separate profile in
-//   state/browser-profile/, and waits for the window to close. Peder logs in
-//   there himself, passing FACEIT's human verification himself.
+//   state/browser-profile/, and waits for the window to close. The user logs in
+//   there and passes FACEIT's human verification.
 // - browserDemos(): later runs open that profile with Playwright and only
 //   navigate match rooms and click the demo download. If FACEIT shows a
 //   verification or a login page, the run stops and says so; nothing here
@@ -37,7 +37,7 @@ export function findBrowser(env: NodeJS.ProcessEnv = process.env): InstalledBrow
   return undefined;
 }
 
-/** Open the profile in a plain browser window for Peder to log in; resolves when he closes it. */
+/** Open the profile in a plain browser window for the user to log in; resolves when the user closes it. */
 export function login(b: InstalledBrowser, log: (l: string) => void = console.log): Promise<number> {
   log(`Opening ${b.name} with the croclipper profile (${PROFILE_DIR}).`);
   log("In that window: answer the cookie dialog as you like, click LOG IN, sign in to FACEIT (complete any check it shows),");
@@ -57,13 +57,21 @@ export function login(b: InstalledBrowser, log: (l: string) => void = console.lo
 
 const PAUSE_BETWEEN_MS = 4000; // one match at a time, politely spaced
 const PAGE_TIMEOUT_MS = 45_000;
-const DOWNLOAD_START_MS = 5 * 60_000; // from the click to the download starting
+// From the click to the download starting. Downloads began within seconds while the path worked
+// (2026-10-15); since the bot check (BOT_CHECK below) none begins, so the wait is short and ends
+// as blocked, not failed. If FACEIT drops the check, a download within this window works again.
+const DOWNLOAD_START_MS = 30_000;
 const DOWNLOAD_DONE_MS = 20 * 60_000; // for the whole transfer
 const MAX_DEMO_BYTES = 2 * 1024 ** 3;
 export const FAILURES_DIR = path.join(STATE_DIR, "browser-failures");
 
 export const NOT_LOGGED_IN = "The croclipper browser profile is not logged in to FACEIT. Run pnpm grab --login, sign in in the window that opens, close it, then run pnpm grab --browser again.";
 export const VERIFICATION = "FACEIT showed a human-verification page to the automated browser. Nothing was answered or retried: run pnpm grab --login, open faceit.com in that window (complete any check yourself), close it, then try again.";
+// Since 2026-10-24 the click runs a Cloudflare Turnstile check that fails in the automated
+// browser (console: "[Cloudflare Turnstile] Error: 600010"), so no download ever starts. Nothing
+// here answers a bot check: the match is left pending with its room link, where the click in
+// the user's own browser still works (docs/faceit-api.md).
+export const BOT_CHECK = "FACEIT's bot check (Cloudflare Turnstile) fails behind \"Watch demo\" in the automated browser, so no download starts. Download the demo yourself from the room link in your own browser; pnpm grab picks it up from Downloads.";
 
 export type BrowserDemoOptions = { browser: InstalledBrowser; headless?: boolean };
 
@@ -128,14 +136,24 @@ export function browserDemos(o: BrowserDemoOptions): DemoProvider {
         let downloadError: unknown;
         let d: Download | undefined;
         const started = page.waitForEvent("download", { timeout: DOWNLOAD_START_MS }).then((x) => { d = x; }, (e) => { downloadError = e; });
-        try { await watch.click(); } catch (e) { return await fail(`clicking "Watch demo" failed: ${(e as Error).message}`); }
-        // Until the download starts, keep watching for a verification or a logout.
-        while (!d && downloadError === undefined) {
-          const s = await stop();
-          if (s) return s;
-          await Promise.race([started, page.waitForTimeout(1000)]);
+        let botCheck = false;
+        const onConsole = (msg: { text(): string }) => { if (/Cloudflare Turnstile\] Error/i.test(msg.text())) botCheck = true; };
+        page.on("console", onConsole);
+        try {
+          // The download waiter above is armed before the click (a download can begin while the click resolves), so its window starts a moment early.
+          try { await watch.click(); } catch (e) { return await fail(`clicking "Watch demo" failed: ${(e as Error).message}`); }
+          // Until the download starts, keep watching for a verification, a logout or a failed bot check.
+          while (!d && downloadError === undefined) {
+            const s = await stop();
+            if (s) return s;
+            if (botCheck) return { kind: "blocked", message: BOT_CHECK, pendingReason: "FACEIT's bot check blocks the automated download; download it from the room link" };
+            await Promise.race([started, page.waitForTimeout(1000)]);
+          }
+        } finally {
+          page.off("console", onConsole);
         }
-        if (!d) return await fail(`no download started within ${DOWNLOAD_START_MS / 60000} min of clicking "Watch demo"`);
+        // No download after the click. The console line does not show in every run, so this is reported as what was seen, with the bot check as the likely cause.
+        if (!d) return { kind: "blocked", message: `No download started within ${DOWNLOAD_START_MS / 1000} s of clicking "Watch demo"; while the path worked, downloads began within seconds. Likely cause: ${BOT_CHECK}`, pendingReason: "no download started after the click (FACEIT's bot check, most likely); download it from the room link" };
         const dl: Download = d;
         // Exactly this match's demo: <match id>-1-1.dem, optionally compressed.
         const suggested = dl.suggestedFilename();

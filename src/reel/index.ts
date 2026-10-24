@@ -1,6 +1,6 @@
 // Reels (PLAN.md, Deaths reel and Victims reel): one clip per demo of many short
 // takes from other players' first person. "deaths": every death of the POV player,
-// from his killer's view; "kills": every kill of his, from the victim's view (after
+// from the killer's view; "kills": every kill by the POV, from the victim's view (after
 // the death the game shows its death camera). Each take's window around the event is
 // config.json → reels (7 s before; 4 s after a death, 2 s after a kill). Each take gets a line of text (round, weapon, the other player),
 // short fades, and all takes are concatenated. A reel is a RenderUnit, so pnpm go
@@ -24,7 +24,7 @@ export type ReelKind = "deaths" | "kills";
 
 export type ReelTake = TakeSpec & { tick: number; round: number; weapon: string; player: string; steamid: string };
 
-/** The events a reel shows, in tick order: every death of his (suicides and world deaths too), or his kills of enemies. */
+/** The events a reel shows, in tick order: every death of the POV (suicides and world deaths too), or the POV's kills of enemies. */
 export function reelEvents(p: ParsedDemo, kind: ReelKind): Death[] {
   const me = p.identity.steamid;
   const rounds = p.rounds.filter((r) => r.phase !== "knife");
@@ -46,7 +46,7 @@ export function reelTakes(p: ParsedDemo, kind: ReelKind, log: (m: string) => voi
     const round = p.rounds.find((r) => r.n === d.round)!;
     const startTick = Math.max(round.startTick, earliest, Math.round(d.tick - w.beforeS * t));
     const endTick = Math.min(latest, Math.round(d.tick + w.afterS * t));
-    // A death without another player behind it (his own grenade, a fall) is shown from his own view.
+    // A death without another player behind it (the POV's own grenade, a fall) is shown from the POV's own view.
     const byOther = kind === "kills" || (d.attacker !== null && d.attacker !== d.victim);
     const steamid = kind === "deaths" ? (byOther ? d.attacker! : d.victim) : d.victim;
     const player = kind === "deaths" ? (byOther ? d.attackerName : d.attacker === d.victim ? "himself" : "the world") : d.victimName;

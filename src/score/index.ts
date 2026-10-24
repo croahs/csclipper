@@ -121,7 +121,7 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
     b.speed = Math.round(Math.min(w.speed.max, Math.max(0, (w.speed.referenceSeconds - avgGap) * w.speed.pointsPerSecondFaster)) * 10) / 10;
     if (run.length >= 3) b.tight = (run.length - 2) * w.tightness.perKillBeyondTwo;
   }
-  // Clutch: by enemies alive at its start, times the share of them he killed in it (at least half).
+  // Clutch: by enemies alive at its start, times the share of them the POV killed in it (at least half).
   if (clutch) {
     const inClutch = kills.filter((k) => k.tick >= clutch.fromTick).length;
     const share = Math.max(0.5, Math.min(1, inClutch / clutch.vs));
@@ -145,7 +145,7 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
     const yaw = p.flicks.find((x) => x.killTick === k.tick)?.yawDegrees ?? 0;
     if (yaw >= st.bigFlickMinDegrees) f *= st.bigFlick;
     else if (yaw > st.flickMinDegrees) f *= st.flick;
-    // Facing: the victim looking at him (harder) or away (easier); unknown counts 1.
+    // Facing: the victim looking at the POV (harder) or away (easier); unknown counts 1.
     if (k.victimFacingDeg !== undefined) f *= k.victimFacingDeg <= st.facingMaxDegrees ? st.facing : st.behind;
     return f;
   });
@@ -153,7 +153,7 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
   if (extra !== 0) b.style = Math.round(b.kills * extra * 10) / 10;
 
   // Low HP: only when someone else brought the victim low: others (teammates, the world) did at least as
-  // much damage to him before the kill as he did. His own spraydown is never "low HP". Capped per moment.
+  // much damage to the victim before the kill as the POV did. The POV's own spraydown is never "low HP". Capped per moment.
   const meId = p.identity.steamid;
   const broughtLowByOthers = (k: Death) => {
     let mine = 0, others = 0;
@@ -162,7 +162,7 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
   };
   const low = kills.filter((k) => k.victimHpBefore <= w.lowHp.threshold && broughtLowByOthers(k)).length;
   if (low) b.lowHp = -Math.min(w.lowHp.maxPerMoment, low * w.lowHp.penaltyPerKill);
-  // Direction spread: the yaw he turned between consecutive kills of the tightest run.
+  // Direction spread: the yaw the POV turned between consecutive kills of the tightest run.
   if (run.length >= 2) {
     // Between consecutive known yaws: a kill without one (a victim with no SteamID) is bridged over.
     const yaws = run.map((k) => k.povYaw).filter((y): y is number => y !== undefined);

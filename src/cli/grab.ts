@@ -2,11 +2,12 @@
 // "I have played some games". Runs the demo sources, each writing new demos
 // into demos/inbox/, then ingests the inbox. Renders nothing; pnpm go does that.
 //   folders  copies new demos from watched folders, read-only (default: CS2's
-//            game/csgo, where the FACEIT client's "Watch demo" saves them, and
-//            ~/Downloads; config.json sources.folders.dirs)
+//            game/csgo, where the FACEIT client's "Watch demo" saves them, its
+//            replays/, where the Watch tab's downloads land, and ~/Downloads;
+//            config.json sources.folders.dirs)
 //   faceit   with FACEIT_API_KEY: new matches from the FACEIT Data API; demos via the
 //            Downloads API (needs its scope), or with --browser (or config.json
-//            sources.faceit.via "browser") through Peder's logged-in FACEIT session in
+//            sources.faceit.via "browser") through the user's logged-in FACEIT session in
 //            the installed Chrome/Edge, profile state/browser-profile (docs/faceit-api.md)
 //   valve    with STEAM_WEB_API_KEY, STEAM_MATCH_AUTH_CODE, STEAM_LAST_SHARE_CODE: the main
 //            account's matchmaking share codes after the last one handled, each demo resolved
@@ -45,9 +46,10 @@ const backfillLast = lastAt >= 0 ? Number(process.argv[lastAt + 1]) : undefined;
 function sources(): Source[] {
   const env = existsSync(path.join(ROOT, ".env")) ? parseEnv(readFileSync(path.join(ROOT, ".env"), "utf8")) : {};
   const conf = JSON.parse(readFileSync(path.join(ROOT, "config.json"), "utf8")).sources ?? {};
-  // Watched folders: the configured list, else CS2's game/csgo (from CS2_EXE) and ~/Downloads.
+  // Watched folders: the configured list, else CS2's game/csgo (from CS2_EXE), its replays/ (the Watch tab's downloads) and ~/Downloads.
   const cs2Exe = env.CS2_EXE?.trim();
-  const defaults = [...(cs2Exe ? [path.resolve(path.dirname(cs2Exe), "..", "..", "csgo")] : []), path.join(homedir(), "Downloads")];
+  const csgo = cs2Exe ? path.resolve(path.dirname(cs2Exe), "..", "..", "csgo") : undefined;
+  const defaults = [...(csgo ? [csgo, path.join(csgo, "replays")] : []), path.join(homedir(), "Downloads")];
   const dirs: string[] = Array.isArray(conf.folders?.dirs) ? conf.folders.dirs.map((d: string) => d.replace(/^~(?=$|[\\/])/, homedir())) : defaults;
   const out: Source[] = [foldersSource({ dirs, knownHashes: () => new Set(Object.keys(readRegistry())) })];
   const faceitKey = env.FACEIT_API_KEY?.trim();
@@ -108,7 +110,7 @@ async function main(): Promise<number> {
       return 0;
     }
     if (loginOnly) {
-      // A plain browser process, not automated: Peder logs in and passes FACEIT's checks himself.
+      // A plain browser process, not automated: the user logs in and passes FACEIT's checks.
       const b = findBrowser();
       if (!b) { console.error("Neither Google Chrome nor Microsoft Edge is installed; the browser path needs one of them."); return 1; }
       await login(b);

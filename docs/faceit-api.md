@@ -34,17 +34,32 @@ the next `pnpm grab` fetches them. Until then the folders source (CS2's
 `game/csgo/`, where the FACEIT client's "Watch demo" saves demos, and
 `~/Downloads`) is the way in.
 
-## The browser path (what works today)
+## The browser path (blocked since 2026-10-24)
 
-FACEIT declined the Downloads API for non-commercial use, so demos come
-through Peder's own logged-in FACEIT session instead, doing the click he
+FACEIT declined the Downloads API for non-commercial use, so demos came
+through the user's own logged-in FACEIT session instead, doing the click the user
 would make in the match room. The match list still comes from the Data API
 above (only `FACEIT_API_KEY`'s player and history calls are needed).
 
+**Blocked.** Since 2026-10-24 the "Watch demo" click runs a Cloudflare
+Turnstile check that fails in the Playwright-driven browser: the click
+lands (the button is found and clicked), no `download-url` request is
+ever made, and the page logs a FACEIT error with `[Cloudflare Turnstile]
+Error: 600010`, repeating every 10 s, so no download starts (probe of
+2026-10-25 with the logged-in profile; two earlier runs timed out after
+5 min; the console line does not show in every run, so it is not relied
+on alone). Nothing here answers a bot check (PLAN.md M5): the source
+stops at that console line, or 30 s after the click without a download,
+as blocked (not failed, no screenshot) with every new match pending and
+the room link printed (`BOT_CHECK`), and the demo is downloaded by hand in the
+user's own browser, where the click still works, into Downloads for the
+folders source. The rest of this section describes the path as built, in
+case FACEIT drops the check.
+
 - `pnpm grab --login` starts the installed Google Chrome (else Microsoft
   Edge) as a plain process, not automated, with
-  `--user-data-dir=state/browser-profile` on https://www.faceit.com/en. Peder
-  signs in there himself (cookie dialog, any human check: his own clicks)
+  `--user-data-dir=state/browser-profile` on https://www.faceit.com/en. The user
+  signs in there (cookie dialog, any human check: the user's own clicks)
   and closes the window; the command waits for that. No credentials are
   handled or stored by croclipper; the session lives in that profile
   (gitignored with all of `state/`). A Playwright-launched browser does not
@@ -66,9 +81,10 @@ above (only `FACEIT_API_KEY`'s player and history calls are needed).
 - Stops, without retrying: a human-verification page ("verifying you are
   human" / "just a moment") or a logged-out page makes every new match
   pending with a message to run `pnpm grab --login` again; nothing ever
-  answers a verification. Any other failure (no download within 5 min, a
-  download that is not this match's demo, a save error) stops the run with
-  the page URL and a screenshot in `state/browser-failures/`.
+  answers a verification. No download within 30 s of the click is the bot
+  check (above) and blocks the same way. Any other failure (a download
+  that is not this match's demo, a save error) stops the run with the page
+  URL and a screenshot in `state/browser-failures/`.
 - Limits: the size cap (2 GiB) is checked when the download is complete
   (Playwright exposes no byte stream before that), with a 20-minute deadline
   on the whole transfer. A file whose contents are not a CS2 demo is
@@ -79,7 +95,7 @@ above (only `FACEIT_API_KEY`'s player and history calls are needed).
   does the checkpoint advance, exactly as for the API path.
 - First live run (2026-10-15): the 5 pending matches downloaded
   (230-394 MB each), no verification shown; 4 ingested, 1 already in the
-  store from a Downloads copy.
+  store from a Downloads copy. Last working run: before 2026-10-24.
 
 ## Behaviour the code adds on top
 

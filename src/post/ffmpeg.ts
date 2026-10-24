@@ -6,23 +6,32 @@ import path from "node:path";
 import { ROOT } from "../config.ts";
 
 /**
- * Post runs the FFmpeg in PATH (the one HLAE's capture pipe uses too, tools/hlae/ffmpeg/ffmpeg.ini;
- * ffmpegVersion() names it, since it shapes the raw capture). For NVENC only, the pinned build in
- * tools/ffmpeg/ (FFmpeg 7.1.1, docs/modules.md has its URL and sha256) is the fallback when the
- * PATH one cannot open the encoder: FFmpeg 9 needs NVIDIA driver 610+, 7.1.1 works with older ones.
+ * Post runs the FFmpeg in PATH when there is one (on this machine the one HLAE's capture pipe uses
+ * too, tools/hlae/ffmpeg/ffmpeg.ini; ffmpegVersion() names it, since it shapes the raw capture),
+ * else the pinned build in tools/ffmpeg/ that pnpm prep downloads (FFmpeg 7.1.1, docs/modules.md
+ * has its URL and sha256). For NVENC the pin is also the fallback when the PATH one cannot open
+ * the encoder: FFmpeg 9 needs NVIDIA driver 610+, 7.1.1 works with older ones.
  */
-const PINNED = path.join(ROOT, "tools", "ffmpeg", "ffmpeg.exe");
-export const POST_FFMPEG = "ffmpeg";
+export const PINNED_FFMPEG = path.join(ROOT, "tools", "ffmpeg", "ffmpeg.exe");
+let postBin: string | undefined;
+export function postFfmpeg(): string {
+  if (postBin === undefined) {
+    const r = spawnSync("ffmpeg", ["-version"], { encoding: "utf8" });
+    postBin = !r.error && r.status === 0 ? "ffmpeg" : existsSync(PINNED_FFMPEG) ? PINNED_FFMPEG : "ffmpeg";
+  }
+  return postBin;
+}
 
-export function ff(args: string[], bin = POST_FFMPEG) {
+export function ff(args: string[], bin = postFfmpeg()) {
   const r = spawnSync(bin, ["-hide_banner", ...args], { encoding: "utf8", maxBuffer: 1 << 26 });
-  if (r.error) throw new Error(`ffmpeg did not run: ${r.error.message}`);
+  if (r.error) throw new Error(`ffmpeg did not run (${bin}): ${r.error.message}; pnpm check lists what is installed`);
   return { status: r.status, stderr: r.stderr ?? "" };
 }
 
+/** The first line of `ffmpeg -version` of the FFmpeg post uses; "unknown" when it does not run. */
 export const ffmpegVersion = () => {
-  const r = spawnSync("ffmpeg", ["-version"], { encoding: "utf8" });
-  return (r.stdout ?? "").split(/\r?\n/)[0] ?? "unknown";
+  const r = spawnSync(postFfmpeg(), ["-version"], { encoding: "utf8" });
+  return r.error || r.status !== 0 ? "unknown" : (r.stdout ?? "").split(/\r?\n/)[0] || "unknown";
 };
 
 export type Probe = { duration: number | null; video: boolean; audio: boolean; videoStreams: number; audioStreams: number; unreadable: boolean; size: string | null };
@@ -58,7 +67,7 @@ export function decodeProblems(file: string): string {
 
 /** Mean luma (0-255) of the frame at time t seconds, from a 32x18 gray thumbnail; -1 if it cannot be read. */
 export function meanLuma(file: string, t: number): number {
-  const r = spawnSync(POST_FFMPEG, ["-hide_banner", "-v", "error", "-ss", t.toFixed(3), "-i", file, "-frames:v", "1", "-vf", "scale=32:18,format=gray", "-f", "rawvideo", "pipe:1"], { maxBuffer: 1 << 20 });
+  const r = spawnSync(postFfmpeg(), ["-hide_banner", "-v", "error", "-ss", t.toFixed(3), "-i", file, "-frames:v", "1", "-vf", "scale=32:18,format=gray", "-f", "rawvideo", "pipe:1"], { maxBuffer: 1 << 20 });
   const px = r.stdout as Buffer | null;
   if (r.error || r.status !== 0 || !px || px.length !== 32 * 18) return -1;
   let sum = 0;
@@ -75,7 +84,7 @@ let nvencBin: string | null | undefined;
 export function nvencFfmpeg(): string | null {
   if (nvencBin === undefined) {
     nvencBin = null;
-    for (const bin of [POST_FFMPEG, ...(existsSync(PINNED) ? [PINNED] : [])]) {
+    for (const bin of [...new Set([postFfmpeg(), ...(existsSync(PINNED_FFMPEG) ? [PINNED_FFMPEG] : [])])]) {
       const r = spawnSync(bin, ["-hide_banner", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x144:r=30", "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"], { encoding: "utf8" });
       if (!r.error && r.status === 0) { nvencBin = bin; break; }
     }
@@ -104,7 +113,7 @@ export function encodeFinal(encoder: "auto" | "x264" | "nvenc", crf: number, bui
   const order: ("x264" | "nvenc")[] = encoder === "x264" ? ["x264"] : encoder === "nvenc" ? ["nvenc"] : nv ? ["nvenc", "x264"] : ["x264"];
   let last = { status: null as number | null, stderr: "", encoder: order[0] };
   for (const e of order) {
-    const r = ff(build(videoArgs(e, crf)), e === "nvenc" ? nv ?? POST_FFMPEG : POST_FFMPEG);
+    const r = ff(build(videoArgs(e, crf)), e === "nvenc" ? nv ?? postFfmpeg() : postFfmpeg());
     last = { ...r, encoder: e };
     if (r.status === 0) return last;
     if (e === "nvenc" && order.length > 1) console.error(`NVENC encode failed (${nv}), falling back to x264: ${r.stderr.trim().slice(-300)}`);
