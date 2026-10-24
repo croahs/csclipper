@@ -4,8 +4,8 @@
 // files. Its own progress (last FACEIT match, last share code) lives in
 // state/sources/<name>.json. `pnpm grab` runs every source, then ingest;
 // `pnpm go` does not fetch. FACEIT is src/ingest/sources/faceit.ts; Valve
-// matchmaking (Game Coordinator via the alt account) will be a second module
-// with this same shape.
+// matchmaking (Game Coordinator via the alt account) is
+// src/ingest/sources/valve.ts.
 export type SourceContext = {
   inbox: string;
   stateFile: string; // this source's own state, e.g. state/sources/faceit.json

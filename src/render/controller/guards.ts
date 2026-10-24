@@ -33,16 +33,25 @@ export class RenderLock {
 
   acquire() {
     mkdirSync(path.dirname(this.file), { recursive: true });
+    let fd: number;
     try {
-      const fd = openSync(this.file, "wx");
-      writeSync(fd, String(process.pid));
-      closeSync(fd);
+      fd = openSync(this.file, "wx");
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
       let holder = "";
       try { holder = readFileSync(this.file, "utf8"); } catch {}
       throw new Refusal(`refusing: ${this.file} exists (pid ${holder || "?"}); if no controller is running and no cs2.exe/HLAE.exe is left, delete it by hand`);
     }
+    // The file is ours from here: a failed pid write (a full disk) removes it again rather than
+    // leaving a lock nobody holds.
+    try {
+      writeSync(fd, String(process.pid));
+    } catch (e) {
+      try { closeSync(fd); } catch {}
+      try { rmSync(this.file); } catch {}
+      throw e;
+    }
+    closeSync(fd);
   }
 
   release() {

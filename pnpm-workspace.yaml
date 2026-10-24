@@ -1,3 +1,5 @@
 allowBuilds:
   # esbuild's postinstall only re-checks its platform binary; tsx runs without it.
   esbuild: false
+  # protobufjs's postinstall only warns about version schemes of its dependents.
+  protobufjs: false

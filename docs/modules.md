@@ -7,6 +7,7 @@
 ```
 pnpm grab [--dry-run] [--browser] [--last <n>]
 pnpm grab --login
+pnpm grab --steam-login
 pnpm go [--dry-run] [--retry-failed] [--repost] [--settle-existing] [--no-reels]
 pnpm moments "<demo.dem>"
 pnpm clip "<demo.dem>" --top <n> [--timeout <s>] [--dry-run]
@@ -70,7 +71,30 @@ file name; ingest drops content duplicates) and stopping on the first
 failure with a screenshot in `state/browser-failures/`; a rerun resumes
 (`state/sources/faceit-backfill.json`). A pending FACEIT match is printed
 with its room link: "Download demo" there lands the file in Downloads,
-where the folders source picks it up on the next run. Pending items are
+where the folders source picks it up on the next run. **valve** (with
+`STEAM_WEB_API_KEY`, `STEAM_MATCH_AUTH_CODE`, `STEAM_LAST_SHARE_CODE`)
+walks the main account's share codes after the last one handled
+(`state/sources/valve.json`; the start code itself is not fetched), at
+most `sources.valve.maxMatchesPerRun` (5) per run, oldest first, and
+downloads each demo from the replay URL the Game Coordinator gives the
+alt's headless Steam login (`sources/valve-gc.ts`). That login is a QR
+code scanned once in the alt's Steam app (`pnpm grab --steam-login`); its
+refresh token sits in `state/sources/valve-session.json`, never a
+password, and is refused unless the account is `RENDER_STEAM_ID64`; the
+token's own account is checked before it is sent. The GC session opens
+only when there are new codes, and not while CS2 runs, a render run holds
+a lock or the alt plays elsewhere (it never kicks that session, and logs
+on with a fixed `logonID` of its own rather than the shared default 0,
+so replacing another session is unlikely, though nothing reserves it): those runs report
+the codes pending. While open it holds `state/.render.lock` until the
+logoff has finished (bounded; every exit releases it once), so a render started meanwhile refuses. Any `DEBUG`
+value is refused (steam-session could log the token under a wildcard). Demos Valve no
+longer has (over ~30 days, or none two hours after the match) are
+skipped; a recent one, or one of unknown age, without a demo yet waits.
+Replay URLs are accepted only from `replay<n>.valve.net`, with no
+redirects and a body of exactly its Content-Length; a full-length but
+corrupt archive still passes the checkpoint and is caught by ingest
+(`demos/rejected/`; set `lastShareCode` back to re-fetch). Pending items are
 not failures; exit 1 means a source failed or ingest rejected a file.
 
 `pnpm go` is the one command: drop demos (`.dem`, or `.zip` / `.bz2` /
@@ -129,8 +153,8 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `.env` | identities and tool paths (`.env.example`; M0.2 setup in `docs/spikes.md`) |
 | `scoring.json` | ranking weights; tuning and current picks in `docs/scoring-notes.md` |
 | `src/cli/go.ts`, `src/cli/clip.ts`, `src/cli/moments.ts` | the entries |
-| `src/ingest/` | watch folder (`index.ts`), the source contract (`sources.ts`), sources (`sources/folders.ts`, `sources/faceit.ts` with its browser path `sources/faceit-browser.ts`; Valve matchmaking later, same shape) |
-| `test/` | `pnpm test`: FACEIT source against recorded fixtures (`test/fixtures/faceit/`) and the folders source on temp folders; no network |
+| `src/ingest/` | watch folder (`index.ts`), the source contract (`sources.ts`), sources (`sources/folders.ts`, `sources/faceit.ts` with its browser path `sources/faceit-browser.ts`, `sources/valve.ts` with its Steam login and GC client `sources/valve-gc.ts`) |
+| `test/` | `pnpm test`: FACEIT source against recorded fixtures (`test/fixtures/faceit/`), the Valve source against a fake Web API and GC, and the folders source on temp folders; no network |
 | `src/queue/` | the batch and its job ledger (`index.ts`); one clip job, shared by `pnpm clip` and the batch (`job.ts`) |
 | `src/library/page.html`, `page.ts` | the library page template and its writer |
 | `demos/` | `inbox/` (drop here), `store/<sha256>.dem` (ingested demos), `ingested/` (originals), `rejected/` (with `.reason.txt`) |

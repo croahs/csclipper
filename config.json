@@ -29,6 +29,9 @@
     "faceit": {
       "maxMatchesPerRun": 5,
       "pauseSeconds": [4, 8]
+    },
+    "valve": {
+      "maxMatchesPerRun": 5
     }
   }
 }

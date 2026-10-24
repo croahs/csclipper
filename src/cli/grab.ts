@@ -1,4 +1,4 @@
-// pnpm grab [--dry-run] [--browser] [--last <n>] | pnpm grab --login   (PLAN.md's "pnpm fetch"; pnpm's own fetch command takes that name):
+// pnpm grab [--dry-run] [--browser] [--last <n>] | pnpm grab --login | pnpm grab --steam-login   (PLAN.md's "pnpm fetch"; pnpm's own fetch command takes that name):
 // "I have played some games". Runs the demo sources, each writing new demos
 // into demos/inbox/, then ingests the inbox. Renders nothing; pnpm go does that.
 //   folders  copies new demos from watched folders, read-only (default: CS2's
@@ -8,10 +8,16 @@
 //            Downloads API (needs its scope), or with --browser (or config.json
 //            sources.faceit.via "browser") through Peder's logged-in FACEIT session in
 //            the installed Chrome/Edge, profile state/browser-profile (docs/faceit-api.md)
+//   valve    with STEAM_WEB_API_KEY, STEAM_MATCH_AUTH_CODE, STEAM_LAST_SHARE_CODE: the main
+//            account's matchmaking share codes after the last one handled, each demo resolved
+//            through the Game Coordinator on the alt's Steam login and downloaded (refused while
+//            CS2 or a render runs; config.json sources.valve.maxMatchesPerRun, default 5)
 //   --last n backfill: the demos of the last n FACEIT matches through the browser session,
 //            one at a time with 4-8 s between downloads (config.json sources.faceit.pauseSeconds), skipping those already stored;
 //            resumable (state/sources/faceit-backfill.json)
 //   --login  opens that profile in a plain browser window to sign in; waits until it is closed
+//   --steam-login  shows a QR code to scan with the alt's Steam app; saves the alt's refresh
+//            token in state/sources/valve-session.json (gitignored) for the valve source
 // Pending items (a missing scope, a logged-out browser, a demo not uploaded yet) are listed, not failures.
 // Exit codes: 0 ok, 1 a source or a download failed or ingest rejected a file, 2 another pnpm grab is running.
 import { existsSync, readFileSync } from "node:fs";
@@ -25,9 +31,12 @@ import { NO_KEY, faceitBackfill, faceitSource } from "../ingest/sources/faceit.t
 import { foldersSource } from "../ingest/sources/folders.ts";
 import { ROOM_URL, browserDemos, findBrowser, login } from "../ingest/sources/faceit-browser.ts";
 import { RenderLock } from "../render/controller/guards.ts";
+import { NO_KEYS, valveSource } from "../ingest/sources/valve.ts";
+import { gcOpener, steamLogin } from "../ingest/sources/valve-gc.ts";
 
 const dryRun = process.argv.includes("--dry-run");
 const loginOnly = process.argv.includes("--login");
+const steamLoginOnly = process.argv.includes("--steam-login");
 const viaBrowserFlag = process.argv.includes("--browser");
 // --last <n>: backfill the demos of the last n FACEIT matches through the browser session.
 const lastAt = process.argv.indexOf("--last");
@@ -64,6 +73,16 @@ function sources(): Source[] {
     out.push(faceitBackfill({ apiKey: faceitKey, steamId64: loadIdentities().pov, last: backfillLast, demos: browserDemos({ browser: b, headless: conf.faceit?.headless === true }), haveMatch, pauseMs }));
   } else if (faceitKey) out.push(faceitSource({ apiKey: faceitKey, steamId64: loadIdentities().pov, maxMatchesPerRun: conf.faceit?.maxMatchesPerRun ?? 5, demos, haveMatch }));
   else console.log(`faceit: skipped. ${NO_KEY}`);
+  // Valve matchmaking: not part of a FACEIT backfill run.
+  const valveKey = env.STEAM_WEB_API_KEY?.trim();
+  const authCode = env.STEAM_MATCH_AUTH_CODE?.trim();
+  if (backfillLast !== undefined) return out;
+  if (valveKey && authCode) {
+    const ids = loadIdentities();
+    // A replay stem is in a stored demo's name: valve-<stem>.dem.bz2 here, match730_<stem>….dem from the Watch tab.
+    const haveDemo = (stem: string) => stored.some((n) => n.includes(stem));
+    out.push(valveSource({ apiKey: valveKey, authCode, startShareCode: env.STEAM_LAST_SHARE_CODE?.trim() || undefined, steamId64: ids.pov, maxMatchesPerRun: conf.valve?.maxMatchesPerRun ?? 5, openGc: gcOpener(ids), haveDemo }));
+  } else console.log(`valve: skipped. ${NO_KEYS}`);
   return out;
 }
 
@@ -75,6 +94,11 @@ async function main(): Promise<number> {
   const release = () => lock.release();
   process.on("exit", release);
   try {
+    if (steamLoginOnly) {
+      await steamLogin(loadIdentities());
+      console.log("Saved the alt's Steam login; pnpm grab now fetches Valve matchmaking demos.");
+      return 0;
+    }
     if (loginOnly) {
       // A plain browser process, not automated: Peder logs in and passes FACEIT's checks himself.
       const b = findBrowser();

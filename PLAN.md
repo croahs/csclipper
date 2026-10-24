@@ -78,11 +78,13 @@ rendering or with Peder playing.
   in-game). (b) Each share code is resolved to a download URL through
   the Game Coordinator, which needs a Steam login that "launches" CS2:
   the alt account, via `node-steam-user` + `globaloffensive` (what
-  `cs-demo-downloader` and `boiler-writter` do). That login kicks any
-  other Steam session on the alt for its duration, so fetch never runs
-  while a render runs. Last milestone. Until then: click download
-  in-game, point the watch folder at where Steam puts it (location to
-  confirm on this machine).
+  `cs-demo-downloader` and `boiler-writter` do). The alt logs in by a
+  QR code scanned once in its Steam app (decided by Peder, 2026-10-24):
+  a refresh token in `state/`, no password anywhere. The GC session
+  never runs while CS2 or a render runs, and never kicks another session
+  on the alt that is playing. Manual fallback: click download in-game;
+  the folders source picks the demo up if its folder is watched
+  (location unknown on this machine).
 
 ### 2. Parse
 
@@ -339,7 +341,7 @@ Layout:
 
 ```
 cs-clips/
-  src/ingest/   watch folder, faceit, (later) valve-gc
+  src/ingest/   watch folder, faceit, valve (+ valve-gc)
   src/parse/    demoparser2 wrapper, identity + time mapping, events
   src/score/    round context, clusters, scoring.json
   src/clip/     clip spec generation
