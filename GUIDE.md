@@ -157,11 +157,10 @@ account, double-click **Make clips**, open the bookmark.
 ## Valve matchmaking demos on their own (optional)
 
 Premier and competitive demos can be fetched for you, so you skip the
-Watch tab. It takes three values in a file and one QR scan, once.
+Watch tab. It takes three values, entered once; no terminal, no phone.
 
-1. Open `C:\Users\<you>\csclipper\.env` in Notepad. It has three
-   empty lines for this: `STEAM_WEB_API_KEY=`, `STEAM_MATCH_AUTH_CODE=`
-   and `STEAM_LAST_SHARE_CODE=`. Paste each value right after the `=`.
+1. Double-click **Set up matchmaking** in the csclipper folder. It
+   prints where each value comes from and asks for them one at a time.
 2. **STEAM_WEB_API_KEY**: logged in with your main account, open
    https://steamcommunity.com/dev/apikey, type anything in the domain
    field, and copy the key.
@@ -176,15 +175,14 @@ Watch tab. It takes three values in a file and one QR scan, once.
    its share link; the code is the part that looks like
    `CSGO-xxxxx-xxxxx-xxxxx-xxxxx-xxxxx`. Valve keeps demos for about a
    month, so pick a recent one.
-5. Save the file. Then, in a terminal in the csclipper folder (Windows
-   key, type `powershell`, then `cd ~\csclipper`), run
-   `pnpm grab --steam-login`. It shows a QR code: scan it with the Steam
-   app on your phone while that app is logged in with the **second**
-   account. That is the account the demos are downloaded through. Only
-   a login token is saved, never a password.
 
-From then on, **Make clips** fetches your new matchmaking demos first.
-It only does that while CS2 is closed, which it is when you run it.
+From then on, **Make clips** fetches your new matchmaking demos first:
+for each new match CS2 opens on the second account for about a minute,
+downloads the demo the way its Watch tab does, and is closed again. Keep
+your hands off that window too. Nothing runs through your main account,
+and no password is ever typed into csclipper. To change one of the three
+values later, clear its line in `.env` and double-click **Set up
+matchmaking** again.
 
 ## If something goes wrong
 

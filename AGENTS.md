@@ -9,15 +9,17 @@ how to run it. Model and review roles come from
 ## The standing order
 
 "Jeg har spilt cs, lag mine klipp" (or any demo dropped in
-`demos/inbox/`) means, without asking: `pnpm grab` (Valve MM through
-the alt's GC login, plus the folder scan; FACEIT demos arrive through
-that scan after Peder's own "Watch demo" click, since FACEIT's bot check
-blocks the browser profile, 2026-10-24), then `pnpm go` for every new demo: every highlight scoring 40 or
+`demos/inbox/`) means, without asking: `pnpm grab` (Valve MM through a fetch launch: CS2 on the alt with
+`-insecure`, one launch per new match, the game downloads the demo into
+its `replays/` and is killed; plus the folder scan; FACEIT demos arrive
+through that scan after Peder's own "Watch demo" click, since FACEIT's
+bot check blocks the browser profile, 2026-10-24), then `pnpm go` for every new demo: every highlight scoring 40 or
 more (at least one, the best, when none does), the deaths reel and the
 kills reel from the victims' view. Report what was
-made, with clip numbers. Launches are budgeted per demo (one launch
-per demo once chained takes exist), and CS2 must be closed; refuse
-otherwise and say so.
+made, with clip numbers. Launches are budgeted: one render launch per
+demo (chained takes) and one fetch launch per new matchmaking match (at
+most `sources.valve.maxMatchesPerRun` per `pnpm grab`), and CS2 must be
+closed; refuse otherwise and say so.
 
 ## Rules
 
@@ -34,7 +36,11 @@ otherwise and say so.
   (`HKCU\Software\Valve\Steam\ActiveProcess\ActiveUser`) and refuses
   to launch on any other account, when CS2 is already running, or
   without `-insecure`. HLAE is started only by the controller, which
-  kills the game process when the job ends. Nothing here ever runs
+  kills the game process when the job ends. The fetch launch (`pnpm
+  grab`, Valve MM) is a launch under the same guards, lock and cleanup,
+  without HLAE; its one write under the game folder is deleting an
+  orphan `.dem.info` that would otherwise block that match for good
+  (`docs/m6-mm-fetch.md`, Contract). Nothing here ever runs
   against a secure server. Joining a secure server with HLAE injected
   gets an account banned, so these are hard guards, not habits.
 - A clip in the library is never re-rendered because the cfg, the

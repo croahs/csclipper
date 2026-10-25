@@ -76,16 +76,14 @@ rendering or with Peder playing.
   share code, using your main account's match-history auth code and a
   Steam Web API key (both in `.env`; the auth code grants read access
   to match history and replays, nothing else, and can be revoked
-  in-game). (b) Each share code is resolved to a download URL through
-  the Game Coordinator, which needs a Steam login that "launches" CS2:
-  the alt account, via `node-steam-user` + `globaloffensive` (what
-  `cs-demo-downloader` and `boiler-writter` do). The alt logs in by a
-  QR code scanned once in its Steam app (decided by Peder, 2026-10-24):
-  a refresh token in `state/`, no password anywhere. The GC session
-  never runs while CS2 or a render runs, and never kicks another session
-  on the alt that is playing. Manual fallback: click download in-game;
-  the folders source picks the demo up if its folder is watched
-  (location unknown on this machine).
+  in-game). (b) Each share code is downloaded by CS2 itself: a fetch launch of
+  `cs2.exe` on the alt with `-insecure` and `+csgo_download_match`, one
+  per match, under the render launch's guards, lock and cleanup, the
+  demo landing in the game's `replays/` and copied into the inbox (M6,
+  2026-10-25; it replaced a headless GC login by QR code, M4, 2026-10-24,
+  which was the one setup step a stranger could not do without a phone
+  and a terminal). Manual fallback: the Watch tab in-game; the folders
+  source picks the demo up from `replays/`.
 
 ### 2. Parse
 
@@ -493,6 +491,20 @@ in today's CS2, with `-insecure`, how long, what the console says, is
 the kill clean); a failed gate ends M6 and the guide's MM section goes.
 The execution plan with agents, files, tests and done-criteria per
 phase is `docs/m6-mm-fetch.md`.
+
+Done 2026-10-25. Gate M0.4 passed the same day (`docs/spikes.md`): the
+launch line downloads a match in 25-30 s with `-insecure` (and never
+ran without it), the file name carries the share code's outcome id, the
+`.dem.info` carries the match id, `console.log` names the account, and
+the owned-tree cleanup verified in all nine launches. Two findings shaped
+the code: the game plays a downloaded demo at once, so it is one launch
+per match until a multi-code launch is measured; and a download killed
+between the `.dem.info` and the `.dem` leaves an orphan `.info` that
+blocks that match until it is removed, which the fetcher now does before
+each launch. The QR login, `valve-gc.ts` and the four Steam packages are
+gone; the three Web API values are entered through `Set up
+matchmaking.cmd`. Still open: a three-code launch, and an end-to-end
+`pnpm grab` on a new match (phase 5, the next time Peder plays).
 
 ## Who does what
 

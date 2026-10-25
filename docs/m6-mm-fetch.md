@@ -167,7 +167,10 @@ game's own logon stays (as it does for a render). *Gate:* whether
 `console.log` names the account the game logs on as. It does, on every
 launch, 3-12 s in: `[SteamNetSockets] AuthStatus (steamid:<SteamID64>):
 OK`; the fetcher reads it and kills the launch when it is not
-`RENDER_STEAM_ID64`, and the controller can do the same. `-insecure` stays the independent barrier either way.
+`RENDER_STEAM_ID64`, and a code is done only after that line has named
+the render account: a complete demo with no identity line ends the launch
+pending, nothing advanced (Astra, phase 2 review). The controller can do
+the same. `-insecure` stays the independent barrier either way.
 
 **Files and names.** The Watch tab writes two files per match into
 `game/csgo/replays/`: `match730_<A>_<B>_<C>.dem` and
@@ -222,7 +225,8 @@ downloaded (that is what the Watch tab's button does), and whether it
 would still run a second `+csgo_download_match` while playing is not
 measured (the gate had one code). So each pending code gets its own
 launch, in order, inside the same `pnpm grab` run, each under the full
-guard, lock, kill and quiet-period cycle (about 85 s per code: the
+guard, lock, kill and quiet-period cycle (about 55 s per code in the
+product, measured 2026-10-25; the gate's 85 s included its 30 s watch; the
 deferred command runs 8-28 s after spawn, the file is complete 15 s
 later, 10 s settle, kill, 10 s quiet, 30 s watch). A code's state:
 queued → downloading when its `.info` or `.dem` appears → done / gone /
@@ -233,11 +237,12 @@ next run. Hard cap per launch: 300 s. A measured multi-code launch
 (three codes, PLAN.md question 3) may later collapse this back to one
 launch per run.
 
-**Handing the file over.** The fetcher copies a done `.dem` into
-`demos/inbox/` itself, the way the folders source does (copy under a `.part`
-name, re-stat the original, rename; the folders source's 2 GiB limit
-applies, a larger file is `failed` with the reason), and only then counts
-the code as done for the checkpoint. The folders source still scans
+**Handing the file over.** Once the game is killed and the cleanup is
+verified (nothing writes the file any more), the fetcher re-checks the
+`.dem` and copies it into `demos/inbox/` itself, the way the folders
+source does (copy under a `.part` name, re-stat the original, rename; the
+folders source's 2 GiB limit applies, a larger file is `failed` with the
+reason), and only then counts the code as done for the checkpoint. The folders source still scans
 `replays/` by default and finds the same demo "in store" by content hash on
 its next pass; a custom `sources.folders.dirs` that leaves `replays/` out
 changes nothing about fetching. Done means in the inbox, not ingested;
@@ -330,8 +335,12 @@ overlap: both hold `.render.lock`, and `guard()` refuses on a running
 checks: a new demo reaches the store exactly once (registry has one entry
 for its hash); a demo already in the store is not copied again by the
 folders source (its state says "in store"); a code whose demo is already
-stored is not re-requested (the parsed-name check); an intermediate archive
-left in `replays/` does not produce a second inbox copy.
+stored is not re-requested (the parsed-name check). The fourth check the
+first draft had, "an intermediate archive left in `replays/` does not
+produce a second inbox copy", is void: the gate found no archive stage
+(the `.dem` is published whole), so the folders source's existing rule
+(`.bz2` deduped by ingest, after the copy) is not touched; declined from
+Astra's phase 2 review for that reason.
 
 **Astra's findings and where they went** (run 2026-10-25, `gpt-6-astra`,
 high effort, read-only). 1 `-insecure` → always passed, the exception is
@@ -426,13 +435,33 @@ another approach (AGENTS.md).
 versions (CS2 build from `steam.inf`, Node, OS), Sol has read it and
 its findings are in.
 
-## Phase 2: the fetch launch in the Valve source (Opus, Sol review)
+## Phase 2: the fetch launch in the Valve source (Opus, Sol review; done by Astra)
 
 Runs in parallel with phase 3 (different files). Only after the gate
 passes.
 
 **Who:** Opus implements; GPT-6.1 Sol reviews before it is called done
-(touches game launch: always reviewed).
+(touches game launch: always reviewed). Built 2026-10-25; Sol was at
+capacity twice, so GPT-6 Astra reviewed phases 2 and 3 together (verdict
+fail, 15 findings): identity required before done, the baseline taken
+right before the spawn, settling reset when a file vanishes, the corrupt
+line logged, a real protobuf scan for the `.info`'s match id, the share
+code validated by the decoder in `pnpm prep --valve` too, the auth code's
+case preserved, exit 0 only when all three values are valid, atomic
+`.env` writes, the main account named in the prompts, docs order and
+timing corrected. Declined: archive deduplication in the folders source
+(no archive stage exists, above); a test harness for the emergency
+paths (the gate's nine launches and two real runs of the fetcher cover
+them; unit tests for the pure pieces were added instead); hiding the
+pasted values in `pnpm prep --valve` (a limitation: the three values are
+typed into the player's own terminal window, as with any CLI that asks
+for a key, and the `.cmd` window shows them until it is closed). Astra's
+renewed sign-off: "pass after fixes 1-4", all four applied the same day
+(a complete pair already in `replays/` is copied without a launch; the
+`.info` reader rejects a varint over 64 bits and a field number out of
+range; `readFileInfo` checks its read counts, the field range and a
+length-delimited field's bounds; the verification deadline is checked
+before a re-kill round), with tests.
 
 **Changes:**
 
@@ -494,7 +523,7 @@ with one real pending code fetches the demo through a launch and the
 next `pnpm grab` reports nothing new; `pnpm go --dry-run` unchanged;
 Sol's review folded in.
 
-## Phase 3: setup without a terminal (Sonnet, Sol review)
+## Phase 3: setup without a terminal (Sonnet, Sol review; done by Astra)
 
 Parallel with phase 2.
 
@@ -511,8 +540,10 @@ Parallel with phase 2.
   (readline, like the SteamID prompts), validates each (key: 32 hex;
   auth code: `^[A-Z0-9]{4}-[A-Z0-9]{5}-[A-Z0-9]{4}$`; share code:
   `SHARE_CODE` from `valve.ts`), writes them with the `src/prep.ts`
-  helpers (bare values, round-trip check, never overwriting a set
-  value unless the user answers yes to "replace?"), prints nothing it
+  helpers (bare values, round-trip check, a set value is reported and
+  not asked for: to change one, clear its line in `.env` and run again;
+  decided in phase 3, the "replace?" question the first draft had cannot
+  coexist with "asks nothing when all three are set"), prints nothing it
   was given. Without a terminal it says so and lists the keys.
 - `Set up matchmaking.cmd` at the repo root, like `Make clips.cmd`:
   `cd /d "%~dp0"`, `call pnpm prep --valve`, `pause`.
@@ -552,6 +583,18 @@ confirms.
 2. `pnpm check` green; `git status` clean; everything pushed.
 3. Still open after this: a PC that is not this one. The guide is the
    test script for whoever goes first.
+
+Status 2026-10-25: step 1 waits for a new match (the main account's
+share-code chain holds no pending code, and the Web API cannot walk
+backwards). Done instead, on this PC: the production fetcher run twice
+for real on the one known code (the orphan-`.info` repair, the identity
+line, the download, the kill with a verified cleanup, the copy into a
+temp inbox; 55 s each, no lock left); `Set up matchmaking.cmd` run
+non-interactively with the three values set (reports them set, exit 0);
+`pnpm check` Ready, `pnpm typecheck`, `pnpm test` (105), `pnpm grab
+--dry-run` and `pnpm go --dry-run` green. Step 1 is the first thing to
+do the next time Peder has played a matchmaking match: double-click
+`Make clips`, watch CS2 open and close once, check the clip numbers.
 
 ## What a fresh session needs to know
 

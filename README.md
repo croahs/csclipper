@@ -96,10 +96,14 @@ clips render you cannot be playing on your main account.
 ## Valve matchmaking automation (optional)
 
 With `STEAM_WEB_API_KEY`, `STEAM_MATCH_AUTH_CODE` and
-`STEAM_LAST_SHARE_CODE` in `.env` and one `pnpm grab --steam-login` (a
-QR code for the render account's Steam app), `pnpm grab` fetches your
-new matchmaking demos itself. [GUIDE.md](GUIDE.md#valve-matchmaking-demos-on-their-own-optional)
-has the steps and links.
+`STEAM_LAST_SHARE_CODE` in `.env` (`Set up matchmaking.cmd`, or
+`pnpm prep --valve`, asks for them and says where they come from),
+`pnpm grab` fetches your new matchmaking demos itself: one short CS2
+launch per new match on the render account, with `-insecure`, in which
+the game downloads the demo into its own `replays/` folder as the Watch
+tab would; then the game is closed and the demo goes to the inbox.
+[GUIDE.md](GUIDE.md#valve-matchmaking-demos-on-their-own-optional) has
+the steps and links.
 
 ## FACEIT automation (optional)
 
