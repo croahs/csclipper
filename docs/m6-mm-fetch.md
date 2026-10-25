@@ -44,12 +44,13 @@ listing new matches still goes through the main account's key.
   same lock (`state/.render.lock`), same ownership and kill machinery
   (`src/render/controller/processes.ts`: `OwnedTree`, `killExact`,
   `snapshot`), same fail-closed cleanup (exit 3 when a game process may
-  be left). No HLAE: cs2.exe is spawned directly. Whether `-insecure`
-  is passed is decided by gate M0.4: pass it if the download works
-  with it (fewer exceptions to the rule that nothing here runs against
-  a secure server); if it does not, the launch is `-insecure`-free and
-  the rule in AGENTS.md gets this one named exception: a fetch launch
-  joins no server and loads no HLAE.
+  be left). No HLAE: cs2.exe is spawned directly. `-insecure` is always
+  passed (Astra, phase 0: it is the one barrier against a secure server
+  that does not depend on what a hand on the window does). If gate M0.4
+  finds that the download works only without it, M6 pauses and Peder
+  decides whether the rule in AGENTS.md gets a named exception (a fetch
+  launch joins no server and loads no HLAE, so it has no ban mechanism
+  of its own); the gate never applies that exception by itself.
 - Budget: one fetch launch per `pnpm grab` run, carrying every pending
   code (at most `sources.valve.maxMatchesPerRun`, default 5), next to
   the one render launch per demo. Written into AGENTS.md's standing
@@ -58,10 +59,11 @@ listing new matches still goes through the main account's key.
   a double-click file (`Set up matchmaking.cmd` running `pnpm prep
   --valve`), which prints the two web pages to get them from.
 - The checkpoint (`state/sources/valve.json` → `lastShareCode`)
-  advances only over codes whose demo file exists complete in
-  `replays/`, or that Valve no longer has (the Watch tab download
-  fails the same way the GC did for demos older than about 30 days;
-  the gate records what that looks like).
+  advances only over codes whose demo is complete (header and
+  `DEM_FileInfo`, see the contract) and copied into the inbox, or that
+  are gone: a console line the gate has proven to mean Valve no longer
+  has the match, attributable to that code, or 30 days pending (Valve
+  keeps demos about that long).
 
 ## Phase 0: the fetch-launch contract (main session, then GPT-6 Astra)
 
@@ -112,6 +114,224 @@ no commands (the exec policy kills runs that shell out).
 **Done:** the contract section exists, Astra's findings are folded in or
 answered in the section, no open blocker.
 
+## Contract: the fetch launch (phase 0, 2026-10-25, Astra's review folded in)
+
+What `pnpm grab` does to get a matchmaking demo, as the code will do it.
+Facts marked *gate* are checked by M0.4 before anything is built on them.
+GPT-6 Astra reviewed the first draft (14 findings, 4 blockers); every
+finding is folded in below or answered under "Astra's findings".
+
+**Spawn.** `ids.cs2Exe` directly, as `pnpm grab`'s own child, no HLAE:
+`spawn(cs2Exe, args, { env, stdio: "ignore", windowsHide: true })` where
+`env` is built from `process.env` with every key equal to `USRLOCALCSGO`
+(any casing; Windows env keys are case-insensitive) removed: the game must
+write to its normal `replays/`, and the render account's own user config is
+the Watch tab's normal case. The argument list, in this order:
+
+```
+-insecure -novid -sw -width 1280 -height 720 -condebug
++echo croclip_fetch_<stamp> +csgo_download_match <code> [+csgo_download_match <code> …]
+```
+
+`-insecure` is always passed: it is the one barrier that keeps the game
+from a secure server whatever a hand on the window does, and a fetch launch
+has no reason to be secure-capable. If the gate finds that the download
+works only without it, the gate is reported to Peder as a decision before
+any code is written (the plan's named exception is his to confirm, not the
+gate's to apply), with the note that a launch without HLAE has no ban
+mechanism of its own. `-sw` keeps it a window (the controller uses the same
+flag). `-condebug` makes `game/csgo/console.log` this launch's evidence: CS2
+truncates it per launch (one `[CommandLine] command line arguments:` line
+per file, checked 2026-10-25) and echoes the whole argument list in that
+line, so `croclip_fetch_<stamp>` (stamp = spawn time in ms) proves the log
+is ours, the way `+exec croclip_<stamp>` does for a render; the log counts
+only when its mtime is after the spawn and it holds the marker. The
+`[CommandLine]` line is also how the gate checks the *surviving* game's
+arguments (finding 1), together with `Win32_Process.CommandLine` in the
+snapshots. `+` commands are logged as `[CommandLine] DELAYED COMMAND: …`
+lines, one per code, in order; that proves scheduling, not execution.
+Every `<code>` is checked against `SHARE_CODE` (`^CSGO(-[A-Za-z0-9]{5}){5}$`)
+before it goes on the command line: a share code is the only thing the
+launch ever hands the game console, and it comes from the Steam Web API,
+never from user input. No `+connect`, no `+map`, no `+playdemo`, no `+exec`,
+nothing that joins a server. The user is told not to touch the window, as
+with a render.
+
+**Identity.** `guard(ids)` reads the Steam client's active account from the
+registry at check time; it binds nothing. It runs before the lock work and
+again immediately before the spawn, and the race between that read and the
+game's own logon stays (as it does for a render). *Gate:* whether
+`console.log` names the account the game logs on as (a SteamID or account
+id line near the start); if it does, the fetcher compares it with
+`RENDER_STEAM_ID64` and kills the launch on a mismatch, and the controller
+can do the same. `-insecure` stays the independent barrier either way.
+
+**Files and names.** The Watch tab writes two files per match into
+`game/csgo/replays/`: `match730_<A>_<B>_<C>.dem` and
+`match730_<A>_<B>_<C>.dem.info`. `<A>` is the share code's `outcomeId`
+padded to 21 digits: checked on this PC against the GC path's own file for
+the one code in the history (`valve-003850170963031228525_0309642818.dem.bz2`
+for a code decoding to `outcomeId 3850170963031228525`), and the two
+Watch-tab `.info` files decode (`CDataGCCStrike15_v2_MatchInfo`) to a field 1
+`matchid` smaller than their `<A>`, consistent with `<A>` being the outcome
+(reservation) id, not the match id. `<B>` and `<C>` are `watchablematchinfo`
+fields 2 and 1 and are not in the share code, so the file name cannot be
+computed in full. *Gate:* `<A>` equals `outcomeId` for a real code's
+Watch-tab file too. Ids are kept as decimal strings end to end (they exceed
+`Number`'s safe range); nothing converts them. A code's candidate file is
+found by parsing, not substring: `^match730_(\d{21})_\d+_\d+\.dem$` with
+group 1 equal to the padded `outcomeId`; the stored-demo check in `grab.ts`
+parses both forms, `match730_(\d{21})_` and `valve-(\d{21})_`, and compares
+group 1. `replayStem` and `DEMO_STEM` go with the GC path.
+
+**Completion.** A code is `done` when all of this holds for its candidate:
+the `.dem` appeared or changed after the spawn (a file that was already
+there with the same size and mtime at spawn is never done on its own, only
+when the game rewrote it); its `.dem.info` is present and decodes with
+field 1 equal to the code's `matchId` as a string; the `.dem` begins with
+`PBDEMS2\0` and `readFileInfo` (`src/parse/fileinfo.ts`) returns a
+`DEM_FileInfo` frame at the offset the header names (the fileinfo sits at
+the end of the file and is written when the demo is finalized, so a
+cut-short transfer, a stalled one or a half-decompressed file fails this
+check; the folders source and ingest get the same check, below); and size
+and mtime have not changed for 10 s after that. Whatever console line the
+gate finds for a finished download is recorded and used as a second signal,
+never as the only one. *Gate:* whether a `.dem.bz2` or other temporary name
+appears first (then the `.dem` is published whole after decompression) or
+the `.dem` grows in place; both are handled by the rule above.
+
+A code is `gone` only in two cases: the console prints a line the gate has
+shown to mean "Valve no longer has this match" and shown to be attributable
+to that code (a line that names the match id or outcome id, or a launch
+with a single code), or the code was first seen pending more than 30 days
+ago (`state/sources/valve.json` → `pending[code].firstSeenAt`; Valve keeps
+demos about that long, so after that the demo is gone whatever the reason).
+Everything else that is not done is `pending`, including a line the gate
+could not classify or attribute; pending blocks the checkpoint, and the
+30-day rule is what unblocks it.
+
+**One launch, every code.** All `+csgo_download_match` commands are handed
+over at startup; whether the game runs them in sequence or in parallel is a
+*gate* finding, and the rule does not depend on it. Each code has its own
+state (queued → downloading when any file with its prefix appears or grows
+→ done / gone / pending). The launch ends when every code is done or gone,
+or when nothing under `replays/` (any name, temporary names included) has
+changed for `idleS` (default 180 s) with no code having reached done in
+that window; remaining codes are then pending. Every code is reconciled
+before the kill, so a later code that finished is kept as done even when
+the checkpoint stops at an earlier pending one; the next run re-requests
+only the pending ones, and `grab.ts`'s stored-demo check skips the done
+ones. Hard cap for the whole launch: `120 + 180 × codes` s.
+
+**Handing the file over.** The fetcher copies a done `.dem` into
+`demos/inbox/` itself, the way the folders source does (copy under a `.part`
+name, re-stat the original, rename; the folders source's 2 GiB limit
+applies, a larger file is `failed` with the reason), and only then counts
+the code as done for the checkpoint. The folders source still scans
+`replays/` by default and finds the same demo "in store" by content hash on
+its next pass; a custom `sources.folders.dirs` that leaves `replays/` out
+changes nothing about fetching. Done means in the inbox, not ingested;
+ingest runs at the end of the same `pnpm grab`.
+
+**Incomplete files.** The completeness check above (`PBDEMS2\0` header and
+a valid `DEM_FileInfo` at the header's offset) moves into one function used
+by the fetcher, the folders source (a `.dem` that fails it is `pending`
+"incomplete or still being written", never copied, never remembered as
+handled) and ingest (rejected as "incomplete demo"). That is what keeps a
+download the game left half-written out of the store, whoever left it:
+this fetcher's kill, a crash, or a human closing CS2 mid-download. No
+exclusion list, nothing persisted about leftovers. *Gate* (7): kill the
+game mid-transfer and mid-decompression, inspect what is left, run the
+spike again with the same code, and record whether the game overwrites,
+resumes or refuses; then confirm the folders source leaves the leftover
+alone.
+
+**Exit.** In a normal end (every code settled, or idle, or the hard cap)
+the owned tree is killed: `killExact` by handle (identity re-checked under
+an open handle), re-discovery, and any owned process found running during
+verification goes back into the kill rounds (today's `cleanup()` only waits
+for such a process; this is the one behaviour change to the shared code,
+and the controller gets it too when the code is shared in phase 2, flagged
+for Sol). Verification then requires a quiet period: no owned process, no
+suspect orphan and no `cs2.exe` at all, continuously for 10 s after the
+first empty snapshot, lock held throughout (`guard()` proved no `cs2.exe`
+was running at launch, so any `cs2.exe` is unexplained). Verified → the
+lock is released; not verified → exit 3, the lock stays, the message names
+what is left. Emergency ends (a signal, an uncaught exception) run the same
+cleanup at once, whatever is downloading; a kill mid-download is then
+possible, and the completeness check is what makes it harmless. A
+controller killed from outside (task manager, a closed terminal without a
+signal) runs nothing: the game may stay up and the lock stays with a dead
+pid; `RenderLock` refuses the next run until a human checks for `cs2.exe`
+and removes the lock, as for a render. The game is never asked to `quit`
+by a command scheduled in advance: nothing here runs a cfg.
+
+**Ownership.** `OwnedTree(child.pid, "cs2.exe", spawnedAt)`: the root is
+adopted only as `pnpm grab`'s own child with that image, created within the
+spawn window; descendants as today. Two hand-off cases are possible if a
+directly started game re-executes itself through the Steam client: the
+first `cs2.exe` exits before it is ever seen (the tree never roots, and the
+final "no `cs2.exe` at all" check fails cleanup), or it is seen, then exits
+and a `cs2.exe` whose parent is `steam.exe` appears (the tree is rooted but
+the game is outside it; `suspects()` does not cover a child of an unowned
+parent). The fetcher adopts nothing it did not start: in both cases cleanup
+is not verified, exit 3, and the gate is failed as written. *Gate:* the
+spike logs every `cs2.exe` creation and exit it sees at 0.5 s polls (pid,
+parent, creation time, `Win32_Process.CommandLine`) from before the spawn
+to after verification, three runs, and in addition watches for 30 s after
+verification for a delayed respawn. Three snapshots are not that evidence.
+
+**Safety.** The launch is refused on anything `guard(ids)` refuses (not the
+render account, the main account, a `cs2.exe` or `HLAE.exe` running).
+`.render.lock` is taken before the guard and held until cleanup is
+verified; it is released only by the fetcher, never by `grab.ts`: today
+`grab.ts` releases `.render.lock` in its `finally` and on signals because
+the GC path held it; that goes in phase 2, `grab.ts` releases `.grab.lock`
+only. A lock held by someone else, or `.clip.lock` / `.go.lock` present,
+makes the source `blocked` with every code `pending`, never a crash (as
+`gcOpener` does today). An unverified cleanup is sticky: `pnpm grab` runs
+no further source and no ingest after it, and exits 3 whatever else
+happened (the controller's `cleanupUnverified()` latch is the model).
+`--dry-run` lists the codes and launches nothing; so does a `todo` of zero
+codes. Nothing is written under `game/` by us: the game writes its replays,
+we read them. The fetcher never deletes, renames or touches a file there.
+
+**Result.** `fetch(codes) → { code, outcome: "done" | "pending" | "gone" |
+"failed", file?, reason? }[]` plus `cleanupVerified`. The Valve source
+advances `lastShareCode` over done and gone codes in order and stops at the
+first pending or failed one; `failed` is for the launch itself (spawn
+error, cleanup not verified, an oversize demo) and sets `result.failed`.
+Exit codes of `pnpm grab`: 1 on failed, 3 on cleanup not verified.
+
+**Interaction with `pnpm go`.** A fetch launch and a render launch never
+overlap: both hold `.render.lock`, and `guard()` refuses on a running
+`cs2.exe` either way. One fetch launch per `pnpm grab` run, carrying at most
+`sources.valve.maxMatchesPerRun` codes (5). *Gate* (6), as observable
+checks: a new demo reaches the store exactly once (registry has one entry
+for its hash); a demo already in the store is not copied again by the
+folders source (its state says "in store"); a code whose demo is already
+stored is not re-requested (the parsed-name check); an intermediate archive
+left in `replays/` does not produce a second inbox copy.
+
+**Astra's findings and where they went** (run 2026-10-25, `gpt-6-astra`,
+high effort, read-only). 1 `-insecure` → always passed, the exception is
+Peder's decision. 2 `grab.ts` releases `.render.lock` → fetcher-only
+release, sticky exit 3, no further sources or ingest. 3 completion accepts
+partials → `DEM_FileInfo` check plus "appeared or changed after the spawn".
+4 folders ingests a leftover → the same completeness check in the folders
+source and ingest, no exclusion list. 5 hand-off after rooting → both cases
+named, nothing adopted, event log in the gate. 6 no quiet period, survivors
+only waited for → 10 s continuous quiet, survivors re-killed, flagged as the
+one controller behaviour change. 7 `gone` → console line proven and
+attributable, or 30 days pending. 8 names and ids → parsed forms, strings
+only, `.info` match on every done, GC-form pairing checked on this PC. 9
+timers → per-code state, one idle rule, reconcile before kill. 10 and 11
+checkpoint hand-off and gate 6 → the fetcher copies into the inbox itself,
+gate 6 split into four checks. 12 `USRLOCALCSGO` → explicit env. 13
+account binding → stated as a preflight, gate looks for the game's own
+logon line. 14 question 7 missing, kill promise → question 7 added,
+emergency ends described, forced termination described. No open blocker.
+
 ## Phase 1: gate M0.4, CS2 downloads a match from a share code (Opus writes, main session runs, Sol verifies)
 
 **Who:** Opus writes `spikes/m0-4-cs2-download.ts` after the pattern of
@@ -131,7 +351,8 @@ does. Never print the auth code or the API key.
 
 1. Does `cs2.exe` launched directly with `+csgo_download_match <code>`
    download the demo? Where does the file land and what is it called
-   (expected `game/csgo/replays/match730_<matchId>_<reservationId>_<tv>.dem`)?
+   (expected `game/csgo/replays/match730_<outcomeId>_<n>_<n>.dem` plus
+   `.dem.info`; see the contract)?
    Is there a `.bz2` stage first?
 2. Does it work with `-insecure`? Run both ways; record both.
 3. How long from spawn to a complete file for one code, and for three
@@ -142,9 +363,32 @@ does. Never print the auth code or the API key.
    never played (the main account's; this is the normal case)?
 5. Does the owned-tree kill leave nothing behind, and does Steam
    respawn or re-attach anything after cs2.exe is killed? Three runs.
-6. Does the folders source then ingest the file on the next
-   `pnpm grab` without a second copy (the stem is in the file name;
-   `haveDemo` in `src/cli/grab.ts` line 84 checks that)?
+6. The four hand-over checks in the contract ("Interaction with
+   `pnpm go`"): one registry entry per demo, "in store" for a stored
+   one, no re-request of a stored code, no second copy from an archive.
+7. Kill the game mid-transfer and, if there is one, mid-decompression
+   (`--kill-after`): what is left in `replays/`, does the next launch
+   with the same code overwrite, resume or refuse, and does the
+   completeness check (`readFileInfo`) reject the leftover?
+8. Process events: every `cs2.exe` seen from before the spawn to 30 s
+   after verification, with pid, parent, creation time and command line.
+   Does the surviving game carry our arguments (`-insecure` included)?
+   Does anything re-execute through `steam.exe`? Does anything respawn
+   late?
+9. Does `console.log` name the account the game logs on as, and does
+   anything in it per download say started / finished / failed, with the
+   match or outcome id, so that a line can be attributed to a code?
+
+Inputs on this PC (checked 2026-10-25): the share-code chain from
+`STEAM_LAST_SHARE_CODE` holds exactly one code, the newest match, whose
+demo the GC path already stored; the Steam Web API cannot walk backwards,
+so older codes of the main account are not available here, and more codes
+need Peder's Watch tab (main account, "copy share code"). For the gone
+case a public CS:GO-era example code (`globaloffensive-sharecode`'s
+README, 2018) is used; it is certainly gone, but it is not a main-account
+match, so a line it produces is recorded, not yet trusted as the gone
+line. Question 3's three-code launch needs more codes and is run when
+they exist; the one-code timing is recorded now.
 
 **Fail is a result.** If the download does not happen from the launch
 line in today's CS2, the gate is written up as failed with what was
@@ -182,12 +426,28 @@ passes.
   replay download go; `ValveOptions` takes the fetcher; step 2-3
   becomes "one fetch launch for every code in `todo`, then advance the
   checkpoint over done and gone codes in order, stop at the first
-  pending or failed one". `replayStem` is replaced by a stem from the
-  decoded share code (`globaloffensive-sharecode`). `NO_KEYS` no longer
-  mentions `--steam-login`.
-- `src/cli/grab.ts`: `--steam-login`, `gcOpener`, `steamLogin` go; the
-  render lock handling stays (the fetcher holds it); the header comment
-  and `docs/modules.md` Running block lose `--steam-login`.
+  pending or failed one". The fetcher copies each done demo into the
+  inbox (the folders source's copy-rename pattern and size limit) before
+  it counts as done. `replayStem` and `DEMO_STEM` go; the stored-demo
+  check parses `match730_(\d{21})_` and `valve-(\d{21})_` and compares
+  the padded `outcomeId` as a string. Pending codes get
+  `pending[code].firstSeenAt` in the state; 30 days later they are gone.
+  `NO_KEYS` no longer mentions `--steam-login`.
+- Completeness: one function (header `PBDEMS2\0` plus a valid
+  `DEM_FileInfo` at the header's offset, via `src/parse/fileinfo.ts`)
+  used by the fetcher, by the folders source (an incomplete `.dem` is
+  pending "incomplete or still being written", never copied, never
+  remembered) and by ingest (rejected as "incomplete demo").
+- `src/cli/grab.ts`: `--steam-login`, `gcOpener`, `steamLogin` go, and so
+  does every release of `.render.lock` (the fetcher alone holds and
+  releases it); a sticky "cleanup not verified" from the fetcher stops
+  the source loop and ingest and exits 3. The header comment and
+  `docs/modules.md` Running block lose `--steam-login`.
+- Shared cleanup (`src/render/controller/launch.ts` or `processes.ts`):
+  owned survivors found during verification go back into the kill
+  rounds, and verification holds a 10 s continuous quiet period; the
+  controller gets both when it uses the shared code. This is the one
+  controller behaviour change in M6; Sol reviews it as such.
 - Delete `src/ingest/sources/valve-gc.ts`, `src/ingest/sources/sharecode.d.ts`
   only if it typed something that is gone, remove the four packages
   from `package.json` (`pnpm remove`), keep `globaloffensive-sharecode`.
