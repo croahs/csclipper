@@ -176,6 +176,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds` |
 | `.env` | identities and tool paths (`.env.example`; `pnpm prep` fills it; M0.2 setup in `docs/spikes.md`) |
 | `src/cli/setup.ts` | `pnpm prep` / `pnpm check`: tool pins with their sha256, Steam and CS2 lookup, the requirement report |
+| `docs/m6-mm-fetch.md` | the execution plan for M6 (matchmaking demos fetched through a CS2 launch, no login): phases, agents, gate, tests |
 | `setup.ps1`, `GUIDE.md` | the one-line bootstrap (`irm … | iex`: winget for git and Node, corepack or pnpm's installer for pnpm, clone or fast-forward pull of a checkout of this repo, `pnpm prep`, every exit code checked, nothing installed when winget is missing) and the step-by-step guide it points to |
 | `scoring.json` | ranking weights; tuning and current picks in `docs/scoring-notes.md` |
 | `src/cli/go.ts`, `src/cli/clip.ts`, `src/cli/moments.ts` | the entries |

@@ -476,6 +476,24 @@ Phases:
    the second Steam account, the SteamID64 lookup, the three tools. No
    GUI: the terminal line plus two questions is the setup.
 
+**M6. Matchmaking demos through CS2, no login** (planned 2026-10-25).
+The QR login of the render account (M4's Valve GC download) is the one
+barrier left for someone else: it needs the second account in the
+Steam mobile app and a terminal command, and Peder's rule for sharing
+is that no password is ever handled and the only terminal a user sees
+is the setup line. Steam has no SSO that yields a Game Coordinator
+session, so the way around is the Steam client that is already logged
+in: `pnpm grab` launches CS2 itself with `+csgo_download_match` for the
+pending share codes, waits for the files in `game/csgo/replays/`, and
+closes the game it started, under the same guards, lock and kill
+machinery as a render launch. The three Web API values stay (the render
+account cannot see the main account's matches) and are entered through
+a double-click file. Gate first (M0.4: does the launch line download
+in today's CS2, with `-insecure`, how long, what the console says, is
+the kill clean); a failed gate ends M6 and the guide's MM section goes.
+The execution plan with agents, files, tests and done-criteria per
+phase is `docs/m6-mm-fetch.md`.
+
 ## Who does what
 
 Per `~/.claude/01-model-map.md`. The main session keeps the concept,
