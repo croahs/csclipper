@@ -34,8 +34,9 @@ closed; refuse otherwise and say so.
   alt's SteamID64 is `RENDER_STEAM_ID64` in `.env`; the controller reads
   the logged-in Steam user from the registry
   (`HKCU\Software\Valve\Steam\ActiveProcess\ActiveUser`) and refuses
-  to launch on any other account, when CS2 is already running, or
-  without `-insecure`. HLAE is started only by the controller, which
+  to launch on any other account, when CS2 is already running, while
+  the FACEIT client's anti-cheat runs (it stops HLAE from creating
+  cs2.exe, 2026-10-25), or without `-insecure`. HLAE is started only by the controller, which
   kills the game process when the job ends. The fetch launch (`pnpm
   grab`, Valve MM) is a launch under the same guards, lock and cleanup,
   without HLAE; its one write under the game folder is deleting an

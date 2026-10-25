@@ -298,7 +298,8 @@ Known risks, decided up front:
   and tick scheduling.
 - **Never run HLAE against secure servers.** Renders always launch with
   `-insecure` and never touch matchmaking. The controller refuses to
-  start if CS2 is already running.
+  start if CS2 is already running or the FACEIT client's anti-cheat is
+  (2026-10-25: it stops HLAE from creating cs2.exe).
 
 ### 6. Post
 

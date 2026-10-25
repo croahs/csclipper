@@ -69,10 +69,9 @@ export type BatchReport = {
 
 /** Exit code: 0 ok, 1 a job or demo failed or was given up, 2 refused, 3 cleanup not verified. */
 export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchReport; code: number }> {
-  // The whole batch refuses up front when CS2 runs: nothing is ingested or rendered. The same for
-  // FACEIT anti-cheat, which would refuse every launch (guards.ts), except on a dry run, which launches nothing.
-  if (!o.repostOnly && !o.settleExisting && imageRunning("cs2.exe")) throw new Refusal("refusing: CS2 is already running");
-  if (!o.repostOnly && !o.settleExisting && !o.dryRun) { const faceit = faceitRefusal(); if (faceit) throw faceit; }
+  // The whole batch refuses up front: nothing is ingested or rendered.
+  const refusal = batchRefusal(o);
+  if (refusal) throw refusal;
   const report: BatchReport = { ingested: 0, demos: 0, selected: 0, rendered: [], skipped: [], failed: [], givenUp: [], emptyDemos: [], demoErrors: [], needsRender: [], made: [], settled: 0, autoSettled: [] };
   // --settle-existing: before ingest, so a demo still in the inbox is never settled unprocessed.
   const settled = readSettled();
@@ -315,5 +314,16 @@ function postWorker(demo: string, units: { id: string; title: string; kind: "hig
 
 /** Whether a pass of this kind may settle demos: not a dry run, a repost or a --no-reels pass (its reels are owed). */
 export const settlesDemos = (o: Pick<BatchOptions, "dryRun" | "repostOnly" | "noReels">) => !o.dryRun && !o.repostOnly && !o.noReels;
+
+/**
+ * The refusal a batch gets before it ingests anything: CS2 running, or the FACEIT client's
+ * anti-cheat, which would refuse every launch (guards.ts). A repost and --settle-existing launch
+ * nothing and skip both; a dry run launches nothing either, but keeps the CS2 check it always had.
+ */
+export function batchRefusal(o: Pick<BatchOptions, "dryRun" | "repostOnly" | "settleExisting">): Refusal | undefined {
+  if (o.repostOnly || o.settleExisting) return undefined;
+  if (imageRunning("cs2.exe")) return new Refusal("refusing: CS2 is already running");
+  return o.dryRun ? undefined : faceitRefusal();
+}
 /** A moment's outcome is final for settling: rendered, held, or failed with no retry left. */
 export const isFinal = (status: JobResult["status"], attempts: number) => status !== "failed" || attempts >= MAX_ATTEMPTS;

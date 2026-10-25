@@ -9,6 +9,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { Refusal, STEAMID64_BASE } from "../src/config.ts";
 import { faceitRefusal, guard } from "../src/render/controller/guards.ts";
 import { serviceRunning } from "../src/render/controller/processes.ts";
+import { batchRefusal } from "../src/queue/index.ts";
 
 const RENDER = (STEAMID64_BASE + 1234n).toString();
 const ids = { pov: (STEAMID64_BASE + 1n).toString(), renderAccount: RENDER, hlaeExe: "x", cs2Exe: "y" };
@@ -92,5 +93,22 @@ test("guard: passes on the render account with nothing running; refuses under FA
     // The other guards are untouched: the wrong account refuses before any FACEIT probe.
     restore(); fakeWorld(t, { loggedIn: "999", images: ["faceitclient.exe"] });
     assert.throws(() => guard(ids), /not RENDER_STEAM_ID64/);
+  } finally { restore(); }
+});
+
+test("pnpm go refuses up front under FACEIT anti-cheat, except on a dry run, a repost or --settle-existing", (t) => {
+  const restore = fakeWorld(t, { images: ["faceitclient.exe"] });
+  try {
+    assert.equal(batchRefusal({})!.message, "refusing: the FACEIT client's anti-cheat is running (faceitclient.exe); it blocks HLAE from starting cs2.exe. Exit the FACEIT client from its tray icon and run again.");
+    assert.equal(batchRefusal({ dryRun: true }), undefined, "a dry run launches nothing");
+    assert.equal(batchRefusal({ repostOnly: true }), undefined);
+    assert.equal(batchRefusal({ settleExisting: true }), undefined);
+    // CS2 running still refuses a dry run, as before; a repost never looks.
+    restore(); fakeWorld(t, { images: ["cs2.exe", "faceitclient.exe"] });
+    assert.equal(batchRefusal({ dryRun: true })!.message, "refusing: CS2 is already running");
+    assert.equal(batchRefusal({})!.message, "refusing: CS2 is already running");
+    assert.equal(batchRefusal({ repostOnly: true }), undefined);
+    restore(); fakeWorld(t, {});
+    assert.equal(batchRefusal({}), undefined);
   } finally { restore(); }
 });
