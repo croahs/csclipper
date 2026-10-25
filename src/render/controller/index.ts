@@ -15,7 +15,7 @@
 //
 // Exit codes the CLI derives from this: Refusal = 2 (nothing launched),
 // cleanupVerified false = 3 (a game process may still be running; the lock stays).
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { Refusal, captureSize, type Identities, type RenderSettings } from "../../config.ts";
@@ -24,7 +24,8 @@ import { countFrames, decodeProblems, probe } from "../../post/ffmpeg.ts";
 import { FINISHED_RE, STARTED_RE, hlaeArgs, hlaeCapture, takeOutputs } from "../capture/hlae.ts";
 import { jobCfgs, type CrosshairSource } from "./cfg.ts";
 import { RenderLock, guard } from "./guards.ts";
-import { OwnedTree, isRunning, key, killExact, type Proc } from "./processes.ts";
+import { cleanupUnverified, consoleLogPath, launchLog, onEmergency, ownedCleanup } from "./launch.ts";
+import { OwnedTree, isRunning } from "./processes.ts";
 
 /** Recorded on each side of the requested ticks; post trims it off. */
 export const MARGIN_TICKS = 32;
@@ -65,10 +66,9 @@ export type RenderResult = {
   wallSeconds: number;
 };
 
-// Latched for the life of the process: once a cleanup could not be verified,
-// the CLI exits 3 whatever else fails afterwards.
-let unverified = false;
-export const cleanupUnverified = () => unverified;
+// Latched for the life of the process (launch.ts): once a cleanup could not be
+// verified, the CLI exits 3 whatever else fails afterwards.
+export { cleanupUnverified };
 
 /** Reasons the raw capture is unusable; [] when it checks out against HLAE's frame count. */
 export function validateCapture(video: string, wav: string | undefined, frames: number, fps: number, size: string): string[] {
@@ -89,7 +89,6 @@ export function validateCapture(video: string, wav: string | undefined, frames: 
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 export async function render(job: RenderJob): Promise<RenderResult> {
   const { ids, settings: s } = job;
@@ -140,75 +139,16 @@ export async function render(job: RenderJob): Promise<RenderResult> {
     throw e;
   }
 
-  // --- owned processes and cleanup -----------------------------------------------------
+  // --- owned processes and cleanup (launch.ts: kill rounds, loader first; owned survivors
+  // re-killed; 10 s of continuous quiet with no owned process, suspect or cs2.exe) ------------
   let tree: OwnedTree | undefined;
-  const cleanupErrors: string[] = [];
-  let cleaned: boolean | undefined;
-  function cleanup(reason: string): boolean {
-    if (cleaned !== undefined) return cleaned;
-    if (!tree) { lock.release(); return (cleaned = true); }
-    // Without the loader nothing it started could be tracked: fail closed.
-    if (!tree.rooted) cleanupErrors.push("the HLAE loader was never identified, so its processes were not tracked");
-    // Kill rounds, loader first so it cannot start another game, re-discovering
-    // after each round: a descendant can start, or be orphaned, mid-kill.
-    const done = new Set<string>();
-    for (let round = 0; round < 5; round++) {
-      try { tree.discover(); } catch (e) { cleanupErrors.push(`could not list owned processes: ${(e as Error).message}`); break; }
-      const pending = [...tree.procs.values()].filter((p) => !done.has(key(p)))
-        .sort((a, b) => Number(b.name.toLowerCase() === "hlae.exe") - Number(a.name.toLowerCase() === "hlae.exe"));
-      if (!pending.length) break;
-      for (const p of pending) {
-        done.add(key(p));
-        try { if (killExact(p) === "killed") console.log(`[controller] killed ${p.name} pid ${p.pid}`); }
-        catch (e) { cleanupErrors.push(`${p.name} pid ${p.pid}: ${(e as Error).message}`); }
-      }
-    }
-    // Every owned process gone, and no cs2.exe at all: none was running at
-    // launch, so any survivor is either ours or unexplained.
-    // Possible orphans of a dead owned process are never killed, only waited for.
-    for (let i = 0; i < 50; i++) {
-      let left: Proc[] = [];
-      let suspects: Proc[] = [];
-      let cs2Left = false;
-      try {
-        const snap = tree.discover();
-        left = [...tree.procs.values()].filter((o) => isRunning(o, snap));
-        suspects = tree.suspects(snap);
-        cs2Left = snap.some((x) => x.name.toLowerCase() === "cs2.exe");
-      } catch (e) { cleanupErrors.push(`verification failed: ${(e as Error).message}`); break; }
-      if (!left.length && !suspects.length && !cs2Left) break;
-      if (i === 49) {
-        for (const p of left) cleanupErrors.push(`${p.name} pid ${p.pid} still running`);
-        for (const p of suspects) cleanupErrors.push(`${p.name} pid ${p.pid} may be an orphan of ours and is still running`);
-        if (cs2Left) cleanupErrors.push("a cs2.exe is still running");
-      }
-      pause(200);
-    }
-    if (cleanupErrors.length) {
-      unverified = true;
-      console.error(`CLEANUP NOT VERIFIED (${reason}): ${cleanupErrors.join("; ")}. Check for cs2.exe by hand. The lock stays: ${job.lockFile}`);
-      return (cleaned = false);
-    }
-    lock.release();
-    return (cleaned = true);
-  }
-  const onExit = () => { if (!cleanup("controller exit")) process.exitCode = 3; };
-  const onSignal = (sig: string) => { process.exit(cleanup(sig) ? 130 : 3); };
-  const onUncaught = (e: Error) => { console.error(e); process.exit(cleanup(`uncaught: ${e.message}`) ? 1 : 3); };
-  const signals = ["SIGINT", "SIGBREAK", "SIGHUP", "SIGTERM"] as const;
-  process.on("exit", onExit);
-  process.on("uncaughtException", onUncaught);
-  for (const sig of signals) process.on(sig, onSignal);
+  // Without the loader nothing it started could be tracked: fail closed.
+  const cleanup = ownedCleanup({ tree: () => tree, lock, unrooted: "the HLAE loader was never identified, so its processes were not tracked", killFirst: "HLAE.exe", tag: "[controller]" });
+  const offEmergency = onEmergency(cleanup, "controller exit");
 
   // --- run the state machine -------------------------------------------------------------
-  const consoleLog = path.resolve(path.dirname(ids.cs2Exe), "..", "..", "csgo", "console.log");
-  const readLog = (): string | undefined => {
-    try {
-      if (statSync(consoleLog).mtimeMs < t0 - 1000) return undefined;
-      const text = readFileSync(consoleLog, "utf8");
-      return text.includes(`+exec ${cfgName} `) ? text : undefined;
-    } catch { return undefined; }
-  };
+  const consoleLog = consoleLogPath(ids.cs2Exe);
+  const readLog = () => launchLog(consoleLog, t0, `+exec ${cfgName} `);
   const count = (log: string, re: RegExp) => (log.match(new RegExp(re.source, "g")) ?? []).length;
   // A seek tick may repeat (the same take twice): take i's seek is reached when the log
   // has as many "finished at tick" lines for it as takes 0..i seek there.
@@ -274,9 +214,7 @@ export async function render(job: RenderJob): Promise<RenderResult> {
     failure = `controller error: ${(e as Error).message}`;
   }
   const cleanupVerified = cleanup(failure ?? "job end");
-  process.off("exit", onExit);
-  process.off("uncaughtException", onUncaught);
-  for (const sig of signals) process.off(sig, onSignal);
+  offEmergency();
   const owned = tree?.list() ?? [];
   console.log(`[controller] ${cleanupVerified ? "game gone" : "CLEANUP NOT VERIFIED"} after ${Math.round((Date.now() - t0) / 1000)}s; owned: ${owned.join(",") || "none"}`);
 

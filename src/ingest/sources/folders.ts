@@ -9,16 +9,21 @@
 // size and mtime in this source's state, so they are not read again. A .dem,
 // or the demo inside a .dem.zst / .dem.gz, is hashed first and skipped when
 // its content is already in the store; .bz2 and .zip are deduped by ingest.
+// A .dem that is not complete (no valid DEM_FileInfo: cut short, or still being
+// written) is pending and never remembered, so it is looked at again next run.
 import { createHash } from "node:crypto";
 import { closeSync, copyFileSync, createReadStream, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import zlib from "node:zlib";
 import { sha256File } from "../../parse/clip-facts.ts";
+import { demoIncomplete } from "../../parse/fileinfo.ts";
 import type { Source, SourceContext, SourceResult } from "../sources.ts";
 
 const NAMES = /\.(dem|dem\.zst|dem\.bz2|dem\.gz|zip)$/i;
-const MAX_BYTES = 2 * 1024 ** 3;
+/** The largest demo file a source copies into the inbox (ingest's own limit too). */
+export const MAX_DEMO_BYTES = 2 * 1024 ** 3;
+const MAX_BYTES = MAX_DEMO_BYTES;
 const SETTLED_MS = 10_000; // a file modified more recently may still be written
 const TAR = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
 
@@ -65,6 +70,27 @@ function freeName(dir: string, base: string) {
   return n;
 }
 
+/**
+ * Copy file into the inbox under its own name (a free variant of it): under a temporary name
+ * first, then the original re-checked against `was` (size and mtime), then renamed. Returns the
+ * inbox path; throws, leaving nothing in the inbox, when the copy fails or the original changed.
+ */
+export function copyIntoInbox(file: string, inbox: string, was: { size: number; mtimeMs: number }): string {
+  mkdirSync(inbox, { recursive: true });
+  const final = freeName(inbox, path.basename(file));
+  const part = path.join(inbox, `.${final}.part`);
+  try {
+    copyFileSync(file, part);
+    const after = statSync(file);
+    if (after.size !== was.size || after.mtimeMs !== was.mtimeMs) throw new Error("changed while being copied; next run");
+  } catch (e) {
+    rmSync(part, { force: true });
+    throw e;
+  }
+  renameSync(part, path.join(inbox, final));
+  return path.join(inbox, final);
+}
+
 export function foldersSource(o: FoldersOptions): Source {
   return {
     name: "folders",
@@ -97,6 +123,8 @@ export function foldersSource(o: FoldersOptions): Source {
           let sha: string | undefined; // the demo's content hash, when it can be read cheaply
           if (lower.endsWith(".dem")) {
             if (!isDemoHeader(file)) continue; // not a CS2 demo (e.g. a CS:GO one): leave it alone
+            // Cut short or still being written (a download the game left half-done): not copied, not remembered.
+            if (demoIncomplete(file)) { result.pending.push({ item: file, reason: "incomplete or still being written" }); continue; }
             sha = await sha256File(file);
             if (known.has(sha)) { seen[key] = { size: s.size, mtimeMs: s.mtimeMs, outcome: "in store" }; save(); continue; }
           } else if (/\.(zst|gz)$/.test(lower)) {
@@ -111,23 +139,15 @@ export function foldersSource(o: FoldersOptions): Source {
           }
           if (ctx.dryRun) { ctx.log(`folders: would copy ${file}`); continue; }
           // Copy under a temporary name, check the original did not change meanwhile, rename.
-          mkdirSync(ctx.inbox, { recursive: true });
-          const final = freeName(ctx.inbox, name);
-          const part = path.join(ctx.inbox, `.${final}.part`);
-          try {
-            copyFileSync(file, part);
-            const after = statSync(file);
-            if (after.size !== s.size || after.mtimeMs !== s.mtimeMs) throw new Error("changed while being copied; next run");
-          } catch (e) {
-            rmSync(part, { force: true });
+          let copied: string;
+          try { copied = copyIntoInbox(file, ctx.inbox, s); } catch (e) {
             result.pending.push({ item: file, reason: (e as Error).message });
             continue;
           }
-          renameSync(part, path.join(ctx.inbox, final));
           seen[key] = { size: s.size, mtimeMs: s.mtimeMs, outcome: "copied" };
           if (sha) known.add(sha); // the same demo in another file this run is not copied twice
           save();
-          result.fetched.push(path.join(ctx.inbox, final));
+          result.fetched.push(copied);
           ctx.log(`folders: copied ${file}`);
         }
       }

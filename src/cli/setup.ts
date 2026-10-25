@@ -5,6 +5,8 @@
 //          next to the HLAE in use when there is none, and fills .env: HLAE_EXE and CS2_EXE
 //          from what it found, STEAM_ID64 and RENDER_STEAM_ID64 asked for when empty. A value
 //          that is set is never changed, so a working install is never altered.
+//   --valve  only the three Valve matchmaking values (STEAM_WEB_API_KEY, STEAM_MATCH_AUTH_CODE,
+//          STEAM_LAST_SHARE_CODE): says where each comes from, asks for the ones not set. No tools, no Steam lookup.
 //   check  writes nothing: one line per requirement, then exit 1 when a required one is missing.
 // Neither prints a SteamID or a key: the output is meant to be pasted into an issue.
 import { createHash } from "node:crypto";
@@ -16,7 +18,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { ROOT, accountId } from "../config.ts";
-import { type EnvFile, envText, isSteamId64, librariesFromVdf, parseEnvFile, parseSteamId64, roundTrips, setLine } from "../prep.ts";
+import { type EnvFile, VALVE_KEYS, envText, isSteamId64, librariesFromVdf, parseEnvFile, parseSteamId64, parseValveValue, roundTrips, setLine } from "../prep.ts";
 import { activeSteamId64, steamPath } from "../steam.ts";
 import { PINNED_FFMPEG, ffmpegVersion, nvencFfmpeg, postFfmpeg } from "../post/ffmpeg.ts";
 import { toolVersions } from "../render/versions.ts";
@@ -25,6 +27,7 @@ import { findBrowser } from "../ingest/sources/faceit-browser.ts";
 import { sha256File } from "../parse/clip-facts.ts";
 
 const checkOnly = process.argv.includes("--check");
+const valveOnly = process.argv.includes("--valve");
 const TOOLS = path.join(ROOT, "tools");
 const TAR = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe"); // bsdtar: reads zip
 const ENV_FILE = path.join(ROOT, ".env");
@@ -195,6 +198,82 @@ async function fillEnv(env: EnvFile, found: { cs2?: string }) {
   writeFileSync(ENV_FILE, envText(env));
 }
 
+// --- Valve matchmaking values (pnpm prep --valve) --------------------------------------------
+
+const VALVE_HELP: Record<(typeof VALVE_KEYS)[number]["key"], { where: string; shape: string }> = {
+  STEAM_WEB_API_KEY: {
+    where: "https://steamcommunity.com/dev/apikey (any domain name will do; the key is 32 hex characters). Make it while logged in to the Steam website with your MAIN account, the one STEAM_ID64 names.",
+    shape: "32 hex characters",
+  },
+  STEAM_MATCH_AUTH_CODE: {
+    where: 'https://help.steampowered.com/en/wizard/HelpWithGameIssue/?appid=730&issueid=128 ("Access to your CS2 match history"; the code looks like AAAA-AAAAA-AAAA). Make it while logged in to the Steam website with your MAIN account, the one STEAM_ID64 names.',
+    shape: "like AAAA-AAAAA-AAAA",
+  },
+  STEAM_LAST_SHARE_CODE: {
+    where: 'in CS2 on your MAIN account (the one STEAM_ID64 names), Watch tab, "Your matches": the share-code button on your most recent match (CSGO-xxxxx-xxxxx-xxxxx-xxxxx-xxxxx); matches after it are fetched, not that one. It only sets the starting point the first time: after that state/sources/valve.json holds the position (to start over, delete that file).',
+    shape: "like CSGO-xxxxx-xxxxx-xxxxx-xxxxx-xxxxx",
+  },
+};
+
+/**
+ * Asks for the Valve values that are not set in .env and writes each as it comes. Prints no value
+ * it was given. 0 when all three are set and valid at the end. Nothing is authenticated here.
+ */
+async function valveSetup(): Promise<number> {
+  const env = readEnv();
+  const unset = VALVE_KEYS.filter((k) => !env.values[k.key]);
+  for (const k of VALVE_KEYS) if (env.values[k.key]) console.log(`${k.key}: set${k.ok(env.values[k.key]) ? "" : " (but not the shape pnpm grab expects; clear its line in .env to enter it again)"}`);
+  // The closing line, from .env as it is on disk now.
+  const verdict = (): number => {
+    const now = readEnv().values;
+    const left = VALVE_KEYS.filter((k) => !now[k.key]);
+    const bad = VALVE_KEYS.filter((k) => now[k.key] && !k.ok(now[k.key]));
+    if (left.length) console.log(`\nNot set yet: ${left.map((k) => k.key).join(", ")}. Run this again when you have them.`);
+    if (bad.length) console.log(`${left.length ? "" : "\n"}Not the shape pnpm grab expects: ${bad.map((k) => k.key).join(", ")}. Clear its line in .env and run this again.`);
+    if (!left.length && !bad.length) console.log("\nMatchmaking values saved. To change a value, clear its line in .env and run this again.");
+    return left.length || bad.length ? 1 : 0;
+  };
+  if (!unset.length) return verdict();
+
+  const where = () => { for (const k of unset) console.log(`  ${k.key}: ${VALVE_HELP[k.key].where}`); };
+  if (!process.stdin.isTTY) {
+    console.log(`\nNo terminal to ask in; nothing written. Fill these in .env by hand (${unset.map((k) => k.key).join(", ")}):`);
+    where();
+    return 1;
+  }
+  console.log("\nWhere each value comes from:");
+  where();
+  console.log("Paste a value and press Enter, or press Enter alone to skip it.\n");
+
+  if (!existsSync(ENV_FILE)) { writeFileSync(ENV_FILE, readFileSync(ENV_EXAMPLE)); console.log(".env: created from .env.example"); }
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    for (const k of unset) {
+      let value: string | undefined;
+      for (;;) {
+        const a = (await rl.question(`${k.key} (${VALVE_HELP[k.key].shape}; Enter to skip): `)).trim();
+        if (!a) break;
+        value = parseValveValue(k.key, a);
+        if (value) break;
+        console.log(`  Expected ${VALVE_HELP[k.key].shape}. Copy it again from the page.`);
+      }
+      if (!value) continue;
+      // .env as it is on disk now (it may have been edited while the question was open), plus this one value.
+      const file = readEnv();
+      setLine(file, k.key, value);
+      // What is about to be written must read back as intended through the parser the identities use.
+      if (!roundTrips(file)) throw new Error(".env: the edit does not read back as written (a quoted multi-line value in the way?); nothing written, edit the file by hand");
+      // Atomic: a temp file beside .env, renamed over it, so .env is never half-written.
+      const tmp = `${ENV_FILE}.${process.pid}.tmp`;
+      try { writeFileSync(tmp, envText(file)); renameSync(tmp, ENV_FILE); } catch (e) { rmSync(tmp, { force: true }); throw e; }
+      console.log(`.env: ${k.key} set`);
+    }
+  } finally {
+    rl.close();
+  }
+  return verdict();
+}
+
 // --- The report ------------------------------------------------------------------------------
 
 type Row = { status: "ok" | "missing" | "warn" | "info"; text: string };
@@ -268,6 +347,8 @@ function report(env: EnvFile, found: { steam?: string; cs2?: string }): Row[] {
 }
 
 async function main(): Promise<number> {
+  if (valveOnly && checkOnly) { console.error("--valve and --check cannot be combined: --valve asks for and writes values, --check only reports."); return 1; }
+  if (valveOnly) { process.exitCode = 1; return valveSetup(); } // exit 1 stays if the terminal closes mid-question
   const steam = steamPath();
   const cs2 = steam ? findCs2(steam) : undefined;
   if (!checkOnly) {

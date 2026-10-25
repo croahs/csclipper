@@ -4,6 +4,7 @@
 import { parseEnv } from "node:util";
 import path from "node:path";
 import { STEAMID64_BASE } from "./config.ts";
+import { decodeShareCode } from "./ingest/sources/valve.ts";
 
 /** Every Steam library: the install itself plus the "path" entries of its libraryfolders.vdf (undefined when there is none). */
 export function librariesFromVdf(steam: string, vdf: string | undefined): string[] {
@@ -20,6 +21,20 @@ export const isSteamId64 = (s: string) => /^\d{17}$/.test(s) && BigInt(s) > STEA
 export function parseSteamId64(s: string): string | undefined {
   const m = s.trim().match(/^(\d{17})$/) ?? s.trim().match(/\/profiles\/(\d{17})(?!\d)/);
   return m && isSteamId64(m[1]) ? m[1] : undefined;
+}
+
+/** The three Valve matchmaking values pnpm prep --valve asks for, in the order they are asked; `ok` is the shape a stored value must have. */
+export const VALVE_KEYS = [
+  { key: "STEAM_WEB_API_KEY", ok: (v: string) => /^[0-9A-Fa-f]{32}$/.test(v) },
+  { key: "STEAM_MATCH_AUTH_CODE", ok: (v: string) => /^[A-Za-z0-9]{4}-[A-Za-z0-9]{5}-[A-Za-z0-9]{4}$/.test(v) },
+  // SHARE_CODE and the decoder's alphabet: what pnpm grab will accept as its starting point.
+  { key: "STEAM_LAST_SHARE_CODE", ok: (v: string) => { try { decodeShareCode(v); return true; } catch { return false; } } },
+] as const;
+
+/** A Valve value from what a person pastes: trimmed, case kept; undefined when it is not that value's shape. */
+export function parseValveValue(key: (typeof VALVE_KEYS)[number]["key"], s: string): string | undefined {
+  const v = s.trim();
+  return VALVE_KEYS.find((k) => k.key === key)!.ok(v) ? v : undefined;
 }
 
 export type EnvFile = { lines: string[]; values: Record<string, string>; eol: "\n" | "\r\n"; changed: boolean };

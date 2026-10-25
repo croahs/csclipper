@@ -9,8 +9,10 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { foldersSource } from "../src/ingest/sources/folders.ts";
 import type { SourceContext } from "../src/ingest/sources.ts";
+import { demoIncomplete } from "../src/parse/fileinfo.ts";
+import { demoBytes, truncatedDemo } from "./demo-bytes.ts";
 
-const demo = (fill: number) => Buffer.concat([Buffer.from("PBDEMS2\0", "latin1"), Buffer.alloc(4096, fill)]);
+const demo = demoBytes;
 const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 const OLD = Date.now() / 1000 - 3600; // settled an hour ago
 
@@ -105,4 +107,25 @@ test("a zip that cannot be listed is pending, not remembered", async () => {
   const r = await foldersSource({ dirs: [watch], knownHashes: () => new Set() }).fetch(ctx);
   assert.match(r.pending[0]?.reason ?? "", /could not list/);
   assert.throws(() => readFileSync(ctx.stateFile));
+});
+
+test("an incomplete .dem (DEM_FileInfo offset past the end) is pending, never copied, never remembered", async () => {
+  const { watch, ctx, put } = setup();
+  const cut = put("match730_003850170963031228525_0309642818_187.dem", truncatedDemo(7));
+  assert.match(demoIncomplete(cut) ?? "", /outside the file/);
+  assert.equal(demoIncomplete(put("whole.dem", demo(7))), undefined);
+  // A frame at the header's offset whose payload carries field 0 (an illegal tag) is not complete.
+  const badFrame = Buffer.concat([Buffer.from("PBDEMS2\0", "latin1"), Buffer.from([16, 0, 0, 0, 0, 0, 0, 0]), Buffer.from([0x02, 0x00, 0x02, 0x00, 0x00])]);
+  const badFile = path.join(path.dirname(watch), "badframe.dem"); // outside the watched folder
+  writeFileSync(badFile, badFrame);
+  assert.match(demoIncomplete(badFile) ?? "", /field number 0/);
+  const r = await foldersSource({ dirs: [watch], knownHashes: () => new Set([sha(demo(7))]) }).fetch(ctx);
+  assert.equal(r.fetched.length, 0);
+  assert.deepEqual(r.pending.map((p) => [path.basename(p.item), p.reason]), [["match730_003850170963031228525_0309642818_187.dem", "incomplete or still being written"]]);
+  const seen = JSON.parse(readFileSync(ctx.stateFile, "utf8"));
+  assert.ok(!Object.keys(seen).some((k) => k.includes("match730_")));
+  // Finished later (the game rewrote it whole): copied on the next run.
+  put("match730_003850170963031228525_0309642818_187.dem", demo(8), OLD + 60);
+  const again = await foldersSource({ dirs: [watch], knownHashes: () => new Set([sha(demo(7))]) }).fetch(ctx);
+  assert.deepEqual(again.fetched.map((f) => path.basename(f)), ["match730_003850170963031228525_0309642818_187.dem"]);
 });

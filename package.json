@@ -25,18 +25,11 @@
   },
   "dependencies": {
     "@laihoe/demoparser2": "^0.42.0",
-    "globaloffensive": "3.3.0",
     "globaloffensive-sharecode": "1.1.1",
-    "qrcode-terminal": "0.12.0",
-    "seek-bzip": "^2.0.0",
-    "steam-session": "1.9.4",
-    "steam-user": "5.3.0"
+    "seek-bzip": "^2.0.0"
   },
   "devDependencies": {
-    "@types/globaloffensive": "2.3.4",
     "@types/node": "^26.6.5",
-    "@types/qrcode-terminal": "^0.12.2",
-    "@types/steam-user": "5.1.1",
     "playwright": "^1.64.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"

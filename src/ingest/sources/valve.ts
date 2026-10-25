@@ -1,36 +1,49 @@
-// Valve matchmaking source (PLAN.md §1, M4): the main account's matches newer
-// than the last share code handled, each demo downloaded into demos/inbox/.
+// Valve matchmaking source (PLAN.md §1, M4, M6): the main account's matches newer
+// than the last share code handled, each demo fetched into demos/inbox/.
 // Two steps: the Steam Web API walks share codes forward (main account's
-// match-history auth code), then the Game Coordinator, through the alt's Steam
-// login (valve-gc.ts), resolves each code to a replay URL on Valve's servers.
+// match-history auth code), then a fetcher downloads each match: CS2 launched on
+// the render account with +csgo_download_match, one guarded launch per code
+// (valve-fetch.ts; docs/m6-mm-fetch.md, "Contract: the fetch launch").
 //
 // Order: codes come oldest first, at most maxMatchesPerRun per run; the
-// checkpoint (state.lastShareCode) advances after each completed download and
-// the run stops at the first failure or at a demo not ready yet, so nothing is
-// skipped except demos Valve no longer has (older than ~30 days, or gone).
+// checkpoint (state.lastShareCode) advances only over codes whose demo is in the
+// inbox (or already stored) and codes that are gone (Valve says the match has
+// expired, or the code has been pending over 30 days), and the run stops at the
+// first pending or failed code, so nothing else is ever skipped.
 import { createHash } from "node:crypto";
-import { closeSync, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import type { ReadableStream as WebReadableStream } from "node:stream/web";
+import { ShareCode } from "globaloffensive-sharecode";
 import type { Source, SourceContext, SourceResult } from "../sources.ts";
+import type { DemoFetcher, FetchResult } from "./valve-fetch.ts";
 
 export const NEXT_CODE_API = "https://api.steampowered.com/ICSGOPlayers_730/GetNextMatchSharingCode/v1";
-export const NO_KEYS = "STEAM_WEB_API_KEY, STEAM_MATCH_AUTH_CODE and STEAM_LAST_SHARE_CODE are not all set in .env: nothing fetched. With them, pnpm grab walks the main account's matchmaking share codes and downloads the demos through the alt's Steam login (pnpm grab --steam-login once).";
+export const NO_KEYS = "STEAM_WEB_API_KEY, STEAM_MATCH_AUTH_CODE and STEAM_LAST_SHARE_CODE are not all set in .env: nothing fetched. With them, pnpm grab walks the main account's matchmaking share codes and downloads each demo through a short CS2 launch on the render account.";
 export const SHARE_CODE = /^CSGO(-[A-Za-z0-9]{5}){5}$/;
-const MAX_DEMO_BYTES = 2 * 1024 ** 3;
+// globaloffensive-sharecode's alphabet: SHARE_CODE allows [A-Za-z0-9], and the decoder silently
+// mis-decodes characters outside this.
+const SHARE_CODE_ALPHABET = "ABCDEFGHJKLMNOPQRSTUVWXYZabcdefhijkmnopqrstuvwxyz23456789";
 const MAX_PER_RUN = 50;
-const DEMO_STEM = /^[0-9_]{10,80}$/; // replay file names are <match id>_<reservation id>
-// A demo that is missing this long after the match never shows up (Valve keeps them ~30 days).
-const NOT_READY_FOR_S = 2 * 3600;
-const KEPT_FOR_S = 30 * 24 * 3600;
+// Valve keeps demos about 30 days: a code pending that long is gone whatever the reason.
+const PENDING_GONE_AFTER_MS = 30 * 24 * 3600 * 1000;
 
-/** Steam Web API and replay downloads, injectable so tests run without network. */
+/**
+ * A share code checked (SHARE_CODE, then the decoder's alphabet) and decoded. Ids stay decimal
+ * strings: they exceed Number's safe range. paddedOutcomeId is the <A> of the Watch tab's
+ * match730_<A>_<B>_<C>.dem (and of the old GC path's valve-<A>_<B>.dem.bz2).
+ */
+export function decodeShareCode(code: string): { matchId: string; outcomeId: string; paddedOutcomeId: string } {
+  if (!SHARE_CODE.test(code)) throw new Error(`not a share code (CSGO-xxxxx-xxxxx-xxxxx-xxxxx-xxxxx): ${code}`);
+  const bad = [...code.slice(5).replaceAll("-", "")].filter((ch) => !SHARE_CODE_ALPHABET.includes(ch));
+  if (bad.length) throw new Error(`${code} has characters no share code uses: ${[...new Set(bad)].join("")}`);
+  const d = new ShareCode(code).decode() as { matchId: unknown; outcomeId: unknown } | false;
+  if (!d || typeof d.matchId !== "string" || typeof d.outcomeId !== "string" || !/^\d{1,21}$/.test(d.matchId) || !/^\d{1,21}$/.test(d.outcomeId)) throw new Error(`${code} does not decode`);
+  return { matchId: d.matchId, outcomeId: d.outcomeId, paddedOutcomeId: d.outcomeId.padStart(21, "0") };
+}
+
+/** The Steam Web API, injectable so tests run without network. */
 export type ValveTransport = {
   getJson(url: string): Promise<{ status: number; body: unknown }>;
-  /** Stream url into dest; throw past maxBytes; an error with status 404 when the file is gone. */
-  download(url: string, dest: string, maxBytes: number): Promise<void>;
 };
 
 export const valveHttp: ValveTransport = {
@@ -38,54 +51,19 @@ export const valveHttp: ValveTransport = {
     const r = await fetch(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(30_000) });
     return { status: r.status, body: r.headers.get("content-type")?.includes("json") ? await r.json() : await r.text() };
   },
-  // No redirects (the URL was checked against Valve's replay hosts, a redirect target is not), and the
-  // body must be exactly the declared length: a cut-short bzip2 would otherwise pass the checkpoint.
-  async download(url, dest, maxBytes) {
-    const r = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(30 * 60_000) });
-    if (!r.ok || !r.body) throw new Error(`download HTTP ${r.status}`);
-    const declared = Number(r.headers.get("content-length") ?? "0");
-    if (!(declared > 0)) throw new Error("download has no Content-Length; cannot tell a complete demo from a cut-short one");
-    if (declared > maxBytes) throw new Error(`download is ${declared} bytes, over the limit`);
-    let seen = 0;
-    const limit = new Transform({
-      transform(chunk: Buffer, _enc, cb) { seen += chunk.length; cb(seen > declared ? new Error("download longer than its Content-Length") : null, chunk); },
-    });
-    await pipeline(Readable.fromWeb(r.body as WebReadableStream), limit, createWriteStream(dest));
-    if (seen !== declared) throw new Error(`download cut short: ${seen} of ${declared} bytes`);
-  },
 };
 
-/** One Game Coordinator session on the alt, opened only when there is something to resolve. */
-export type GcSession = {
-  /** The replay URL and match time (unix s) for a share code; url undefined when the GC has none. */
-  resolve(shareCode: string): Promise<{ url?: string; matchTime?: number }>;
-  close(): Promise<void>;
+export type ValveState = {
+  lastShareCode?: string; steamIdHash?: string; updatedAt?: string;
+  /** Codes reported pending, with when that first happened; cleared when a code is done or gone. */
+  pending?: Record<string, { firstSeenAt: string }>;
 };
-/** Opens the session, or says why it cannot (no saved login, CS2 running): blocked, not failed. */
-export type GcOpener = (log: (l: string) => void) => Promise<GcSession | { blocked: string }>;
-
-export type ValveState = { lastShareCode?: string; steamIdHash?: string; updatedAt?: string };
 export type ValveOptions = {
   apiKey?: string; authCode?: string; startShareCode?: string; steamId64: string; maxMatchesPerRun: number;
-  openGc: GcOpener; transport?: ValveTransport; now?: () => number;
-  /** Whether the store already holds this demo (by replay file stem, also in the Watch tab's match730_<stem>.dem). */
-  haveDemo?: (stem: string) => boolean;
+  fetcher: DemoFetcher; transport?: ValveTransport; now?: () => number;
+  /** Whether the store already holds this match's demo, by its 21-digit padded outcome id. */
+  haveDemo?: (paddedOutcomeId: string) => boolean;
 };
-
-/** The replay's file stem, from a URL on Valve's replay servers only (http://replay<n>.valve.net/730/<stem>.dem.bz2). */
-export function replayStem(url: string): string {
-  let u: URL;
-  try { u = new URL(url); } catch { throw new Error(`GC replay URL is not a URL: ${JSON.stringify(url.slice(0, 120))}`); }
-  if (!/^https?:$/.test(u.protocol) || !/^replay\d+\.valve\.net$/.test(u.hostname)) throw new Error(`GC replay URL is not on Valve's replay servers: ${u.hostname}`);
-  const m = u.pathname.match(/^\/730\/([^/]+)\.dem\.bz2$/);
-  if (!m || !DEMO_STEM.test(m[1])) throw new Error(`GC replay URL has an unexpected path: ${JSON.stringify(u.pathname.slice(0, 120))}`);
-  return m[1];
-}
-
-function bz2Magic(file: string): boolean {
-  const fd = openSync(file, "r");
-  try { const b = Buffer.alloc(3); readSync(fd, b, 0, 3, 0); return b.toString("latin1") === "BZh"; } finally { closeSync(fd); }
-}
 
 export function valveSource(o: ValveOptions): Source {
   const t = o.transport ?? valveHttp;
@@ -136,62 +114,48 @@ export function valveSource(o: ValveOptions): Source {
       }
       ctx.log(`valve: ${todo.length} new match(es)${todo.length === o.maxMatchesPerRun ? " (the per-run limit; more may follow next run)" : ""}`);
       if (!todo.length) return result;
-      if (ctx.dryRun) { for (const c of todo) ctx.log(`valve: would download match ${c}`); return result; }
 
-      // 2-3. Each code resolved through the GC and downloaded; the checkpoint moves only over handled codes.
-      const gc = await o.openGc(ctx.log);
-      if ("blocked" in gc) {
-        result.blocked = gc.blocked;
-        for (const c of todo) result.pending.push({ item: c, reason: "waiting for a Game Coordinator session" });
-        return result;
+      // 2. Codes that need no launch: the demo is already stored, or the code has been pending
+      // over 30 days (gone). The rest go to the fetcher, one launch each, in order.
+      const pending = (state.pending ??= {});
+      type Outcome = FetchResult["results"][number];
+      const outcomes = new Map<string, Outcome>();
+      for (const code of todo) {
+        if (o.haveDemo?.(decodeShareCode(code).paddedOutcomeId)) { outcomes.set(code, { code, outcome: "done", reason: "already in the store" }); continue; }
+        const first = pending[code] ? Date.parse(pending[code].firstSeenAt) : NaN;
+        if (now() - first > PENDING_GONE_AFTER_MS) outcomes.set(code, { code, outcome: "gone", reason: `pending since ${pending[code].firstSeenAt}, longer than Valve keeps demos` });
       }
-      const advance = (code: string) => { state.lastShareCode = code; save(); };
-      try {
-        for (let i = 0; i < todo.length; i++) {
-          const code = todo[i];
-          const leftPending = (reason: string) => { for (const c of todo.slice(i)) result.pending.push({ item: c, reason: c === code ? reason : "after an earlier pending match" }); };
-          let part: string | undefined;
-          try {
-            const { url, matchTime } = await gc.resolve(code);
-            const age = matchTime ? now() / 1000 - matchTime : undefined;
-            if (!url) {
-              if (age !== undefined && age > NOT_READY_FOR_S) { ctx.log(`valve: match ${code} has no demo at Valve; skipped`); advance(code); continue; }
-              leftPending("the GC has no demo for it yet"); break;
-            }
-            if (age !== undefined && age > KEPT_FOR_S) { ctx.log(`valve: match ${code} is older than Valve keeps demos; skipped`); advance(code); continue; }
-            const stem = replayStem(url);
-            if (o.haveDemo?.(stem)) { ctx.log(`valve: match ${code} is already in the store`); advance(code); continue; }
-            const name = `valve-${stem}.dem.bz2`;
-            part = path.join(ctx.inbox, `${name}.part`);
-            mkdirSync(ctx.inbox, { recursive: true });
-            try {
-              await t.download(url, part, MAX_DEMO_BYTES);
-            } catch (e) {
-              // Gone at Valve: a demo is not uploaded the moment the match ends, so only one known to be old is given up on.
-              if (/HTTP 404/.test((e as Error).message) && age !== undefined && age > NOT_READY_FOR_S) {
-                ctx.log(`valve: match ${code}: demo no longer at Valve; skipped`); rmSync(part, { force: true }); part = undefined; advance(code); continue;
-              }
-              if (/HTTP 404/.test((e as Error).message)) { rmSync(part, { force: true }); part = undefined; leftPending("demo not uploaded yet"); break; }
-              throw e;
-            }
-            if (!bz2Magic(part)) throw new Error("downloaded file is not bzip2");
-            const dest = path.join(ctx.inbox, name);
-            if (existsSync(dest)) throw new Error(`${dest} already exists in the inbox`);
-            renameSync(part, dest);
-            part = undefined;
-            result.fetched.push(dest);
-            ctx.log(`valve: fetched match ${code} -> ${name}`);
-            advance(code);
-          } catch (e) {
-            if (part) rmSync(part, { force: true });
-            ctx.log(`valve: match ${code} FAILED: ${(e as Error).message}`);
-            leftPending((e as Error).message);
-            result.failed = true;
-            break;
-          }
+      const toFetch = todo.filter((c) => !outcomes.has(c));
+      if (toFetch.length) {
+        const fr = await o.fetcher.fetch(toFetch, { inbox: ctx.inbox, dryRun: ctx.dryRun, log: ctx.log });
+        // A held lock, a running CS2, the wrong Steam account: every code waits, nothing failed.
+        if (fr.blocked) result.blocked = fr.blocked;
+        for (const r of fr.results) if (toFetch.includes(r.code) && !outcomes.has(r.code)) outcomes.set(r.code, r);
+        if (!fr.cleanupVerified) { result.cleanupUnverified = true; result.failed = true; }
+      }
+
+      // 3. The checkpoint moves over done and gone codes in order and stops at the first other one.
+      for (const c of todo) { const f = outcomes.get(c)?.file; if (f) result.fetched.push(f); }
+      for (let i = 0; i < todo.length; i++) {
+        const code = todo[i];
+        const r = outcomes.get(code) ?? { code, outcome: "pending", reason: result.blocked ?? "not attempted" };
+        if (r.outcome === "done" || r.outcome === "gone") {
+          ctx.log(r.outcome === "done" ? `valve: match ${code}${r.file ? ` -> ${path.basename(r.file)}` : `: ${r.reason ?? "done"}`}` : `valve: match ${code} is gone (${r.reason ?? "expired at Valve"}); skipped`);
+          state.lastShareCode = code;
+          delete pending[code];
+          save();
+          continue;
         }
-      } finally {
-        await gc.close();
+        if (r.outcome === "failed") { result.failed = true; ctx.log(`valve: match ${code} FAILED: ${r.reason ?? "launch failed"}`); }
+        const firstSeenAt = new Date(now()).toISOString();
+        for (const c of todo.slice(i)) {
+          const rc = outcomes.get(c);
+          result.pending.push({ item: c, reason: c === code ? (r.reason ?? r.outcome) : (result.blocked && rc?.outcome !== "done" && rc?.outcome !== "gone" ? result.blocked : "after an earlier pending match") });
+          // The 30-day clock starts the first time a code waits (a stored or gone one behind it does not).
+          if (rc?.outcome !== "done" && rc?.outcome !== "gone") pending[c] ??= { firstSeenAt };
+        }
+        save();
+        break;
       }
       return result;
     },

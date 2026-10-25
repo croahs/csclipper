@@ -4,8 +4,8 @@
 // files. Its own progress (last FACEIT match, last share code) lives in
 // state/sources/<name>.json. `pnpm grab` runs every source, then ingest;
 // `pnpm go` does not fetch. FACEIT is src/ingest/sources/faceit.ts; Valve
-// matchmaking (Game Coordinator via the alt account) is
-// src/ingest/sources/valve.ts.
+// matchmaking (a short CS2 launch on the render account per match,
+// valve-fetch.ts) is src/ingest/sources/valve.ts.
 export type SourceContext = {
   inbox: string;
   stateFile: string; // this source's own state, e.g. state/sources/faceit.json
@@ -24,6 +24,8 @@ export type SourceResult = {
   blocked?: string;
   /** Set when an item actually failed (a bad download, a browser error): the CLI exits 1; the item is still pending, nothing is skipped. */
   failed?: boolean;
+  /** Set when a game launch's cleanup could not be verified (a cs2.exe may be left, .render.lock stays): pnpm grab runs no further source and no ingest, and exits 3. */
+  cleanupUnverified?: boolean;
 };
 
 export type Source = {

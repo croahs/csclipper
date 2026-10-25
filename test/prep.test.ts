@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseEnv } from "node:util";
-import { envText, isSteamId64, librariesFromVdf, parseEnvFile, parseSteamId64, roundTrips, setLine } from "../src/prep.ts";
+import { envText, isSteamId64, librariesFromVdf, parseEnvFile, parseSteamId64, parseValveValue, roundTrips, setLine } from "../src/prep.ts";
 
 test("libraries: the install plus every vdf path, unescaped, deduped case-insensitively", () => {
   const vdf = `"libraryfolders"\n{\n\t"0"\n\t{\n\t\t"path"\t\t"C:\\\\Program Files (x86)\\\\Steam"\n\t}\n\t"1"\n\t{\n\t\t"path"\t\t"D:\\\\SteamLibrary"\n\t}\n}\n`;
@@ -48,4 +48,29 @@ test(".env editing: an edit that lands inside a quoted multi-line value is caugh
   assert.equal(env.values.HLAE_EXE, "");
   setLine(env, "HLAE_EXE", "C:\\x\\HLAE.exe"); // replaces the line inside NOTES, not the real assignment
   assert.equal(roundTrips(env), false);
+});
+
+test("Valve values: the shapes pnpm prep --valve accepts, and they survive the .env round trip bare", () => {
+  const key = "0123456789abcdefABCDEF0123456789";
+  assert.equal(parseValveValue("STEAM_WEB_API_KEY", ` ${key} `), key);
+  assert.equal(parseValveValue("STEAM_WEB_API_KEY", key.slice(1)), undefined); // 31 characters
+  assert.equal(parseValveValue("STEAM_WEB_API_KEY", `${key.slice(1)}g`), undefined); // not hex
+  assert.equal(parseValveValue("STEAM_MATCH_AUTH_CODE", "ABCD-12345-WXYZ"), "ABCD-12345-WXYZ");
+  assert.equal(parseValveValue("STEAM_MATCH_AUTH_CODE", " abcd-12345-wxyz "), "abcd-12345-wxyz"); // trimmed, case kept
+  assert.equal(parseValveValue("STEAM_MATCH_AUTH_CODE", "ABCD-1234-WXYZ"), undefined);
+  assert.equal(parseValveValue("STEAM_LAST_SHARE_CODE", "CSGO-aB3dE-fG4hJ-kL5mN-pQ6rS-tU7vW"), "CSGO-aB3dE-fG4hJ-kL5mN-pQ6rS-tU7vW");
+  assert.equal(parseValveValue("STEAM_LAST_SHARE_CODE", "CSGO-aB3dE-fG4hJ-kL5mN-pQ6rS"), undefined);
+  assert.equal(parseValveValue("STEAM_LAST_SHARE_CODE", "CSGO-aB3dE-fG4hJ-kL5mN-pQ6rS-tU7v0"), undefined); // 0 is not in the decoder's alphabet
+  assert.equal(parseValveValue("STEAM_LAST_SHARE_CODE", "CSGO-IB3dE-fG4hJ-kL5mN-pQ6rS-tU7vW"), undefined); // nor is I
+  assert.equal(parseValveValue("STEAM_LAST_SHARE_CODE", "steam://rungame/730/76561202255233023/+csgo_download_match%20CSGO-aB3dE-fG4hJ-kL5mN-pQ6rS-tU7vW"), undefined); // the code alone
+
+  const env = parseEnvFile("STEAM_WEB_API_KEY=\nSTEAM_MATCH_AUTH_CODE=\nSTEAM_LAST_SHARE_CODE=\n");
+  setLine(env, "STEAM_WEB_API_KEY", key);
+  setLine(env, "STEAM_MATCH_AUTH_CODE", "ABCD-12345-WXYZ");
+  setLine(env, "STEAM_LAST_SHARE_CODE", "CSGO-aB3dE-fG4hJ-kL5mN-pQ6rS-tU7vW");
+  assert.equal(roundTrips(env), true);
+  assert.equal(envText(env), `STEAM_WEB_API_KEY=${key}
+STEAM_MATCH_AUTH_CODE=ABCD-12345-WXYZ
+STEAM_LAST_SHARE_CODE=CSGO-aB3dE-fG4hJ-kL5mN-pQ6rS-tU7vW
+`);
 });

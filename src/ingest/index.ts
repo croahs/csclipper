@@ -1,7 +1,8 @@
 // Ingest (PLAN.md §1, watch-folder baseline): files dropped into demos/inbox/
 // by hand or by a source (pnpm grab, sources.ts) are taken here. Ingest
 // waits until a file has stopped growing, unpacks archives with name, count
-// and size limits enforced while unpacking, checks the result is a CS2 demo,
+// and size limits enforced while unpacking, checks the result is a complete CS2
+// demo (header and DEM_FileInfo, parse/fileinfo.ts),
 // hashes it, moves it to demos/store/<sha256>.dem and registers it in state/demos.json (committed after each demo). Originals go
 // to demos/ingested/, anything unusable to demos/rejected/ with a
 // .reason.txt beside it; nothing is deleted. A store file that is not in the
@@ -17,6 +18,7 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { ROOT, STATE_DIR } from "../config.ts";
 import { sha256File } from "../parse/clip-facts.ts";
+import { demoIncomplete } from "../parse/fileinfo.ts";
 
 const require = createRequire(import.meta.url);
 const Bunzip = require("seek-bzip");
@@ -188,7 +190,13 @@ export async function ingest(): Promise<IngestReport> {
     }
     // Read everything first, then re-check: if the original changed meanwhile it
     // is still being written, and nothing is rejected or stored on its account.
-    const checked = dems.map((dem) => ({ dem, ok: isCs2Demo(dem) }));
+    // A bare .dem and every .dem unpacked from an archive: a CS2 header and a valid DEM_FileInfo
+    // (a cut-short or half-written demo fails the second).
+    const checked = dems.map((dem) => {
+      if (!isCs2Demo(dem)) return { dem, ok: false, reason: "not a CS2 demo (no PBDEMS2 header)" };
+      const why = demoIncomplete(dem);
+      return why ? { dem, ok: false, reason: `incomplete demo (${why})` } : { dem, ok: true, reason: "" };
+    });
     const hashed: { dem: string; sha256: string }[] = [];
     for (const c of checked) if (c.ok) hashed.push({ dem: c.dem, sha256: await sha256File(c.dem) });
     if (!existsSync(file) || !sameFile(s1, statSync(file))) {
@@ -196,7 +204,7 @@ export async function ingest(): Promise<IngestReport> {
       report.waiting.push(n);
       continue;
     }
-    for (const c of checked) if (!c.ok) reject(c.dem, "not a CS2 demo (no PBDEMS2 header)", report, c.dem === file ? n : `${n}.dem`);
+    for (const c of checked) if (!c.ok) reject(c.dem, c.reason, report, c.dem === file ? n : `${n}.dem`);
     for (const { dem, sha256 } of hashed) {
       if (registry[sha256] && existsSync(registry[sha256].file)) {
         report.duplicates.push(n);

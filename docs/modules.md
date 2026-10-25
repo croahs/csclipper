@@ -7,11 +7,12 @@
 ```
 setup.ps1                      (one line for a new PC: git, Node, pnpm, clone or pull, pnpm prep; GUIDE.md)
 Make clips.cmd                 (double-click: pnpm grab, then pnpm go, window stays open)
+Set up matchmaking.cmd         (double-click: pnpm prep --valve, window stays open)
 pnpm prep                      (first time on a PC: tools, .env; pnpm check reports only)
+pnpm prep --valve              (only the three Valve matchmaking .env values: where to get them, asks for the unset ones)
 pnpm check
 pnpm grab [--dry-run] [--browser] [--last <n>]
 pnpm grab --login
-pnpm grab --steam-login
 pnpm go [--dry-run] [--retry-failed] [--repost] [--settle-existing] [--no-reels]
 pnpm moments "<demo.dem>"
 pnpm clip "<demo.dem>" --top <n> [--timeout <s>] [--dry-run]
@@ -99,27 +100,45 @@ where the folders source picks it up on the next run. **valve** (with
 `STEAM_WEB_API_KEY`, `STEAM_MATCH_AUTH_CODE`, `STEAM_LAST_SHARE_CODE`)
 walks the main account's share codes after the last one handled
 (`state/sources/valve.json`; the start code itself is not fetched), at
-most `sources.valve.maxMatchesPerRun` (5) per run, oldest first, and
-downloads each demo from the replay URL the Game Coordinator gives the
-alt's headless Steam login (`sources/valve-gc.ts`). That login is a QR
-code scanned once in the alt's Steam app (`pnpm grab --steam-login`); its
-refresh token sits in `state/sources/valve-session.json`, never a
-password, and is refused unless the account is `RENDER_STEAM_ID64`; the
-token's own account is checked before it is sent. The GC session opens
-only when there are new codes, and not while CS2 runs, a render run holds
-a lock or the alt plays elsewhere (it never kicks that session, and logs
-on with a fixed `logonID` of its own rather than the shared default 0,
-so replacing another session is unlikely, though nothing reserves it): those runs report
-the codes pending. While open it holds `state/.render.lock` until the
-logoff has finished (bounded; every exit releases it once), so a render started meanwhile refuses. Any `DEBUG`
-value is refused (steam-session could log the token under a wildcard). Demos Valve no
-longer has (over ~30 days, or none two hours after the match) are
-skipped; a recent one, or one of unknown age, without a demo yet waits.
-Replay URLs are accepted only from `replay<n>.valve.net`, with no
-redirects and a body of exactly its Content-Length; a full-length but
-corrupt archive still passes the checkpoint and is caught by ingest
-(`demos/rejected/`; set `lastShareCode` back to re-fetch). Pending items are
-not failures; exit 1 means a source failed or ingest rejected a file.
+most `sources.valve.maxMatchesPerRun` (5) per run, oldest first, and has
+CS2 download each match itself (`sources/valve-fetch.ts`; the contract and
+its reasons are in `docs/m6-mm-fetch.md`, the measurements in
+`docs/spikes.md` M0.4): one launch per code, in order, `cs2.exe` started
+directly on the render account with `-insecure … +csgo_download_match
+<code>` and nothing that joins a server, under the render launch's guards
+and lock (`state/.render.lock` taken before the guard and released by the
+fetch launch alone, once its cleanup is verified; a lock held by a
+render, `.clip.lock` / `.go.lock`, a running CS2 or the wrong Steam
+account makes the source blocked with every code pending, never a
+failure). The game's own logon line in `console.log` must name
+`RENDER_STEAM_ID64`, or the launch is killed. A code is done when that
+line has named the render account, its
+`replays/match730_<outcome id>_….dem` appeared or changed after the
+spawn, its `.dem.info` names the code's match id, the demo is complete
+and it held still 10 s (a complete demo without the logon line ends the
+launch pending, nothing advanced); then the game is killed and its cleanup
+verified, then the demo is copied into the inbox (the folders source's
+copy-and-rename, 2 GiB limit), about 55 s per code on the author's PC
+(the gate's 85 s included a 30 s watch the product does not run). It is
+gone when the game says the match has expired, or
+when it has been pending over 30 days (`pending[code].firstSeenAt` in the
+state; Valve keeps demos about that long). Otherwise it is pending
+(replays/ idle 180 s, or the 300 s cap) and the run stops there. The
+checkpoint advances only over done and gone codes, in order; a code whose
+demo is already stored (its padded outcome id leads a stored demo's name,
+`match730_<id>_` or the old GC path's `valve-<id>_`) is passed without a
+launch. Before each launch an orphan `match730_<id>_*.dem.info` (no
+complete `.dem` beside it, field 1 the code's match id) is deleted: a
+download killed between the two files leaves it, and while it is there
+the game never downloads that match again; that is the one write under
+`game/`. A launch's cleanup that cannot be verified stops `pnpm grab`
+(no further source, no ingest; exit 3, the lock stays). A `.dem` anywhere
+that is not complete (no valid `DEM_FileInfo` at the header's offset:
+cut short or still being written) is pending in the folders source and
+rejected by ingest as "incomplete demo" (`demoIncomplete` in
+`src/parse/fileinfo.ts`). Pending items are
+not failures; exit 1 means a source failed or ingest rejected a file, 3
+a fetch launch's cleanup was not verified.
 
 `pnpm go` is the one command: drop demos (`.dem`, or `.zip` / `.bz2` /
 `.gz` / `.zst`) into `demos/inbox/`, run it, come back to clips. It
@@ -180,8 +199,8 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `setup.ps1`, `GUIDE.md` | the one-line bootstrap (`irm … | iex`: winget for git and Node, corepack or pnpm's installer for pnpm, clone or fast-forward pull of a checkout of this repo, `pnpm prep`, every exit code checked, nothing installed when winget is missing) and the step-by-step guide it points to |
 | `scoring.json` | ranking weights; tuning and current picks in `docs/scoring-notes.md` |
 | `src/cli/go.ts`, `src/cli/clip.ts`, `src/cli/moments.ts` | the entries |
-| `src/ingest/` | watch folder (`index.ts`), the source contract (`sources.ts`), sources (`sources/folders.ts`, `sources/faceit.ts` with its browser path `sources/faceit-browser.ts`, `sources/valve.ts` with its Steam login and GC client `sources/valve-gc.ts`) |
-| `test/` | `pnpm test`: FACEIT source against recorded fixtures (`test/fixtures/faceit/`), the Valve source against a fake Web API and GC, and the folders source on temp folders; no network |
+| `src/ingest/` | watch folder (`index.ts`), the source contract (`sources.ts`), sources (`sources/folders.ts`, `sources/faceit.ts` with its browser path `sources/faceit-browser.ts`, `sources/valve.ts` with its CS2 fetch launch `sources/valve-fetch.ts`) |
+| `test/` | `pnpm test`: FACEIT source against recorded fixtures (`test/fixtures/faceit/`), the Valve source against a fake Web API and fetcher, and the folders source on temp folders; no network, no game launch |
 | `src/queue/` | the batch and its job ledger (`index.ts`); one clip job, shared by `pnpm clip` and the batch (`job.ts`) |
 | `src/library/page.html`, `page.ts` | the library page template and its writer |
 | `demos/` | `inbox/` (drop here), `store/<sha256>.dem` (ingested demos), `ingested/` (originals), `rejected/` (with `.reason.txt`) |
@@ -190,7 +209,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `src/parse/clip-facts.ts` | what one render needs: tickrate, demo hash, map, POV slot at the clip's ticks, round |
 | `src/score/index.ts` | round context (1vX), one moment per round, scoring |
 | `src/clip/` | clip specs (`index.ts`: boundaries, merge, action windows, id, title); `moments.ts` writes `moments.json` / `moments.txt` |
-| `src/render/controller/` | `index.ts` state machine, `guards.ts`, `processes.ts`, `cfg.ts` |
+| `src/render/controller/` | `index.ts` state machine, `guards.ts`, `processes.ts`, `launch.ts` (cleanup, emergency hooks, console.log reader; shared with the fetch launch), `cfg.ts` |
 | `src/render/capture/hlae.ts` | HLAE launch arguments and `mirv_streams` lines |
 | `src/post/` | trim and fade (`index.ts`), FFmpeg probes (`ffmpeg.ts`) |
 | `src/library/index.ts` | clip id, atomic publish, index and failures |
@@ -281,10 +300,13 @@ the spectated player (docs/spikes.md, M0.2 open items).
   child created in the spawn window; processes are keyed by pid + creation
   time + image. `killExact` opens a handle, re-checks that identity and kills
   through the handle, closing the check-to-kill pid-reuse race noted in
-  M0.2. Cleanup kills in rounds with re-discovery (an encoder orphaned by a
-  killed cs2.exe is adopted if created in its parent's lifetime), and fails
-  closed: a loader never identified, any owned process left, or any cs2.exe
-  at all means exit 3. Residual, no Windows Job Object: a descendant that
+  M0.2. Cleanup (`src/render/controller/launch.ts`, shared with the fetch
+  launch) kills in rounds with re-discovery (an encoder orphaned by a
+  killed cs2.exe is adopted if created in its parent's lifetime), re-kills
+  an owned process still found during verification (bounded), needs 10 s
+  of continuous quiet (no owned process, no suspect orphan, no cs2.exe)
+  within 60 s, and fails closed: a loader never identified, any owned
+  process left, or any cs2.exe at all means exit 3. Residual, no Windows Job Object: a descendant that
   starts and exits between two 0.5 s polls is never seen.
 - **Launch evidence.** `-condebug` rewrites `game\csgo\console.log` in the
   CS2 install each launch; the job cfg has a per-launch name
@@ -397,9 +419,10 @@ re-made. Only a guard refusal gives
   `.grab.lock.takeover` file, held only while the stale lock is replaced;
   a grab hard-killed inside that moment (milliseconds, and only after an
   earlier crash) strands it, and later grabs refuse until both files are
-  deleted by hand. Ctrl-C releases `.grab.lock` and any `.render.lock` the
-  Valve source holds; a hard kill while that GC session is up leaves
-  `.render.lock`, handled like any other.
+  deleted by hand. Ctrl-C releases `.grab.lock`; during a fetch launch it
+  also runs that launch's cleanup, which releases `.render.lock` once
+  verified (exit 3 and the lock stays otherwise); a hard kill mid-launch
+  leaves the game and `.render.lock`, handled like any other.
 - **Library page.** `src/library/page.html` (committed) with the clip
   index inlined as JSON, every `<` escaped, so it works from `file://`;
   videos load by relative path. One static dark file, plain CSS and JS:

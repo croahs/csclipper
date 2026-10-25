@@ -1,4 +1,4 @@
-// pnpm grab [--dry-run] [--browser] [--last <n>] | pnpm grab --login | pnpm grab --steam-login   (PLAN.md's "pnpm fetch"; pnpm's own fetch command takes that name):
+// pnpm grab [--dry-run] [--browser] [--last <n>] | pnpm grab --login   (PLAN.md's "pnpm fetch"; pnpm's own fetch command takes that name):
 // "I have played some games". Runs the demo sources, each writing new demos
 // into demos/inbox/, then ingests the inbox. Renders nothing; pnpm go does that.
 //   folders  copies new demos from watched folders, read-only (default: CS2's
@@ -10,17 +10,16 @@
 //            sources.faceit.via "browser") through the user's logged-in FACEIT session in
 //            the installed Chrome/Edge, profile state/browser-profile (docs/faceit-api.md)
 //   valve    with STEAM_WEB_API_KEY, STEAM_MATCH_AUTH_CODE, STEAM_LAST_SHARE_CODE: the main
-//            account's matchmaking share codes after the last one handled, each demo resolved
-//            through the Game Coordinator on the alt's Steam login and downloaded (refused while
-//            CS2 or a render runs; config.json sources.valve.maxMatchesPerRun, default 5)
+//            account's matchmaking share codes after the last one handled (config.json
+//            sources.valve.maxMatchesPerRun, default 5), each demo downloaded by CS2 itself in one
+//            guarded launch per code on the render account (valve-fetch.ts; blocked while CS2 or a render runs)
 //   --last n backfill: the demos of the last n FACEIT matches through the browser session,
 //            one at a time with 4-8 s between downloads (config.json sources.faceit.pauseSeconds), skipping those already stored;
 //            resumable (state/sources/faceit-backfill.json)
 //   --login  opens that profile in a plain browser window to sign in; waits until it is closed
-//   --steam-login  shows a QR code to scan with the alt's Steam app; saves the alt's refresh
-//            token in state/sources/valve-session.json (gitignored) for the valve source
 // Pending items (a missing scope, a logged-out browser, a demo not uploaded yet) are listed, not failures.
-// Exit codes: 0 ok, 1 a source or a download failed or ingest rejected a file, 2 another pnpm grab is running.
+// Exit codes: 0 ok, 1 a source or a download failed or ingest rejected a file, 2 another pnpm grab is running,
+// 3 a fetch launch's cleanup was not verified (no further source or ingest ran; check for cs2.exe by hand).
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { parseEnv } from "node:util";
@@ -32,12 +31,12 @@ import { NO_KEY, faceitBackfill, faceitSource } from "../ingest/sources/faceit.t
 import { foldersSource } from "../ingest/sources/folders.ts";
 import { ROOM_URL, browserDemos, findBrowser, login } from "../ingest/sources/faceit-browser.ts";
 import { RenderLock } from "../render/controller/guards.ts";
+import { cleanupUnverified } from "../render/controller/launch.ts";
 import { NO_KEYS, valveSource } from "../ingest/sources/valve.ts";
-import { gcOpener, steamLogin } from "../ingest/sources/valve-gc.ts";
+import { fetchLauncher } from "../ingest/sources/valve-fetch.ts";
 
 const dryRun = process.argv.includes("--dry-run");
 const loginOnly = process.argv.includes("--login");
-const steamLoginOnly = process.argv.includes("--steam-login");
 const viaBrowserFlag = process.argv.includes("--browser");
 // --last <n>: backfill the demos of the last n FACEIT matches through the browser session.
 const lastAt = process.argv.indexOf("--last");
@@ -81,9 +80,11 @@ function sources(): Source[] {
   if (backfillLast !== undefined) return out;
   if (valveKey && authCode) {
     const ids = loadIdentities();
-    // A replay stem is in a stored demo's name: valve-<stem>.dem.bz2 here, match730_<stem>….dem from the Watch tab.
-    const haveDemo = (stem: string) => stored.some((n) => n.includes(stem));
-    out.push(valveSource({ apiKey: valveKey, authCode, startShareCode: env.STEAM_LAST_SHARE_CODE?.trim() || undefined, steamId64: ids.pov, maxMatchesPerRun: conf.valve?.maxMatchesPerRun ?? 5, openGc: gcOpener(ids), haveDemo }));
+    // A match's padded outcome id leads a stored demo's name: match730_<id>_<n>_<n>.dem from the Watch
+    // tab and the fetch launch, valve-<id>_<n>.dem.bz2 from the old GC path. Compared as strings.
+    const storedOutcomes = new Set(stored.flatMap((n) => { const m = /^(?:match730_|valve-)(\d{21})_/.exec(n); return m ? [m[1]] : []; }));
+    const haveDemo = (padded: string) => storedOutcomes.has(padded);
+    out.push(valveSource({ apiKey: valveKey, authCode, startShareCode: env.STEAM_LAST_SHARE_CODE?.trim() || undefined, steamId64: ids.pov, maxMatchesPerRun: conf.valve?.maxMatchesPerRun ?? 5, fetcher: fetchLauncher(ids), haveDemo }));
   } else console.log(`valve: skipped. ${NO_KEYS}`);
   return out;
 }
@@ -95,20 +96,15 @@ async function main(): Promise<number> {
   const lock = new RenderLock(path.join(STATE_DIR, ".grab.lock"));
   const stale = lock.acquire({ takeOverDead: true });
   if (stale !== undefined) console.log(`removed a stale .grab.lock from pid ${stale}, which is no longer running`);
-  // Ctrl-C or a closed terminal also releases the render lock the Valve source may hold
-  // (release() only removes a lock holding this pid).
-  const renderLock = new RenderLock(path.join(STATE_DIR, ".render.lock"));
-  const release = () => { renderLock.release(); lock.release(); };
-  const onSignal = (sig: NodeJS.Signals) => { release(); console.error(`pnpm grab stopped (${sig}); locks released`); process.exit(130); };
+  // Only .grab.lock is released here. .render.lock belongs to a fetch launch, which releases it
+  // itself once its cleanup is verified; on a signal mid-launch the launch's own exit hook runs
+  // that cleanup (launch.ts) and turns the exit code into 3 when it cannot verify it.
+  const release = () => lock.release();
+  const onSignal = (sig: NodeJS.Signals) => { release(); console.error(`pnpm grab stopped (${sig}); .grab.lock released`); process.exit(cleanupUnverified() ? 3 : 130); };
   const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"];
   for (const sig of signals) process.on(sig, onSignal);
   process.on("exit", release);
   try {
-    if (steamLoginOnly) {
-      await steamLogin(loadIdentities());
-      console.log("Saved the alt's Steam login; pnpm grab now fetches Valve matchmaking demos.");
-      return 0;
-    }
     if (loginOnly) {
       // A plain browser process, not automated: the user logs in and passes FACEIT's checks.
       const b = findBrowser();
@@ -133,6 +129,11 @@ async function main(): Promise<number> {
         console.error(`${s.name} FAILED: ${(e as Error).message}`);
         code = 1;
       }
+      // Sticky: a game may still be running, so nothing else runs (no further source, no ingest).
+      if (cleanupUnverified()) {
+        console.error(`${s.name}: a fetch launch's cleanup was not verified; nothing else runs. Check for cs2.exe by hand, then delete state/.render.lock`);
+        return 3;
+      }
     }
     if (dryRun) return code;
     const ing = await ingest();
@@ -149,4 +150,4 @@ async function main(): Promise<number> {
   }
 }
 
-main().then((c) => { process.exitCode = c; }, (e) => { console.error(String((e as Error).message)); process.exitCode = e instanceof Refusal ? 2 : 1; });
+main().then((c) => { process.exitCode = cleanupUnverified() ? 3 : c; }, (e) => { console.error(String((e as Error).message)); process.exitCode = cleanupUnverified() ? 3 : e instanceof Refusal ? 2 : 1; });
