@@ -402,8 +402,9 @@ re-made. Only a guard refusal gives
   a sidebar with Find (clip number or title), sort and the categories kind
   (highlight, deaths, kills; entry `kind`, absent = highlight), map and
   match (one per demo, dated by `state/sources/matches.json`, which
-  `pnpm grab` fills from FACEIT history; a demo without a FACEIT match id
-  in its name is "date unknown"); the selected clip plays as large as the
+  `pnpm grab` fills from FACEIT history when there is a key; any other
+  demo shows "added <day>", the day it was ingested, since a demo carries
+  no match time of its own); the selected clip plays as large as the
   window allows at 16:9, with sound (browsers allow sound only after a
   click or key, so the first clip on load waits); a compact list of the
   category's clips (number, title, score, length) with the playing one

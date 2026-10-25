@@ -19,12 +19,16 @@ export function writeLibraryPage(o: { running?: boolean } = {}): string {
   const dates: Record<string, number> = existsSync(MATCHES) ? JSON.parse(readFileSync(MATCHES, "utf8")) : {};
   const clips = Object.values(readIndex().clips).map((c) => {
     const m = (c.moment ?? {}) as { rank?: number; score?: number; kills?: number; flags?: string[]; clutch?: { vs: number; won: boolean } };
-    // The match: its demo; dated by FACEIT when the demo's file name carries the match id.
-    const matchId = registry[c.demoSha256]?.originalName.match(MATCH_ID)?.[0];
+    // The match: its demo; dated by FACEIT when the demo's file name carries the match id and
+    // pnpm grab has seen it (needs FACEIT_API_KEY), else by when the demo was added here, which
+    // the page labels as such (a demo carries no match time of its own).
+    const demo = registry[c.demoSha256];
+    const matchId = demo?.originalName.match(MATCH_ID)?.[0];
     const finished = matchId ? dates[matchId] : undefined;
+    const matchDate = finished ? new Date(finished * 1000).toISOString() : demo?.addedAt ?? null;
     return {
       no: c.no, id: c.id, file: c.file, title: c.title, map: c.map, round: c.round, seconds: c.seconds, createdAt: c.createdAt,
-      kind: c.kind ?? "highlight", match: c.demoSha256, matchDate: finished ? new Date(finished * 1000).toISOString() : null,
+      kind: c.kind ?? "highlight", match: c.demoSha256, matchDate, dateFrom: finished ? "faceit" : matchDate ? "added" : null,
       rank: m.rank, score: m.score, kills: m.kills, flags: m.flags, clutch: m.clutch,
     };
   });

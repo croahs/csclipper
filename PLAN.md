@@ -462,8 +462,8 @@ Phases:
    touches tool paths that the launch uses, so Sol reviews it.
 2. **FACEIT for others.** Done 2026-10-25 for the diagnosis: the path
    is blocked by a bot check, not a locator, and is retired (above).
-   Left: match dates on the library page from the demo file when there
-   is no FACEIT key.
+   The library page dates a demo without a FACEIT date by the day it was
+   added, labelled "added", so the key is never needed (2026-10-25).
 3. **Easy tier.** The bootstrap script, after v1 feedback.
 
 ## Who does what
