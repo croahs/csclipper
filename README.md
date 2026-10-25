@@ -67,6 +67,8 @@ no IDs or keys.
    records. One CS2 launch per demo, a few minutes each.
 4. Open `library/index.html`.
 
+`Make clips.cmd` in the repo root does steps 3 and 4's commands on a
+double-click (`pnpm grab`, then `pnpm go`; the window stays open).
 `pnpm go` again later renders only what is new. `pnpm drop <clip number>`
 removes a clip. More commands and every setting (`config.json`) are in
 [docs/modules.md](docs/modules.md).

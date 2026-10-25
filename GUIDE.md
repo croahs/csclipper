@@ -61,14 +61,27 @@ enough: CS2 is free and it shares the CS2 already installed on your PC.
    logged in and offers it as the render account, so you only press
    Enter for that question.
 
+**Already have an account you would not mind losing?** Use that one
+instead of making a new one: log in with it and skip to step 3. How
+risky is this, really? Low, as far as we can tell. HLAE is a well-known
+tool that has been used for CS movies for fifteen years, csclipper
+starts CS2 with `-insecure`, which switches VAC off and makes it
+impossible to join a VAC-secured server, nothing is ever injected into a
+game you are playing, and the game is closed when the clips are done.
+Bans happen when HLAE is loaded while connecting to a secure server,
+which this never does. But a VAC ban is permanent, Valve does not
+explain its decisions, and we are not Valve: so do not use the account
+you care about. It does need to be a different account from your main
+one; the tool refuses to run on your main account.
+
 While clips are rendering you cannot play on your main account, since
 Steam is logged in with the second one.
 
 ## Step 3: run the setup line
 
-1. Open Windows Terminal: press the Windows key, type `terminal`, press
-   Enter.
-2. Paste this line and press Enter:
+1. Press the Windows key, type `powershell`, press Enter. A blue or
+   black window opens.
+2. Paste this line into it and press Enter:
 
 ```powershell
 irm https://raw.githubusercontent.com/croahs/csclipper/main/setup.ps1 | iex
@@ -91,18 +104,8 @@ https://github.com/croahs/csclipper/blob/main/setup.ps1. In order it
   the `/profiles/` link), and the render account, where you press Enter
   to take the account logged in now.
 
-Every step stops with a message if something fails, and the line can be
-run again at any time: it then only updates csclipper and never changes
-answers you already gave.
-
-At the end it prints a checklist. Lines marked `ok` are fine, lines with
-no mark are just information (versions, optional settings you do not
-need), `warn` is something to know (for example which Steam account is
-logged in), and `MISSING` means something to fix. One you may see the
-first time is "your CS2 settings not found for the POV account": your
-main account has never started CS2 on this PC. Start CS2 once on your
-main account, close it, log back in with the second account, and run
-`pnpm check` in the csclipper folder to see the list again.
+If something is not right it says so and what to do. The line can be
+run again any time; it then only updates.
 
 ## Your first clips
 
@@ -114,19 +117,19 @@ main account, close it, log back in with the second account, and run
    `C:\Users\<you>\csclipper\demos\inbox`.
 2. **Close CS2** and make sure Steam is logged in with the second
    account.
-3. **Open a terminal in the csclipper folder** and run:
+3. **Double-click `Make clips`** in the csclipper folder (Windows key +
+   R, paste `%USERPROFILE%\csclipper`, Enter). A window opens, collects
+   new demos from CS2's folder and your Downloads, then CS2 opens by
+   itself, replays your best rounds and records them. Keep your hands
+   off the game window while it does; a click changes what is being
+   recorded. A match takes a few minutes. When it is done the game
+   closes and the window lists the clips it made.
 
-```powershell
-cd ~\csclipper
-pnpm grab
-pnpm go
-```
+To have `Make clips` on your desktop: right-click it, **Show more
+options**, **Send to**, **Desktop (create shortcut)**.
 
-`pnpm grab` collects new demos from CS2's folder and your Downloads.
-`pnpm go` does the rest: CS2 opens by itself, replays your best rounds
-and records them. Keep your hands off the game window while it does; a
-click changes what is being recorded. A match takes a few minutes. When
-it is done the game closes and the terminal lists the clips it made.
+The same thing typed, if you prefer a terminal in that folder:
+`pnpm grab`, then `pnpm go`.
 
 ## Watch and bookmark the library
 
@@ -149,7 +152,7 @@ command runs.
 ## Every time after that
 
 Play. Click **Watch demo** in the FACEIT room. Log in with the second
-account, run `pnpm grab` and `pnpm go`, open the bookmark.
+account, double-click **Make clips**, open the bookmark.
 
 ## If something goes wrong
 
@@ -158,10 +161,11 @@ account, run `pnpm grab` and `pnpm go`, open the bookmark.
 - "refusing: CS2 is already running": close CS2 first.
 - "refusing: logged-in Steam account is not RENDER_STEAM_ID64": log in
   with the second account.
-- "running scripts is disabled on this system" when you type `pnpm`:
-  Windows blocks PowerShell launcher scripts by default. Either type
-  `pnpm.cmd` instead of `pnpm`, or allow signed scripts for your own
-  user, which is Microsoft's documented setting for this:
+- "running scripts is disabled on this system" when you type `pnpm` in
+  PowerShell: Windows blocks PowerShell launcher scripts by default.
+  `Make clips` is not affected. In a terminal, type `pnpm.cmd` instead
+  of `pnpm`, or allow signed scripts for your own user, Microsoft's
+  documented setting for this:
   `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
   (https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_execution_policies).
 - A render that failed is listed in `csclipper\state\failures.json`;

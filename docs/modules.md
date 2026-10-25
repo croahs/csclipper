@@ -6,6 +6,7 @@
 
 ```
 setup.ps1                      (one line for a new PC: git, Node, pnpm, clone or pull, pnpm prep; GUIDE.md)
+Make clips.cmd                 (double-click: pnpm grab, then pnpm go, window stays open)
 pnpm prep                      (first time on a PC: tools, .env; pnpm check reports only)
 pnpm check
 pnpm grab [--dry-run] [--browser] [--last <n>]
