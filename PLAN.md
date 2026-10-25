@@ -202,6 +202,19 @@ establishes which of these CS2 and HLAE actually expose; the ones that
 cannot be observed get a conservative settle delay and a validation
 step on the output instead.
 
+Decided 2026-10-25: the controller reports while it waits. Polling a
+state, it prints one plain status line roughly every 5 s (job title, what
+it is waiting for, elapsed seconds of that state's limit; no cursor
+tricks, so the `Make clips.cmd` window and a log file read the same;
+synchronous process snapshots can stretch the interval), and when a
+launch times out before the demo has loaded it reads the texts of every
+window of the HLAE process and its children, visible or not, and puts
+HLAE's own dialog text into the failure reason. Why: HLAE runs with
+`-noGui` and is spawned hidden, so on 2026-10-25 its "HLAE Error" box
+(code 2002, "Loader could not create requested process … Access is
+denied", the FACEIT client's anti-cheat) was never seen, and every demo
+sat 60 s in silence and then failed with a bare timeout, for hours.
+
 **Capture mode, recommended: HLAE (`mirv_streams`) piping to FFmpeg.**
 This is the path CS Demo Manager uses for CS2 video export on Windows,
 so it is proven in principle and its open-source driver code is the

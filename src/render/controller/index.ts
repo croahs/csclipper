@@ -26,11 +26,14 @@ import { jobCfgs, type CrosshairSource } from "./cfg.ts";
 import { RenderLock, guard } from "./guards.ts";
 import { cleanupUnverified, consoleLogPath, launchLog, onEmergency, ownedCleanup } from "./launch.ts";
 import { OwnedTree, isRunning } from "./processes.ts";
+import { hlaeDialogLine, windowTexts } from "./hlae-dialog.ts";
 
 /** Recorded on each side of the requested ticks; post trims it off. */
 export const MARGIN_TICKS = 32;
 /** The seek lands this far before the record start. */
 export const SETTLE_TICKS = 2 * TICKRATE;
+/** While a state is waited for, one status line this often (plain lines: Make clips.cmd's window and log files). */
+const HEARTBEAT_MS = 5000;
 
 /** One take: the requested ticks and the spectator slot to watch them from. */
 export type TakeSpec = { startTick: number; endTick: number; slot: number };
@@ -153,16 +156,18 @@ export async function render(job: RenderJob): Promise<RenderResult> {
   // A seek tick may repeat (the same take twice): take i's seek is reached when the log
   // has as many "finished at tick" lines for it as takes 0..i seek there.
   const seekCount = (i: number) => plan.slice(0, i + 1).filter((t) => t.seekTick === plan[i].seekTick).length;
-  type Step = { name: string; logBased: boolean; limitS: number; reached: (log: string) => boolean };
+  // says: what the heartbeat line reports while the step is waited for.
+  type Step = { name: string; says: string; logBased: boolean; limitS: number; reached: (log: string) => boolean };
   const steps: Step[] = [
-    { name: "launched", logBased: false, limitS: 60, reached: () => tree!.games().length > 0 },
-    { name: "loaded", logBased: true, limitS: 120, reached: (log) => log.includes("Host activate: Playing Demo") },
+    { name: "launched", says: "waiting for the game to start", logBased: false, limitS: 60, reached: () => tree!.games().length > 0 },
+    { name: "loaded", says: "waiting for the demo to load", logBased: true, limitS: 120, reached: (log) => log.includes("Host activate: Playing Demo") },
     ...plan.flatMap((t, i): Step[] => {
       const tag = plan.length > 1 ? `#${i}` : "";
+      const take = `take ${i + 1} of ${plan.length}`;
       return [
-        { name: `seeked${tag}`, logBased: true, limitS: 90, reached: (log) => count(log, new RegExp(`Demo Skipping finished at tick ${t.seekTick}\\b`)) >= seekCount(i) },
-        { name: `capturing${tag}`, logBased: false, limitS: 30, reached: (log) => count(log, STARTED_RE) >= i + 1 || existsSync(cap.videoPaths[i]) },
-        { name: `stopped${tag}`, logBased: true, limitS: 30 + 4 * t.seconds, reached: (log) => count(log, FINISHED_RE) >= i + 1 },
+        { name: `seeked${tag}`, says: `${take}: seeking to tick ${t.seekTick}`, logBased: true, limitS: 90, reached: (log) => count(log, new RegExp(`Demo Skipping finished at tick ${t.seekTick}\\b`)) >= seekCount(i) },
+        { name: `capturing${tag}`, says: `${take}: waiting for the recording to start`, logBased: false, limitS: 30, reached: (log) => count(log, STARTED_RE) >= i + 1 || existsSync(cap.videoPaths[i]) },
+        { name: `stopped${tag}`, says: `${take}: capturing`, logBased: true, limitS: 30 + 4 * t.seconds, reached: (log) => count(log, FINISHED_RE) >= i + 1 },
       ];
     }),
   ];
@@ -171,6 +176,19 @@ export async function render(job: RenderJob): Promise<RenderResult> {
   const reasons: string[] = [];
   let logLive = false;
   let failure: string | undefined;
+  // HLAE's -noGui error box is hidden (hlae-dialog.ts): on a timeout before the demo has loaded,
+  // its text is the real reason. Read before cleanup kills the window; a failed read changes nothing.
+  const withHlaeDialog = (reason: string): string => {
+    try {
+      const line = hlaeDialogLine(windowTexts([tree!.rootPid, ...[...tree!.procs.values()].map((p) => p.pid)]));
+      if (!line) return reason;
+      console.log(`[controller] ${line}`);
+      return `${reason}; ${line}`;
+    } catch (e) {
+      console.error(`[controller] could not read HLAE's windows: ${(e as Error).message}`);
+      return reason;
+    }
+  };
 
   try {
     const spawnedAt = Date.now();
@@ -181,6 +199,7 @@ export async function render(job: RenderJob): Promise<RenderResult> {
     tree = new OwnedTree(child.pid, "HLAE.exe", spawnedAt);
     tree.discover();
     let prevAt = Date.now();
+    let beatAt = prevAt;
     const rootDeadline = Date.now() + 5000;
     while (true) {
       await sleep(500);
@@ -195,7 +214,7 @@ export async function render(job: RenderJob): Promise<RenderResult> {
       const log = readLog();
       if (log !== undefined) logLive = true;
       while (next < steps.length && steps[next].reached(log ?? "")) {
-        prevAt = Date.now();
+        prevAt = beatAt = Date.now();
         states[steps[next].name] = new Date(prevAt).toISOString();
         console.log(`[controller] ${steps[next].name} after ${Math.round((prevAt - t0) / 1000)}s`);
         next++;
@@ -206,9 +225,17 @@ export async function render(job: RenderJob): Promise<RenderResult> {
         console.log(`[controller] exited after ${Math.round((Date.now() - t0) / 1000)}s`);
         break;
       }
-      const waiting = next < steps.length ? steps[next] : { name: "exited", logBased: false, limitS: 30 };
-      if ((!waiting.logBased || logLive) && Date.now() - prevAt > waiting.limitS * 1000) { failure = `timeout waiting for ${waiting.name} (${waiting.limitS}s)`; break; }
-      if (Date.now() - t0 > timeoutS * 1000) { failure = `job timeout ${timeoutS}s waiting for ${waiting.name}`; break; }
+      const waiting = next < steps.length ? steps[next] : { name: "exited", says: "waiting for the game to exit", logBased: false, limitS: 30 };
+      const now = Date.now();
+      if (now - beatAt >= HEARTBEAT_MS) {
+        beatAt = now;
+        // A log-based limit only counts once the game's console.log is this launch's; say so until then.
+        const limit = waiting.logBased && !logLive ? ", no console.log from the game yet" : ` of ${Math.round(waiting.limitS)}`;
+        console.log(`[controller] ${job.title}: ${waiting.says}, ${Math.round((now - prevAt) / 1000)} s${limit}`);
+      }
+      const timeout = (!waiting.logBased || logLive) && now - prevAt > waiting.limitS * 1000 ? `timeout waiting for ${waiting.name} (${waiting.limitS}s)`
+        : now - t0 > timeoutS * 1000 ? `job timeout ${timeoutS}s waiting for ${waiting.name}` : undefined;
+      if (timeout) { failure = next < 2 ? withHlaeDialog(timeout) : timeout; break; }
     }
   } catch (e) {
     failure = `controller error: ${(e as Error).message}`;

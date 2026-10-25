@@ -159,7 +159,16 @@ exit the client from its tray icon; a dry run does not care) and stops the
 whole batch on the first guard refusal (exit 2) or unverified
 cleanup (exit 3); exit 1 means a job or demo failed (`state/failures.json`).
 Run it again to resume: nothing new means no launch. `--dry-run` lists what
-it would render.
+it would render. While a launch runs, the controller prints a `[controller]`
+line for every state it reaches and, in between, a heartbeat roughly every
+5 s (`<title>: waiting for the game to start, 12 s of 60`, `take 2 of 5:
+capturing, 8 s of 150`; a log-based limit is only counted once the game's
+console.log is live, and the line says so until then); a launch that
+times out before the demo has loaded
+also reports HLAE's hidden error dialog, when there is one
+(`src/render/controller/hlae-dialog.ts`, e.g. `HLAE error 2002: Loader
+could not create requested process. GetLastWin32Error = 5: Access is
+denied. …`), in the console and in the failure reason.
 
 `pnpm moments` parses, scores and ranks a demo's moments (no launch;
 `docs/scoring-notes.md`). `pnpm clip --top n` renders the n-th ranked
@@ -211,7 +220,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `src/parse/clip-facts.ts` | what one render needs: tickrate, demo hash, map, POV slot at the clip's ticks, round |
 | `src/score/index.ts` | round context (1vX), one moment per round, scoring |
 | `src/clip/` | clip specs (`index.ts`: boundaries, merge, action windows, id, title); `moments.ts` writes `moments.json` / `moments.txt` |
-| `src/render/controller/` | `index.ts` state machine, `guards.ts`, `processes.ts`, `launch.ts` (cleanup, emergency hooks, console.log reader; shared with the fetch launch), `cfg.ts` |
+| `src/render/controller/` | `index.ts` state machine, `guards.ts`, `processes.ts`, `launch.ts` (cleanup, emergency hooks, console.log reader; shared with the fetch launch), `hlae-dialog.ts` (HLAE's hidden error dialog read on a launch timeout), `cfg.ts` |
 | `src/render/capture/hlae.ts` | HLAE launch arguments and `mirv_streams` lines |
 | `src/post/` | trim and fade (`index.ts`), FFmpeg probes (`ffmpeg.ts`) |
 | `src/library/index.ts` | clip id, atomic publish, index and failures |
