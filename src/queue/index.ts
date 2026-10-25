@@ -20,6 +20,7 @@ import type { ClipSpec } from "../clip/index.ts";
 import { ingest, readRegistry } from "../ingest/index.ts";
 import { cleanupUnverified } from "../render/controller/index.ts";
 import { imageRunning } from "../render/controller/processes.ts";
+import { faceitRefusal } from "../render/controller/guards.ts";
 import { readIndex, recordFailure, writeJsonAtomic } from "../library/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
 import { highlightUnit, prepareJob, runJobs, unitHasCapture, type JobResult, type PreparedJob, type RenderUnit } from "./job.ts";
@@ -68,8 +69,10 @@ export type BatchReport = {
 
 /** Exit code: 0 ok, 1 a job or demo failed or was given up, 2 refused, 3 cleanup not verified. */
 export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchReport; code: number }> {
-  // The whole batch refuses up front when CS2 runs: nothing is ingested or rendered.
+  // The whole batch refuses up front when CS2 runs: nothing is ingested or rendered. The same for
+  // FACEIT anti-cheat, which would refuse every launch (guards.ts), except on a dry run, which launches nothing.
   if (!o.repostOnly && !o.settleExisting && imageRunning("cs2.exe")) throw new Refusal("refusing: CS2 is already running");
+  if (!o.repostOnly && !o.settleExisting && !o.dryRun) { const faceit = faceitRefusal(); if (faceit) throw faceit; }
   const report: BatchReport = { ingested: 0, demos: 0, selected: 0, rendered: [], skipped: [], failed: [], givenUp: [], emptyDemos: [], demoErrors: [], needsRender: [], made: [], settled: 0, autoSettled: [] };
   // --settle-existing: before ingest, so a demo still in the inbox is never settled unprocessed.
   const settled = readSettled();

@@ -1,10 +1,10 @@
 // Hard guards (AGENTS.md): render only on the alt account, never with a CS2 or
-// HLAE already running, one controller at a time.
+// HLAE already running, never under FACEIT anti-cheat, one controller at a time.
 import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { Refusal, accountId, type Identities } from "../../config.ts";
-import { imageRunning } from "./processes.ts";
+import { imageRunning, serviceRunning } from "./processes.ts";
 
 function activeSteamAccountId(): string {
   // ActiveUser is the 32-bit account id of the logged-in Steam user, 0 when nobody is logged in.
@@ -12,6 +12,28 @@ function activeSteamAccountId(): string {
   const m = out.match(/ActiveUser\s+REG_DWORD\s+0x([0-9a-f]+)/i);
   if (!m) throw new Refusal("refusing: could not read Steam ActiveUser from the registry");
   return BigInt("0x" + m[1]).toString();
+}
+
+/**
+ * The refusal for an active FACEIT anti-cheat, or undefined when it is not running.
+ * Its client blocks HLAE from creating cs2.exe: on 2026-10-25 every launch sat on
+ * HLAE's hidden dialog ("code 2002, Loader could not create requested process,
+ * Access is denied") until the 60 s "launched" timeout, one launch budget per demo.
+ * Evidence is the client, its service process or the FACEITService service; the
+ * kernel drivers (FACEIT, FACEIT_IOMMU) stay loaded after the client exits and did
+ * not block the renders that followed, so they do not count. Never stops anything:
+ * Peder exits the client from its tray icon. A probe that fails refuses too.
+ */
+export function faceitRefusal(): Refusal | undefined {
+  let active: string[];
+  try {
+    active = ["faceitclient.exe", "faceitservice.exe"].filter(imageRunning);
+    if (serviceRunning("FACEITService")) active.push("FACEITService");
+  } catch (e) {
+    return new Refusal(`refusing: could not tell whether the FACEIT client's anti-cheat is running: ${(e as Error).message}`);
+  }
+  if (!active.length) return undefined;
+  return new Refusal(`refusing: the FACEIT client's anti-cheat is running (${active.join(", ")}); it blocks HLAE from starting cs2.exe. Exit the FACEIT client from its tray icon and run again.`);
 }
 
 export function guard(ids: Identities) {
@@ -23,6 +45,8 @@ export function guard(ids: Identities) {
   if (have !== want) throw new Refusal("refusing: logged-in Steam account is not RENDER_STEAM_ID64");
   if (imageRunning("cs2.exe")) throw new Refusal("refusing: CS2 is already running");
   if (imageRunning("HLAE.exe")) throw new Refusal("refusing: HLAE is already running");
+  const faceit = faceitRefusal();
+  if (faceit) throw faceit;
 }
 
 // An exclusive lock file holding the controller's pid. Any existing lock

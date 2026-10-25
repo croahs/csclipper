@@ -15,6 +15,26 @@ export function imageRunning(image: string): boolean {
   return out.toLowerCase().includes(`"${image.toLowerCase()}"`);
 }
 
+/**
+ * Whether a Windows service (or kernel driver) is in any state but STOPPED; false
+ * when it is not installed. `sc query` is read-only and needs no admin. Any other
+ * failure, or an answer without a state line, throws: the caller decides.
+ */
+export function serviceRunning(name: string): boolean {
+  let out: string;
+  try {
+    out = execFileSync("sc.exe", ["query", name], { encoding: "utf8", timeout: 15_000 });
+  } catch (e) {
+    if ((e as { status?: number | null }).status === 1060) return false; // ERROR_SERVICE_DOES_NOT_EXIST
+    throw e;
+  }
+  // The field labels ("STATE") are translated on a non-English Windows; the state names are not,
+  // so the match is on the value. The line is "<label> : <code>  <NAME>", codes 1 to 7.
+  const m = out.match(/:\s*[1-7]\s+(STOPPED|START_PENDING|STOP_PENDING|RUNNING|CONTINUE_PENDING|PAUSE_PENDING|PAUSED)\b/);
+  if (!m) throw new Error(`sc query ${name}: no service state in ${JSON.stringify(out)}`);
+  return m[1] !== "STOPPED";
+}
+
 // One Win32_Process snapshot per call. Fails closed: any PowerShell/CIM error
 // throws, and a snapshot that does not contain this controller is rejected
 // rather than read as "nothing running".

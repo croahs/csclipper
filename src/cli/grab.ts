@@ -12,7 +12,7 @@
 //   valve    with STEAM_WEB_API_KEY, STEAM_MATCH_AUTH_CODE, STEAM_LAST_SHARE_CODE: the main
 //            account's matchmaking share codes after the last one handled (config.json
 //            sources.valve.maxMatchesPerRun, default 5), each demo downloaded by CS2 itself in one
-//            guarded launch per code on the render account (valve-fetch.ts; blocked while CS2 or a render runs)
+//            guarded launch per code on the render account (valve-fetch.ts; blocked while CS2, a render or the FACEIT client runs)
 //   --last n backfill: the demos of the last n FACEIT matches through the browser session,
 //            one at a time with 4-8 s between downloads (config.json sources.faceit.pauseSeconds), skipping those already stored;
 //            resumable (state/sources/faceit-backfill.json)

@@ -108,8 +108,8 @@ directly on the render account with `-insecure … +csgo_download_match
 <code>` and nothing that joins a server, under the render launch's guards
 and lock (`state/.render.lock` taken before the guard and released by the
 fetch launch alone, once its cleanup is verified; a lock held by a
-render, `.clip.lock` / `.go.lock`, a running CS2 or the wrong Steam
-account makes the source blocked with every code pending, never a
+render, `.clip.lock` / `.go.lock`, a running CS2, the FACEIT client or the
+wrong Steam account makes the source blocked with every code pending, never a
 failure). The game's own logon line in `console.log` must name
 `RENDER_STEAM_ID64`, or the launch is killed. A code is done when that
 line has named the render account, its
@@ -153,8 +153,10 @@ for good (not on a dry run, a repost or a `--no-reels` pass), or by
 next new demo, never to settled ones; `pnpm unsettle <hash prefix | clip
 no>` reopens one), with one CS2 launch per demo for all
 of them (chained takes, below), and rewrites
-`library/index.html` (open it from disk). It refuses to start while CS2 runs
-and stops the whole batch on the first guard refusal (exit 2) or unverified
+`library/index.html` (open it from disk). It refuses to start while CS2 or
+the FACEIT client runs (its anti-cheat stops HLAE from creating cs2.exe, 2026-10-25;
+exit the client from its tray icon; a dry run does not care) and stops the
+whole batch on the first guard refusal (exit 2) or unverified
 cleanup (exit 3); exit 1 means a job or demo failed (`state/failures.json`).
 Run it again to resume: nothing new means no launch. `--dry-run` lists what
 it would render.

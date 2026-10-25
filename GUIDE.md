@@ -115,8 +115,8 @@ run again any time; it then only updates.
    go to **Watch**, **Your Matches**, and download the match. If you
    have a demo file from somewhere else, drop it into
    `C:\Users\<you>\csclipper\demos\inbox`.
-2. **Close CS2** and make sure Steam is logged in with the second
-   account.
+2. **Close CS2 and the FACEIT client** (right-click its icon by the
+   clock, Exit) and make sure Steam is logged in with the second account.
 3. **Double-click `Make clips`** in the csclipper folder (Windows key +
    R, paste `%USERPROFILE%\csclipper`, Enter). A window opens, collects
    new demos from CS2's folder and your Downloads, then CS2 opens by
@@ -191,6 +191,12 @@ matchmaking** again.
 - "refusing: CS2 is already running": close CS2 first.
 - "refusing: logged-in Steam account is not RENDER_STEAM_ID64": log in
   with the second account.
+- "refusing: the FACEIT client's anti-cheat is running": it blocks the
+  recorder (HLAE) from starting CS2. Exit the FACEIT client from its tray
+  icon (right-click its icon by the clock, Exit) and run again.
+- "refusing: could not tell whether the FACEIT client's anti-cheat is
+  running": Windows gave no answer to `sc query FACEITService`; run that in
+  the terminal and open an issue with its output.
 - "running scripts is disabled on this system" when you type `pnpm` in
   PowerShell: Windows blocks PowerShell launcher scripts by default.
   `Make clips` is not affected. In a terminal, type `pnpm.cmd` instead
