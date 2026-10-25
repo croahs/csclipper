@@ -837,3 +837,161 @@ Six takes checked against the parser (deaths R1 and R17 HAALAMADRID, R30
 BigVago; kills R5 sharkyONFiR3, R16 and R30 CappaTech): event 7.0 s into
 each take, overlay and killfeed agree, the view is the killer's or the
 victim's. Overtime rounds are included (only knife rounds are left out).
+
+## M0.4 CS2 downloads a match from a share code (2026-10-25)
+
+**Pass, with one finding that changes the contract.** `cs2.exe` launched
+directly (no HLAE) with `-insecure` and `+csgo_download_match <code>`
+downloads the match into `game/csgo/replays/` in about 30 s, publishes
+the `.dem` whole, names the logged-on account in `console.log`, and is
+killed and verified gone by the owned-tree cleanup every time (eight
+launches, no respawn, no late `cs2.exe`). The finding: a download
+interrupted after the `.dem.info` is written leaves that `.info` behind,
+and with it present the game never downloads that match again (nothing
+in 170 s); removing the orphan `.info` makes the next launch download
+normally. Without `-insecure` the game does not run the download at all
+(runs 6 and 6b: the command is scheduled, `[CommandLine] DELAYED COMMAND: csgo_download_match`, but `Executing deferred download match` never comes, 178 s). Script: `spikes/m0-4-cs2-download.ts` (Opus, after the contract
+in `docs/m6-mm-fetch.md`; two edits during the gate: the `gone?` grace
+raised from 15 s to 60 s, then made a flag, `--gone-grace`, because the
+startup line `CWorkshopController failed to download item 327997965
+result = 15` matches the spike's generic gone filter on every launch).
+Reports: `spikes/out/m0-4-run1` … `m0-4-run6b-noinsecure-long` (each with
+`report.md`, `timeline.jsonl`, `args.json`, the launch's `console.log`).
+
+Versions: CS2 ClientVersion 2000935, PatchVersion 1.41.9.2 (2026-10-22),
+Node 24.21.0, Windows 11 IoT Enterprise LTSC 2024 (10.0.26100), Steam
+client logged in with the render account. Inputs: one real code of the
+main account (the only one the Web API chain holds; its demo was already
+in the store from the GC path, as `valve-003850170963031228525_…dem.bz2`)
+and one public CS:GO-era code (`globaloffensive-sharecode`'s README
+example, 2018) for the gone case. No code was available for a
+three-code launch (question 3's second half): see "Not run".
+
+### Launch (what the spike runs)
+
+```
+"…\game\bin\win64\cs2.exe" -insecure -novid -sw -width 1280 -height 720 -condebug
+  +echo croclip_fetch_<stamp> +csgo_download_match CSGO-xFRvu-ZkHam-ssK4s-ujdiL-mHHnK
+```
+
+Spawned as the spike's own child (`spawn`, env without `USRLOCALCSGO`,
+`stdio: "ignore"`, `windowsHide: true`; the game window still appeared),
+`state/.render.lock` held from before `guard()` to after a 30 s watch
+following the verified cleanup. `cs2.exe` is seen as the spike's child
+0.5 s after the spawn, the owned tree is rooted at 2.1 s, `console.log`
+holds the marker at 3.1 s.
+
+### Runs
+
+| Run | Setup | Result |
+|---|---|---|
+| 1 | real code, `-insecure`, file absent | `.info` at 14.4 s, `.dem` (221,672,432 bytes) at 29.6 s, passes `readFileInfo` at once, done at 39.9 s; killed at 42 s, gone at 42.9 s, 10.4 s quiet, no late `cs2.exe`; exit 0 |
+| 2 | old public code | `Full match info indicates that the match has expired!` 1 s after `Executing deferred download match: <code>`; no file; exit 0 (`gone?`) |
+| 3 | real code, pair present from run 1 | `Match is downloaded and can be watched immediately...` at 28 s, no file change, the game plays the demo; nothing re-downloaded |
+| 4 | real code, pair moved out, `--kill-after 22` | `.info` at 9.7 s, killed at 22 s (the `.dem` would have come at about 25 s); left: the `.info` only, no partial `.dem`, no temporary name under `replays/` or `game/csgo/` |
+| 5, 5b | real code, orphan `.info` present | `Executing deferred download match` at 8.6 s, then nothing: no `MatchInfo Download prepared`, no file, for 58 s (run 5) and 168 s (run 5b, `--gone-grace 170`) |
+| 5c | real code, orphan `.info` moved out | `.info` at 8.7 s, `.dem` at 25.0 s, done at 36.0 s; exit 0 |
+| 6, 6b | real code, pair moved out, `--no-insecure` | `DELAYED COMMAND` line at 3 s, then nothing: no `Executing deferred download match`, no `.info`, no file, for 58 s (run 6) and 178 s (run 6b, `--gone-grace 170`); cleanup verified as always |
+
+Every run: cleanup verified (one `killExact` of the owned `cs2.exe`,
+gone within 0.6 s, 10.1-10.4 s of quiet, no suspect, no second
+`cs2.exe` at any time, none in the 30 s watch), lock released, no
+`.render.lock` left. Process events logged per run: `steam.exe` present
+before the spawn; one `cs2.exe` appeared (ours, with our command line in
+`Win32_Process.CommandLine`) and went away at the kill; nothing else.
+No hand-off through `steam.exe`, no respawn.
+
+### Answers to the seven questions
+
+1. **Yes.** The file lands in `game/csgo/replays/` as
+   `match730_003850170963031228525_0309642818_187.dem` with
+   `…187.dem.info` next to it: `<A>` is the share code's `outcomeId`
+   (3850170963031228525) padded to 21 digits, as the contract read it;
+   `<B>` (0309642818) and `<C>` (187) are not in the share code (the code's
+   token is 50754). The `.info`'s field 1 is the code's `matchId`
+   (3850166708866122393). No `.bz2` stage and no temporary name under
+   `replays/`: the `.info` appears first (about 1 s after the deferred
+   command runs), the `.dem` appears 15 s later at its full size and
+   passes `readFileInfo` on the first poll after it appears. Where the
+   bytes go meanwhile is unknown (nothing new under `game/csgo/` to depth
+   2 during run 4).
+2. **With `-insecure`: yes (runs 1, 5c). Without: no (runs 6, 6b): the game schedules the command and never runs it in 178 s.** The
+   contract stays at `-insecure` always; no exception is needed.
+3. **One code: 25-30 s from spawn to the complete file** (the deferred
+   command runs 8.6-28 s after spawn, the `.dem` 15-16 s after that),
+   36-40 s to done with the 10 s settle, 80-85 s to the spike's exit with
+   cleanup, 10 s quiet and the 30 s watch. Three codes in one launch:
+   not run (no codes; see "Not run").
+4. Console lines, in order, for a successful download:
+   `Executing deferred download match: <code>` →
+   `MatchInfo Download prepared replays/<name>.dem.info...` →
+   `Match is downloaded and can be watched immediately...` →
+   `[Demo] Requesting playback of 'replays/<name>.dem'` and
+   `Host activate: Playing Demo (replays/<name>.dem)`: **the game starts
+   playing the demo as soon as it is downloaded** (it is the Watch tab's
+   "download and watch"). For a match Valve no longer has:
+   `Executing deferred download match: <code>` →
+   `Full match info indicates that the match has expired!` (no file).
+   The expired line does not name the code; it follows the deferred line
+   for that code within a second. The main account's match on the render
+   account: the normal case above (run 1); the render account never
+   played it. Also every launch: the game's own identity,
+   `[SteamNetSockets] AuthStatus (steamid:76561197993878441): OK`, the
+   render account's SteamID64 (account id 33612713), at 3-12 s.
+5. **Yes, clean, eight times.** See "Runs". `windowsHide: true` did not
+   hide the game window.
+6. The hand-over checks: see "Ingest" below.
+7. **A kill after the `.info` is written and before the `.dem` arrives
+   leaves the `.info` alone (no partial `.dem` anywhere), and that orphan
+   `.info` stops the game from ever downloading the match again** (runs
+   5 and 5b: the deferred command runs, then nothing, 170 s). Moving the
+   `.info` out makes the next launch download normally (run 5c). A kill
+   before the `.info` exists leaves nothing (not run separately, but
+   runs 5-6b show no file before the deferred command runs). An
+   interrupted decompression cannot be tested: there is no visible
+   intermediate file.
+8. (added in phase 0) No re-execution through `steam.exe`, no late
+   `cs2.exe` in any 30 s watch, the surviving game carries exactly our
+   arguments.
+9. (added in phase 0) `console.log` names the account (above), and names
+   each stage of a download; attribution to a code is by order after
+   `Executing deferred download match: <code>`.
+
+### Ingest (question 6)
+
+After run 6b the run 5c pair was put back into `replays/` (operator step) and a real `pnpm grab` ran: the folders source read `match730_003850170963031228525_0309642818_187.dem`, found its sha256 (`7faef22a25ca78ab…`) already in the registry, the entry the GC path made on 2026-10-24 (`valve-003850170963031228525_0309642818.dem.bz2`, 221,672,432 bytes, the same byte count), and recorded the file as "in store" (`state/sources/folders.json`); the inbox stayed empty, the registry kept one entry, nothing was copied. So the Watch tab and the GC serve the same bytes, and a demo fetched once is never stored twice. The remaining two checks (a new demo reaches the store once; a stored code is not re-requested) need a new match and are phase 2 test and phase 5 verification work.
+
+### What this changes in the contract (folded into `docs/m6-mm-fetch.md`)
+
+- **Orphan `.info` repair.** Before requesting a code, the fetcher looks
+  for `match730_<padded outcomeId>_*.dem.info` without a complete `.dem`
+  beside it; such a file, when its field 1 equals the code's `matchId`,
+  is deleted by the fetcher. This is the one write under `game/` the
+  fetcher makes, and only to a file its own kind of launch produced and
+  that it has identified by content. Without it a single interrupted
+  download blocks that match for good and a user has no way to know.
+- **Playback after download.** The game plays the demo it just
+  downloaded; with one code per launch this costs nothing (the kill
+  comes 10 s after the file settles). With several codes it is unknown
+  whether the game queues the next download while playing (question 3's
+  second half, still open): until that is measured, **one code per
+  launch** and one launch per code, inside the same `pnpm grab` run,
+  each under the full guard/lock/cleanup cycle (about 85 s per code).
+  The budget in AGENTS.md becomes "one fetch launch per pending match".
+- **Gone line.** `Full match info indicates that the match has expired!`
+  after `Executing deferred download match: <code>` with no file is
+  `gone`; with one code per launch the attribution is exact.
+- **Timing.** The deferred command runs 8-28 s after spawn; the idle rule
+  (180 s) and the hard cap (300 s per launch) hold.
+- The spike's generic "failure word" filter is not for the code: the
+  fetcher matches the exact lines above and nothing else.
+
+### Not run / open
+
+- Three codes in one launch (question 3): the main account's chain holds
+  one code and the Web API cannot walk backwards; more codes need
+  Peder's Watch tab. Until measured, one code per launch (above).
+- A kill before the `.info` exists, and a controller killed from outside
+  (task manager): not run.
+- Where the game stores the bytes while downloading: unknown.
+- Reviewed by GPT-6.1 Sol: SOL_RESULT

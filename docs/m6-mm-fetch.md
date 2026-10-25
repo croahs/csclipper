@@ -51,10 +51,11 @@ listing new matches still goes through the main account's key.
   decides whether the rule in AGENTS.md gets a named exception (a fetch
   launch joins no server and loads no HLAE, so it has no ban mechanism
   of its own); the gate never applies that exception by itself.
-- Budget: one fetch launch per `pnpm grab` run, carrying every pending
-  code (at most `sources.valve.maxMatchesPerRun`, default 5), next to
-  the one render launch per demo. Written into AGENTS.md's standing
-  order in phase 4.
+- Budget: one fetch launch per pending code (the gate: the game plays a
+  downloaded demo at once, and a multi-code launch is unmeasured), at
+  most `sources.valve.maxMatchesPerRun` (default 5) per `pnpm grab` run,
+  next to the one render launch per demo. Written into AGENTS.md's
+  standing order in phase 4.
 - No terminal for the user: the three `.env` values are entered through
   a double-click file (`Set up matchmaking.cmd` running `pnpm prep
   --valve`), which prints the two web pages to get them from.
@@ -114,12 +115,15 @@ no commands (the exec policy kills runs that shell out).
 **Done:** the contract section exists, Astra's findings are folded in or
 answered in the section, no open blocker.
 
-## Contract: the fetch launch (phase 0, 2026-10-25, Astra's review folded in)
+## Contract: the fetch launch (phase 0, 2026-10-25, Astra's review and the gate folded in)
 
 What `pnpm grab` does to get a matchmaking demo, as the code will do it.
-Facts marked *gate* are checked by M0.4 before anything is built on them.
 GPT-6 Astra reviewed the first draft (14 findings, 4 blockers); every
-finding is folded in below or answered under "Astra's findings".
+finding is folded in below or answered under "Astra's findings". Gate
+M0.4 (`docs/spikes.md`, eight launches on this PC the same day) checked
+every fact that was marked *gate*; the marks stay as the record of what
+was checked, and "What the gate changed" at the end lists the three
+rules it added.
 
 **Spawn.** `ids.cs2Exe` directly, as `pnpm grab`'s own child, no HLAE:
 `spawn(cs2Exe, args, { env, stdio: "ignore", windowsHide: true })` where
@@ -135,11 +139,10 @@ the Watch tab's normal case. The argument list, in this order:
 
 `-insecure` is always passed: it is the one barrier that keeps the game
 from a secure server whatever a hand on the window does, and a fetch launch
-has no reason to be secure-capable. If the gate finds that the download
-works only without it, the gate is reported to Peder as a decision before
-any code is written (the plan's named exception is his to confirm, not the
-gate's to apply), with the note that a launch without HLAE has no ban
-mechanism of its own. `-sw` keeps it a window (the controller uses the same
+has no reason to be secure-capable. The gate settled the other direction:
+without `-insecure` the game schedules the command but never runs it (no
+`Executing deferred download match` in 178 s, runs 6 and 6b), so the
+exception the plan held open is moot. `-sw` keeps it a window (the controller uses the same
 flag). `-condebug` makes `game/csgo/console.log` this launch's evidence: CS2
 truncates it per launch (one `[CommandLine] command line arguments:` line
 per file, checked 2026-10-25) and echoes the whole argument list in that
@@ -161,10 +164,10 @@ with a render.
 registry at check time; it binds nothing. It runs before the lock work and
 again immediately before the spawn, and the race between that read and the
 game's own logon stays (as it does for a render). *Gate:* whether
-`console.log` names the account the game logs on as (a SteamID or account
-id line near the start); if it does, the fetcher compares it with
-`RENDER_STEAM_ID64` and kills the launch on a mismatch, and the controller
-can do the same. `-insecure` stays the independent barrier either way.
+`console.log` names the account the game logs on as. It does, on every
+launch, 3-12 s in: `[SteamNetSockets] AuthStatus (steamid:<SteamID64>):
+OK`; the fetcher reads it and kills the launch when it is not
+`RENDER_STEAM_ID64`, and the controller can do the same. `-insecure` stays the independent barrier either way.
 
 **Files and names.** The Watch tab writes two files per match into
 `game/csgo/replays/`: `match730_<A>_<B>_<C>.dem` and
@@ -194,34 +197,40 @@ field 1 equal to the code's `matchId` as a string; the `.dem` begins with
 the end of the file and is written when the demo is finalized, so a
 cut-short transfer, a stalled one or a half-decompressed file fails this
 check; the folders source and ingest get the same check, below); and size
-and mtime have not changed for 10 s after that. Whatever console line the
-gate finds for a finished download is recorded and used as a second signal,
-never as the only one. *Gate:* whether a `.dem.bz2` or other temporary name
+and mtime have not changed for 10 s after that. The console's own sequence is the second
+signal, never the only one: `Executing deferred download match: <code>`
+→ `MatchInfo Download prepared replays/<name>.dem.info...` →
+`Match is downloaded and can be watched immediately...`, and then the
+game plays the demo (`Host activate: Playing Demo (replays/<name>.dem)`). *Gate:* whether a `.dem.bz2` or other temporary name
 appears first (then the `.dem` is published whole after decompression) or
 the `.dem` grows in place; both are handled by the rule above.
 
-A code is `gone` only in two cases: the console prints a line the gate has
-shown to mean "Valve no longer has this match" and shown to be attributable
-to that code (a line that names the match id or outcome id, or a launch
-with a single code), or the code was first seen pending more than 30 days
+A code is `gone` only in two cases: the console prints
+`Full match info indicates that the match has expired!` after
+`Executing deferred download match: <code>` and no file appears (the
+line does not name the code; with one code per launch it needs no
+attribution), or the code was first seen pending more than 30 days
 ago (`state/sources/valve.json` → `pending[code].firstSeenAt`; Valve keeps
 demos about that long, so after that the demo is gone whatever the reason).
 Everything else that is not done is `pending`, including a line the gate
 could not classify or attribute; pending blocks the checkpoint, and the
 30-day rule is what unblocks it.
 
-**One launch, every code.** All `+csgo_download_match` commands are handed
-over at startup; whether the game runs them in sequence or in parallel is a
-*gate* finding, and the rule does not depend on it. Each code has its own
-state (queued → downloading when any file with its prefix appears or grows
-→ done / gone / pending). The launch ends when every code is done or gone,
-or when nothing under `replays/` (any name, temporary names included) has
-changed for `idleS` (default 180 s) with no code having reached done in
-that window; remaining codes are then pending. Every code is reconciled
-before the kill, so a later code that finished is kept as done even when
-the checkpoint stops at an earlier pending one; the next run re-requests
-only the pending ones, and `grab.ts`'s stored-demo check skips the done
-ones. Hard cap for the whole launch: `120 + 180 × codes` s.
+**One code per launch.** The game plays the demo as soon as it is
+downloaded (that is what the Watch tab's button does), and whether it
+would still run a second `+csgo_download_match` while playing is not
+measured (the gate had one code). So each pending code gets its own
+launch, in order, inside the same `pnpm grab` run, each under the full
+guard, lock, kill and quiet-period cycle (about 85 s per code: the
+deferred command runs 8-28 s after spawn, the file is complete 15 s
+later, 10 s settle, kill, 10 s quiet, 30 s watch). A code's state:
+queued → downloading when its `.info` or `.dem` appears → done / gone /
+pending. A launch ends when its code is done or gone, or when nothing
+under `replays/` has changed for `idleS` (default 180 s); then the code
+is pending, the run stops there, and the remaining codes wait for the
+next run. Hard cap per launch: 300 s. A measured multi-code launch
+(three codes, PLAN.md question 3) may later collapse this back to one
+launch per run.
 
 **Handing the file over.** The fetcher copies a done `.dem` into
 `demos/inbox/` itself, the way the folders source does (copy under a `.part`
@@ -240,11 +249,18 @@ by the fetcher, the folders source (a `.dem` that fails it is `pending`
 handled) and ingest (rejected as "incomplete demo"). That is what keeps a
 download the game left half-written out of the store, whoever left it:
 this fetcher's kill, a crash, or a human closing CS2 mid-download. No
-exclusion list, nothing persisted about leftovers. *Gate* (7): kill the
-game mid-transfer and mid-decompression, inspect what is left, run the
-spike again with the same code, and record whether the game overwrites,
-resumes or refuses; then confirm the folders source leaves the leftover
-alone.
+exclusion list, nothing persisted about leftovers. *Gate* (7) found the
+one leftover there is: the game writes `<name>.dem.info` first and the
+`.dem` whole about 15 s later (no partial `.dem`, no temporary name), and
+a kill in between leaves the `.info` alone, which then stops the game
+from downloading that match ever again (170 s of nothing, runs 5 and 5b;
+normal again once the `.info` is gone, run 5c). So before requesting a
+code the fetcher looks for `match730_<padded outcomeId>_*.dem.info` with
+no complete `.dem` beside it and whose field 1 is the code's `matchId`,
+and deletes that one file. This is the single write under `game/` the
+fetcher makes: to a file its own kind of launch produced, identified by
+name and content, and without which the user's match is lost for good
+with no visible reason.
 
 **Exit.** In a normal end (every code settled, or idle, or the hard cap)
 the owned tree is killed: `killExact` by handle (identity re-checked under
@@ -293,8 +309,8 @@ makes the source `blocked` with every code `pending`, never a crash (as
 no further source and no ingest after it, and exits 3 whatever else
 happened (the controller's `cleanupUnverified()` latch is the model).
 `--dry-run` lists the codes and launches nothing; so does a `todo` of zero
-codes. Nothing is written under `game/` by us: the game writes its replays,
-we read them. The fetcher never deletes, renames or touches a file there.
+codes. Nothing is written under `game/` by us except the orphan-`.info` repair
+above: the game writes its replays, we read them.
 
 **Result.** `fetch(codes) → { code, outcome: "done" | "pending" | "gone" |
 "failed", file?, reason? }[]` plus `cleanupVerified`. The Valve source
@@ -305,8 +321,8 @@ Exit codes of `pnpm grab`: 1 on failed, 3 on cleanup not verified.
 
 **Interaction with `pnpm go`.** A fetch launch and a render launch never
 overlap: both hold `.render.lock`, and `guard()` refuses on a running
-`cs2.exe` either way. One fetch launch per `pnpm grab` run, carrying at most
-`sources.valve.maxMatchesPerRun` codes (5). *Gate* (6), as observable
+`cs2.exe` either way. One fetch launch per pending code, at most
+`sources.valve.maxMatchesPerRun` (5) launches per `pnpm grab` run. *Gate* (6), as observable
 checks: a new demo reaches the store exactly once (registry has one entry
 for its hash); a demo already in the store is not copied again by the
 folders source (its state says "in store"); a code whose demo is already
@@ -331,6 +347,12 @@ gate 6 split into four checks. 12 `USRLOCALCSGO` → explicit env. 13
 account binding → stated as a preflight, gate looks for the game's own
 logon line. 14 question 7 missing, kill promise → question 7 added,
 emergency ends described, forced termination described. No open blocker.
+
+**What the gate changed** (M0.4, 2026-10-25, `docs/spikes.md`): one code
+per launch, because the game plays the demo it downloaded; the orphan
+`.info` repair, because that leftover blocks the match for good; the
+exact gone line and the exact identity line. Everything else held as
+written, `-insecure` included.
 
 ## Phase 1: gate M0.4, CS2 downloads a match from a share code (Opus writes, main session runs, Sol verifies)
 
@@ -411,9 +433,12 @@ passes.
 **Changes:**
 
 - New `src/ingest/sources/valve-fetch.ts`: `fetchLauncher(ids)` →
-  a `DemoFetcher` that, given share codes, runs one launch per the
-  contract and returns per code `done | pending | gone | failed` with
-  the file path for done. Reuses `guard`, `RenderLock`, `OwnedTree`,
+  a `DemoFetcher` that, given share codes, runs one launch per code per
+  the contract (orphan-`.info` repair first, then the launch, the
+  identity line checked, the exact console lines, the completeness
+  check, the copy into the inbox) and returns per code
+  `done | pending | gone | failed` with the inbox path for done,
+  stopping at the first pending or failed code. Reuses `guard`, `RenderLock`, `OwnedTree`,
   `killExact`, `snapshot`, `imageRunning`, and the `console.log`
   identification trick from the controller (a per-launch marker; the
   gate says what is available without a cfg, for example a unique
