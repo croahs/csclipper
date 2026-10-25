@@ -154,6 +154,38 @@ command runs.
 Play. Click **Watch demo** in the FACEIT room. Log in with the second
 account, double-click **Make clips**, open the bookmark.
 
+## Valve matchmaking demos on their own (optional)
+
+Premier and competitive demos can be fetched for you, so you skip the
+Watch tab. It takes three values in a file and one QR scan, once.
+
+1. Open `C:\Users\<you>\csclipper\.env` in Notepad. It has three
+   empty lines for this: `STEAM_WEB_API_KEY=`, `STEAM_MATCH_AUTH_CODE=`
+   and `STEAM_LAST_SHARE_CODE=`. Paste each value right after the `=`.
+2. **STEAM_WEB_API_KEY**: logged in with your main account, open
+   https://steamcommunity.com/dev/apikey, type anything in the domain
+   field, and copy the key.
+3. **STEAM_MATCH_AUTH_CODE**: open Steam Support's page "Access to your
+   match history",
+   https://help.steampowered.com/en/wizard/HelpWithGameIssue/?appid=730&issueid=128,
+   logged in with your main account, create the code and copy it. It
+   lets csclipper list your matches, nothing else.
+4. **STEAM_LAST_SHARE_CODE**: the share code of a recent match, the
+   starting point; matches after it are fetched, that one is not. In
+   CS2, go to **Watch**, **Your Matches**, pick a recent match and copy
+   its share link; the code is the part that looks like
+   `CSGO-xxxxx-xxxxx-xxxxx-xxxxx-xxxxx`. Valve keeps demos for about a
+   month, so pick a recent one.
+5. Save the file. Then, in a terminal in the csclipper folder (Windows
+   key, type `powershell`, then `cd ~\csclipper`), run
+   `pnpm grab --steam-login`. It shows a QR code: scan it with the Steam
+   app on your phone while that app is logged in with the **second**
+   account. That is the account the demos are downloaded through. Only
+   a login token is saved, never a password.
+
+From then on, **Make clips** fetches your new matchmaking demos first.
+It only does that while CS2 is closed, which it is when you run it.
+
 ## If something goes wrong
 
 - Run `pnpm check` in the csclipper folder. It prints what is installed

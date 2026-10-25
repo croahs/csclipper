@@ -93,6 +93,14 @@ clips render you cannot be playing on your main account.
   folder under `state/render/`; `pnpm go --retry-failed` tries again.
 - Open an issue with the `pnpm check` output and the failure entry.
 
+## Valve matchmaking automation (optional)
+
+With `STEAM_WEB_API_KEY`, `STEAM_MATCH_AUTH_CODE` and
+`STEAM_LAST_SHARE_CODE` in `.env` and one `pnpm grab --steam-login` (a
+QR code for the render account's Steam app), `pnpm grab` fetches your
+new matchmaking demos itself. [GUIDE.md](GUIDE.md#valve-matchmaking-demos-on-their-own-optional)
+has the steps and links.
+
 ## FACEIT automation (optional)
 
 With a FACEIT Data API key in `.env`, `pnpm grab` lists your new matches
