@@ -464,7 +464,17 @@ Phases:
    is blocked by a bot check, not a locator, and is retired (above).
    The library page dates a demo without a FACEIT date by the day it was
    added, labelled "added", so the key is never needed (2026-10-25).
-3. **Easy tier.** The bootstrap script, after v1 feedback.
+3. **Easy tier.** Done 2026-10-25, ahead of v1 feedback by Peder's
+   call: `setup.ps1` (one `irm … | iex` line: winget installs git and
+   Node LTS when missing, pnpm comes through Node's corepack or pnpm's
+   own installer; without winget it prints the official download pages
+   and stops before installing anything; clone, or fast-forward pull of
+   a folder whose origin is this repo, into `~\csclipper`; `pnpm
+   install`; `pnpm prep`; every exit code checked) and `GUIDE.md`, the
+   friendly walkthrough
+   with an official link for everything the script does not download:
+   the second Steam account, the SteamID64 lookup, the three tools. No
+   GUI: the terminal line plus two questions is the setup.
 
 ## Who does what
 

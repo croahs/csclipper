@@ -10,6 +10,10 @@ from disk.
 Everything runs on your own PC: a Node command line, CS2, HLAE and
 FFmpeg. No account, no cloud, no AI tools.
 
+**New here?** [GUIDE.md](GUIDE.md) walks through the first time, step
+by step, with a one-line setup. The rest of this page is the short
+version.
+
 ## You need
 
 - Windows 11 with Steam and Counter-Strike 2 installed.
@@ -19,6 +23,16 @@ FFmpeg. No account, no cloud, no AI tools.
 - An NVIDIA GPU makes the final encode faster; without one it uses x264.
 
 ## Set up
+
+One line in Windows Terminal (it installs git and Node when missing,
+enables pnpm, clones into `~\csclipper`, and runs the setup;
+[setup.ps1](setup.ps1) is short enough to read first):
+
+```powershell
+irm https://raw.githubusercontent.com/croahs/csclipper/main/setup.ps1 | iex
+```
+
+By hand, the same thing:
 
 ```
 git clone https://github.com/croahs/csclipper.git
