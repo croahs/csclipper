@@ -209,7 +209,8 @@ A code is `gone` only in two cases: the console prints
 `Full match info indicates that the match has expired!` after
 `Executing deferred download match: <code>` and no file appears (the
 line does not name the code; with one code per launch it needs no
-attribution), or the code was first seen pending more than 30 days
+attribution; the gate saw it only for a public 2018 code, so the 30-day
+rule below is the backstop if it ever means something else), or the code was first seen pending more than 30 days
 ago (`state/sources/valve.json` → `pending[code].firstSeenAt`; Valve keeps
 demos about that long, so after that the demo is gone whatever the reason).
 Everything else that is not done is `pending`, including a line the gate
@@ -252,9 +253,12 @@ this fetcher's kill, a crash, or a human closing CS2 mid-download. No
 exclusion list, nothing persisted about leftovers. *Gate* (7) found the
 one leftover there is: the game writes `<name>.dem.info` first and the
 `.dem` whole about 15 s later (no partial `.dem`, no temporary name), and
-a kill in between leaves the `.info` alone, which then stops the game
-from downloading that match ever again (170 s of nothing, runs 5 and 5b;
-normal again once the `.info` is gone, run 5c). So before requesting a
+a kill in between leaves the `.info` alone, and with it present the next
+two launches printed `Download container is corrupt!` right after the
+deferred command and downloaded nothing (runs 5 and 5b, 60 s and 170 s);
+after the operator moved the `.info` out, the next launch downloaded
+normally (run 5c). The fetcher logs that line when it sees it; the
+pre-launch repair below is what prevents it. So before requesting a
 code the fetcher looks for `match730_<padded outcomeId>_*.dem.info` with
 no complete `.dem` beside it and whose field 1 is the code's `matchId`,
 and deletes that one file. This is the single write under `game/` the
