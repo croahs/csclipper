@@ -6,7 +6,7 @@
 // adds the job ledger, state/queue.json, keyed by clip id + render key: a job
 // is marked running before it may launch; a run that dies mid-job leaves it
 // running, and the next run retries it once. (A run ended by a signal or an
-// error cleans up and releases its locks; one hard-killed leaves
+// error cleans up and releases its locks (exitOnSignal, launch.ts); one hard-killed leaves
 // state/.go.lock and the render locks behind, to be removed by hand after
 // checking no cs2.exe / HLAE.exe is left, as for every lock here.) A clip the library already holds
 // for its render key is done, whatever the ledger says. A job that failed

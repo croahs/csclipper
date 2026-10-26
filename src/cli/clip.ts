@@ -10,6 +10,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { Refusal, loadIdentities } from "../config.ts";
 import { cleanupUnverified } from "../render/controller/index.ts";
+import { exitOnSignal } from "../render/controller/launch.ts";
 import { buildMoments } from "../clip/moments.ts";
 import type { ClipSpec } from "../clip/index.ts";
 import { clipJob, heldEntry } from "../queue/job.ts";
@@ -98,6 +99,9 @@ async function main(): Promise<number> {
   return 0;
 }
 
+// A signal outside the launch (ranking, post) ends the process so the clip lock's exit hook runs
+// (src/queue/job.ts); inside it, the launch's own hook cleans up first and then exits.
+exitOnSignal("pnpm clip");
 main().then(
   (code) => { process.exitCode = cleanupUnverified() ? 3 : code; },
   (e) => {

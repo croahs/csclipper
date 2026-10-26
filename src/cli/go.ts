@@ -13,6 +13,7 @@ import path from "node:path";
 import { Refusal, STATE_DIR } from "../config.ts";
 import { RenderLock } from "../render/controller/guards.ts";
 import { cleanupUnverified } from "../render/controller/index.ts";
+import { exitOnSignal } from "../render/controller/launch.ts";
 import { runBatch } from "../queue/index.ts";
 import { PAGE } from "../library/page.ts";
 import { prunedLine } from "../queue/prune.ts";
@@ -22,11 +23,13 @@ const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? a
 
 async function main(): Promise<number> {
   const timeoutS = flag("--timeout") === undefined ? undefined : Number(flag("--timeout"));
-  // One batch at a time; released on any exit, including a signal.
+  // One batch at a time; released on any exit. A signal outside a launch ends the process so that
+  // exit runs (exitOnSignal); inside one, the launch's own hook cleans up first and then exits.
   const lock = new RenderLock(path.join(STATE_DIR, ".go.lock"));
   lock.acquire();
   const release = () => lock.release();
   process.on("exit", release);
+  const sig = exitOnSignal("pnpm go");
   try {
     const testExit = flag("--test-exit-after");
     const { report: r, code } = await runBatch({
@@ -61,6 +64,7 @@ async function main(): Promise<number> {
     console.log(`library: ${PAGE}`);
     return code;
   } finally {
+    sig.off();
     lock.release();
     process.off("exit", release);
   }

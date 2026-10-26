@@ -108,18 +108,24 @@ export async function render(job: RenderJob): Promise<RenderResult> {
   const clipSeconds = plan.reduce((n, t) => n + t.seconds, 0);
   const timeoutS = job.timeoutS ?? Math.max(180, 120 + plan.length * 60 + 4 * clipSeconds);
 
-  // Refuse before anything is written or launched.
+  // Refuse before anything is written or launched. Until the emergency hook takes the lock over
+  // (below), a signal ending the process (exitOnSignal) gives it back on exit.
   const lock = new RenderLock(job.lockFile);
   lock.acquire();
-  try { guard(ids); } catch (e) { lock.release(); throw e; }
+  const releaseBeforeLaunch = () => lock.release();
+  process.on("exit", releaseBeforeLaunch);
+  const bail: (e: unknown) => never = (e) => { process.off("exit", releaseBeforeLaunch); lock.release(); throw e; };
+  try { guard(ids); } catch (e) { bail(e); }
 
   const t0 = Date.now();
   const stamp = String(t0);
   const cfgName = `croclip_${stamp}`; // unique per launch: proves console.log is this launch's
   const usrDir = path.join(job.workDir, "usrlocal"); // USRLOCALCSGO: the game's user config goes here
-  const cap = hlaeCapture(job.workDir, s, plan.length);
+  let cap: ReturnType<typeof hlaeCapture>;
   let args: string[];
+  // Everything between the lock and the launch is inside this boundary: a throw gives the lock back.
   try {
+    cap = hlaeCapture(job.workDir, s, plan.length);
     if (existsSync(job.workDir)) throw new Error(`work dir already exists: ${job.workDir}`);
     mkdirSync(path.join(usrDir, "cfg"), { recursive: true });
     mkdirSync(cap.takeDir, { recursive: true });
@@ -138,8 +144,7 @@ export async function render(job: RenderJob): Promise<RenderResult> {
     // Re-check right before launch: the account or a running CS2 may have changed.
     guard(ids);
   } catch (e) {
-    lock.release();
-    throw e;
+    bail(e);
   }
 
   // --- owned processes and cleanup (launch.ts: kill rounds, loader first; owned survivors
@@ -147,6 +152,9 @@ export async function render(job: RenderJob): Promise<RenderResult> {
   let tree: OwnedTree | undefined;
   // Without the loader nothing it started could be tracked: fail closed.
   const cleanup = ownedCleanup({ tree: () => tree, lock, unrooted: "the HLAE loader was never identified, so its processes were not tracked", killFirst: "HLAE.exe", tag: "[controller]" });
+  // From here the lock is the cleanup's: released only once a cleanup is verified. No await
+  // between the two lines, so no signal can land between them.
+  process.off("exit", releaseBeforeLaunch);
   const offEmergency = onEmergency(cleanup, "controller exit");
 
   // --- run the state machine -------------------------------------------------------------

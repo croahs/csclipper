@@ -99,6 +99,11 @@ export function ownedCleanup(spec: CleanupSpec): (reason: string) => boolean {
   };
 }
 
+const SIGNALS = ["SIGINT", "SIGBREAK", "SIGHUP", "SIGTERM"] as const;
+let emergencies = 0;
+/** Whether a launch's emergency hook is installed right now: it ends the process itself on a signal. */
+export const emergencyActive = () => emergencies > 0;
+
 /**
  * While a launch runs, a normal exit, a signal or an uncaught exception runs cleanup first and
  * then picks the exit code (3 when it could not be verified). Returns the uninstaller.
@@ -107,15 +112,35 @@ export function onEmergency(cleanup: (reason: string) => boolean, exitReason: st
   const onExit = () => { if (!cleanup(exitReason)) process.exitCode = 3; };
   const onSignal = (sig: string) => { process.exit(cleanup(sig) ? 130 : 3); };
   const onUncaught = (e: Error) => { console.error(e); process.exit(cleanup(`uncaught: ${e.message}`) ? 1 : 3); };
-  const signals = ["SIGINT", "SIGBREAK", "SIGHUP", "SIGTERM"] as const;
+  emergencies++;
   process.on("exit", onExit);
   process.on("uncaughtException", onUncaught);
-  for (const sig of signals) process.on(sig, onSignal);
+  for (const sig of SIGNALS) process.on(sig, onSignal);
   return () => {
+    emergencies--;
     process.off("exit", onExit);
     process.off("uncaughtException", onUncaught);
-    for (const sig of signals) process.off(sig, onSignal);
+    for (const sig of SIGNALS) process.off(sig, onSignal);
   };
+}
+
+/**
+ * A command's own signal handling, for the stretches outside a launch (ingest, parse, post,
+ * the guards before a launch): Node's default for a signal is a plain kill, which fires no
+ * exit hook, so the locks the exit hooks release (.go.lock, .clip.lock, a render lock taken
+ * before its launch) stayed behind (2026-10-26). This ends the process instead, 130 (3 when an
+ * earlier cleanup is unverified), so they are released. During a launch its emergency hook ends
+ * the process itself, after the cleanup, so this one steps aside. Returns the uninstaller; the
+ * handler is exposed for tests, since Windows delivers no signal to a child process.
+ */
+export function exitOnSignal(label: string): { off: () => void; onSignal: (sig: string) => void } {
+  const onSignal = (sig: string) => {
+    if (emergencyActive()) return;
+    console.error(`${label} stopped (${sig}); locks released`);
+    process.exit(cleanupUnverified() ? 3 : 130);
+  };
+  for (const sig of SIGNALS) process.on(sig, onSignal);
+  return { off: () => { for (const sig of SIGNALS) process.off(sig, onSignal); }, onSignal };
 }
 
 /** game/csgo/console.log, which -condebug makes the launch's evidence (CS2 truncates it per launch). */

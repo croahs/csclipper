@@ -31,7 +31,7 @@ import { NO_KEY, faceitBackfill, faceitSource } from "../ingest/sources/faceit.t
 import { foldersSource } from "../ingest/sources/folders.ts";
 import { ROOM_URL, browserDemos, findBrowser, login } from "../ingest/sources/faceit-browser.ts";
 import { RenderLock } from "../render/controller/guards.ts";
-import { cleanupUnverified } from "../render/controller/launch.ts";
+import { cleanupUnverified, exitOnSignal } from "../render/controller/launch.ts";
 import { NO_KEYS, valveSource } from "../ingest/sources/valve.ts";
 import { fetchLauncher } from "../ingest/sources/valve-fetch.ts";
 
@@ -96,13 +96,11 @@ async function main(): Promise<number> {
   const lock = new RenderLock(path.join(STATE_DIR, ".grab.lock"));
   const stale = lock.acquire({ takeOverDead: true });
   if (stale !== undefined) console.log(`removed a stale .grab.lock from pid ${stale}, which is no longer running`);
-  // Only .grab.lock is released here. .render.lock belongs to a fetch launch, which releases it
-  // itself once its cleanup is verified; on a signal mid-launch the launch's own exit hook runs
-  // that cleanup (launch.ts) and turns the exit code into 3 when it cannot verify it.
+  // Only .grab.lock is released here, on exit. A signal outside a fetch launch ends the process so
+  // that exit runs (exitOnSignal); mid-launch the launch's own hook runs its cleanup, releases
+  // .render.lock once verified (exit 3 and the lock stays otherwise) and then exits.
   const release = () => lock.release();
-  const onSignal = (sig: NodeJS.Signals) => { release(); console.error(`pnpm grab stopped (${sig}); .grab.lock released`); process.exit(cleanupUnverified() ? 3 : 130); };
-  const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"];
-  for (const sig of signals) process.on(sig, onSignal);
+  const sig = exitOnSignal("pnpm grab");
   process.on("exit", release);
   try {
     if (loginOnly) {
@@ -145,9 +143,9 @@ async function main(): Promise<number> {
     console.log("inbox ingested; run pnpm go to rank and render");
     return code;
   } finally {
+    sig.off();
     release();
     process.off("exit", release);
-    for (const sig of signals) process.off(sig, onSignal);
   }
 }
 

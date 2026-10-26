@@ -24,7 +24,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { Refusal, STATE_DIR, type Identities } from "../../config.ts";
 import { demoIncomplete } from "../../parse/fileinfo.ts";
-import { RenderLock, guard } from "../../render/controller/guards.ts";
+import { RenderLock, guard, lockStatus } from "../../render/controller/guards.ts";
 import { consoleLogPath, launchLog, onEmergency, ownedCleanup } from "../../render/controller/launch.ts";
 import { OwnedTree, isRunning } from "../../render/controller/processes.ts";
 import { MAX_DEMO_BYTES, copyIntoInbox } from "./folders.ts";
@@ -179,14 +179,24 @@ export function fetchLauncher(ids: Identities, opts: FetchOptions = {}): DemoFet
     // work (the orphan-.info repair) between it and the second guard.
     const lock = new RenderLock(lockFile);
     try { lock.acquire(); } catch (e) {
-      if (e instanceof Refusal) return { outcome: "pending", blocked: `${lockFile} is held (a render, a clip or another launch): run pnpm grab after it finishes; if nothing runs and no cs2.exe is left, delete it by hand`, cleanupVerified: true };
+      if (e instanceof Refusal) return { outcome: "pending", blocked: `${e.message.replace(/^refusing: /, "")} (a render, a clip or another fetch launch holds it; run pnpm grab after it finishes)`, cleanupVerified: true };
       throw e;
     }
+    // Until the emergency hook takes the lock over (below), a signal ending the process
+    // (exitOnSignal in pnpm grab) gives it back on exit.
+    const releaseBeforeLaunch = () => lock.release();
+    process.on("exit", releaseBeforeLaunch);
     let args: string[];
     let stamp: number;
     try {
       const held = otherLocks.find((f) => existsSync(f));
-      if (held) throw new Refusal(`a render run holds ${path.basename(held)}; run pnpm grab after it finishes`);
+      if (held) {
+        // A live holder is a render run; a dead one is a lock that run left behind (a hard kill).
+        const s = lockStatus(held);
+        throw new Refusal(s.alive === false
+          ? `${path.basename(held)} was left by pid ${s.pid}, which is no longer running: if no cs2.exe or HLAE.exe is left, delete ${held} and run pnpm grab again`
+          : `a render run holds ${path.basename(held)}${s.pid ? ` (pid ${s.pid})` : ""}; run pnpm grab after it finishes`);
+      }
       guard(ids);
       for (const n of repairOrphanInfo(replaysDir, { matchId, paddedOutcomeId: padded })) say(`removed replays/${n}, an interrupted download's leftover that stops CS2 from downloading this match again`);
       // A complete pair for this code already in replays/ (an inbox copy that failed earlier, or the
@@ -198,6 +208,7 @@ export function fetchLauncher(ids: Identities, opts: FetchOptions = {}): DemoFet
         const st = statSync(full);
         if (st.size > MAX_DEMO_BYTES) throw new Error(`replays/${existing} is ${st.size} bytes, over the ${MAX_DEMO_BYTES / 1024 ** 3} GiB demo limit`);
         const copied = copyIntoInbox(full, inbox, st);
+        process.off("exit", releaseBeforeLaunch);
         lock.release();
         say(`already downloaded by CS2 -> ${path.basename(copied)}`);
         return { outcome: "done", file: copied, cleanupVerified: true };
@@ -207,6 +218,7 @@ export function fetchLauncher(ids: Identities, opts: FetchOptions = {}): DemoFet
       // Re-check right before the launch: the account or a running CS2 may have changed.
       guard(ids);
     } catch (e) {
+      process.off("exit", releaseBeforeLaunch);
       lock.release();
       if (e instanceof Refusal) return { outcome: "pending", blocked: e.message, cleanupVerified: true };
       return { outcome: "failed", reason: `before the launch: ${(e as Error).message}`, cleanupVerified: true };
@@ -214,6 +226,8 @@ export function fetchLauncher(ids: Identities, opts: FetchOptions = {}): DemoFet
 
     let tree: OwnedTree | undefined;
     const cleanup = ownedCleanup({ tree: () => tree, lock, unrooted: "the spawned cs2.exe was never identified as this process's child, so its processes were not tracked", tag: "[fetch]" });
+    // From here the lock is the cleanup's; no await between the two lines, so no signal lands between them.
+    process.off("exit", releaseBeforeLaunch);
     const offEmergency = onEmergency(cleanup, "pnpm grab exit during a fetch launch");
     const marker = `croclip_fetch_${stamp}`;
     let failure: string | undefined; // the launch failed

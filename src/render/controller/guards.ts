@@ -55,9 +55,18 @@ export function guard(ids: Identities) {
 // and a dead controller can leave the game running). A lock that guards no game
 // process (pnpm grab's) may opt into takeOverDead: a lock whose pid is no longer
 // running is replaced, and acquire() returns that pid.
-/** Whether a process with this pid exists (EPERM: it exists, owned by someone else). */
+/** Whether a process with this pid exists: only ESRCH says no (EPERM: it exists, owned by someone else; anything else: unknown, so treated as alive, never as safe to take over). */
 function pidAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
+  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code !== "ESRCH"; }
+}
+
+/** Who holds a lock file: its pid and whether that process runs; both undefined when the file holds no pid. */
+export function lockStatus(file: string): { pid?: number; alive?: boolean } {
+  let holder = "";
+  try { holder = readFileSync(file, "utf8"); } catch {}
+  if (!/^\d+$/.test(holder)) return {};
+  const pid = Number(holder);
+  return { pid, alive: pidAlive(pid) };
 }
 
 export class RenderLock {
@@ -115,8 +124,11 @@ export class RenderLock {
     try { return readFileSync(this.file, "utf8"); } catch { return ""; }
   }
 
+  /** Names the holder and whether it still runs, so "delete it by hand" is advice, not a guess. */
   private refusal(holder: string): Refusal {
-    return new Refusal(`refusing: ${this.file} exists (pid ${holder || "?"}); if no controller is running and no cs2.exe/HLAE.exe is left, delete it by hand`);
+    const pid = /^\d+$/.test(holder) ? Number(holder) : undefined;
+    const who = pid === undefined ? "holder unknown" : `pid ${pid}, ${pidAlive(pid) ? "running" : "not running"}`;
+    return new Refusal(`refusing: ${this.file} exists (${who}); if no controller is running and no cs2.exe/HLAE.exe is left, delete it by hand`);
   }
 
   release() {

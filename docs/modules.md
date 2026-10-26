@@ -461,8 +461,18 @@ the spectated player (docs/spikes.md, M0.2 open items).
 would add kills). A held entry whose file is missing is reported, not
 re-made. Only a guard refusal gives
   the attempt back. Locks (`state/.go.lock`, `.clip.lock`, `.render.lock`)
-  are released on normal exit, errors and signals; a hard-killed run leaves
-  them, to be deleted by hand after checking no cs2.exe / HLAE.exe is left.
+  are released on normal exit, errors and signals: outside a launch, Ctrl-C
+  ends the process through `process.exit` (`exitOnSignal`, `launch.ts`;
+  Node's default is a plain kill, which fires no exit hook, and until
+  2026-10-26 `pnpm go` and `pnpm clip` had no handler, so a Ctrl-C during
+  parse or post stranded `.go.lock` and `.clip.lock`), and a render lock
+  taken before its launch is given back the same way; during a launch the
+  launch's own hook runs the cleanup first and releases `.render.lock` only
+  once that is verified. A hard-killed run (task manager, a closed terminal
+  tab) leaves them, to be deleted by hand after checking no cs2.exe /
+  HLAE.exe is left; the refusal names the pid in the lock and whether it
+  still runs, and `pnpm grab` says the same of a `.go.lock` / `.clip.lock`
+  it finds, instead of "run pnpm grab after it finishes" for a dead one.
   `pnpm grab`'s `state/.grab.lock` guards no game process, so a run whose
   pid is gone (a closed terminal tab is a hard kill) is taken over by the
   next grab, which says so. The takeover is serialized by an exclusive
