@@ -16,6 +16,7 @@ import type { ClipSpec } from "../clip/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
 import { clipId, clipPath, clipTmpPath, ensureClipsDir, publish, readDeleted, readIndex, recordFailure, writeJsonAtomic, type ClipEntry } from "../library/index.ts";
 import { pruneTakes } from "./prune.ts";
+import { fromStored, toStored } from "../state-paths.ts";
 
 export type JobInput = {
   demo: string;
@@ -56,7 +57,9 @@ function completedCapture(id: string, renderKey: string, size: string, takes: nu
     let c: CaptureRecord | undefined;
     try {
       const raw = JSON.parse(readFileSync(file, "utf8"));
-      c = { renderKey: raw.renderKey, takes: Array.isArray(raw.takes) ? raw.takes : [{ mapping: raw.mapping, video: raw.video, audio: raw.audio }] };
+      // Media paths are stored relative to the repo (state-paths.ts); older records hold absolute ones.
+      const local = (t: TakeCapture): TakeCapture => ({ ...t, video: fromStored(t.video, "state/render"), audio: fromStored(t.audio, "state/render") });
+      c = { renderKey: raw.renderKey, takes: (Array.isArray(raw.takes) ? raw.takes : [{ mapping: raw.mapping, video: raw.video, audio: raw.audio }]).map(local) };
       if (c.renderKey !== renderKey) continue;
       problems = c.takes.length !== takes ? [`capture has ${c.takes.length} take(s), expected ${takes}`]
         : c.takes.flatMap((t) => validateCapture(t.video, t.audio, t.mapping.frames, t.mapping.fps, size));
@@ -248,7 +251,8 @@ export async function runJobs(units: RenderUnit[], ro: RunOptions = {}): Promise
         // Each unit's own attempt dir records its capture, pointing into the shared launch dir.
         const workDir = single ? launchDir : path.join(STATE_DIR, "render", u.id, attempt);
         const record: CaptureRecord = { renderKey: u.renderKey, takes: mine.map((x) => ({ mapping: x.res!.mapping!, video: x.res!.video, audio: x.res!.audio! })) };
-        writeJsonAtomic(path.join(workDir, "capture.json"), record);
+        // On disk the media paths are relative to the repo (state-paths.ts); in memory they stay absolute.
+        writeJsonAtomic(path.join(workDir, "capture.json"), { ...record, takes: record.takes.map((t) => ({ ...t, video: toStored(t.video), audio: toStored(t.audio) })) });
         captures.set(u.id, { takes: record.takes, workDir });
       }
     }

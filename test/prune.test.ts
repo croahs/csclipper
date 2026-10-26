@@ -51,6 +51,8 @@ test("a recorded path is re-rooted under this checkout's state/render/", () => {
   assert.equal(localRenderPath("C:\\Users\\x\\croclipper\\state\\render\\abcd\\1\\hlae\\video.mp4", here), path.join(here, "abcd", "1", "hlae", "video.mp4"));
   assert.equal(localRenderPath("/home/x/cs/state/render/launch-a-1/hlae/take0001/audio.wav", here), path.join(here, "launch-a-1", "hlae", "take0001", "audio.wav"));
   assert.equal(localRenderPath("C:\\elsewhere\\video.mp4", here), "C:\\elsewhere\\video.mp4");
+  // The stored form since 2026-10-26: relative to the repo.
+  assert.equal(localRenderPath("state/render/abcd/1/hlae/video.mp4", here), path.join(here, "abcd", "1", "hlae", "video.mp4"));
 });
 
 test("the sweep prunes held clips only, through both capture shapes, and leaves the rest of the launch dir", () => {

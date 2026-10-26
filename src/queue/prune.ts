@@ -8,9 +8,10 @@
 // console.log, the cfgs and render.json stay, for forensics and the issue template.
 import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
-import { Refusal, STATE_DIR } from "../config.ts";
+import { ROOT, Refusal, STATE_DIR } from "../config.ts";
 import { readDeleted, readIndex } from "../library/index.ts";
 import { RenderLock } from "../render/controller/guards.ts";
+import { tailUnder } from "../state-paths.ts";
 
 export const RENDER_DIR = path.join(STATE_DIR, "render");
 const CLIP_LOCK = path.join(STATE_DIR, ".clip.lock");
@@ -19,13 +20,13 @@ const CLIP_LOCK = path.join(STATE_DIR, ".clip.lock");
 const MEDIA = /^(video\d*\.mp4|audio\.wav)$/i;
 
 /**
- * A capture's media path as this checkout sees it: the record holds the absolute path as
- * written, and the folder may have moved since (this one has), so the part under
- * state/render/ is re-rooted. A path without that part is returned as it is.
+ * A capture's media path under renderDir: the record names it relative to the repo
+ * (state-paths.ts), or, from before that rule, absolute in a folder the repo may have left, so
+ * the part after state/render/ is re-rooted. A path without that part is resolved as it is.
  */
 export function localRenderPath(recorded: string, renderDir = RENDER_DIR): string {
-  const m = /[\\/]state[\\/]render[\\/](.+)$/.exec(recorded);
-  return m ? path.join(renderDir, ...m[1].split(/[\\/]/)) : recorded;
+  const tail = tailUnder(recorded, "state/render");
+  return tail ? path.join(renderDir, ...tail) : path.resolve(ROOT, recorded);
 }
 
 export type Pruned = { files: number; bytes: number; problems: string[] };

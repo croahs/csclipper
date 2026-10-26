@@ -233,7 +233,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `src/queue/` | the batch and its job ledger (`index.ts`); one clip job, shared by `pnpm clip` and the batch (`job.ts`) |
 | `src/library/page.html`, `page.ts` | the library page template and its writer |
 | `demos/` | `inbox/` (drop here), `store/<sha256>.dem` (ingested demos, the only copy by default), `ingested/` (the archives demos arrived in, only with `config.json` → `ingest.keepOriginals`), `rejected/` (with `.reason.txt`) |
-| `state/demos.json`, `state/queue.json`, `state/sources/<name>.json` | demo registry; job ledger; each source's progress |
+| `state/demos.json`, `state/queue.json`, `state/sources/<name>.json` | demo registry (paths relative to the repo, State paths below); job ledger; each source's progress |
 | `src/parse/demo.ts` | per-demo extraction, cached in `state/<demo sha256>/parse.json` |
 | `src/parse/clip-facts.ts` | what one render needs: tickrate, demo hash, map, POV slot at the clip's ticks, round |
 | `src/score/index.ts` | round context (1vX), one moment per round, scoring |
@@ -432,6 +432,20 @@ the spectated player (docs/spikes.md, M0.2 open items).
   way: those are never unpacked, so the zip is their only copy. Bad
   input goes to `rejected/` and is never deleted; an archive one of whose
   members was rejected goes there too, beside that member.
+- **State paths.** `state/demos.json` and every `capture.json` name their
+  files relative to the repo root, with forward slashes
+  (`src/state-paths.ts`), so the folder can move: decided 2026-10-26, when
+  49 of 55 registry entries still pointed at the folder the repo had left.
+  Readers resolve; an absolute path (from before, or a file outside the
+  repo) is used as it is while it exists, never swapped for a same-named
+  file here; one that is gone is re-rooted: a registry entry to this
+  repo's `demos/store/<its sha>.dem`, a capture's media by the components
+  after the last `state/render/` in it. `pnpm go` and `pnpm grab` rewrite such registry entries once
+  (`rewritten` in the ingest report: "registry: N demo path(s) rewritten");
+  old `capture.json` files are not rewritten, only read that way. Still
+  absolute: `library/index.json` entries (`demo`, `render.workDir`, read by
+  `pnpm clip --rerender`), `state/deleted.json` (copies of them) and
+  `state/failures.json`.
 - **Stage keys.** parse.json (demo hash + parser + schema + POV),
   moments.json (parse key + weights + clip rules + schema; an empty list is a valid
   result, a parse error is a failure in `state/failures.json` under

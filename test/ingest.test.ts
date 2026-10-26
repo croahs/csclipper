@@ -68,6 +68,42 @@ test("a zip of demos only is deleted; a zip that also holds other files is kept 
   assert.deepEqual(ls("ingested"), ["mixed.zip"]);
 });
 
+test("registry paths are stored relative to the root; an entry from an old folder is rewritten once and resolves here", async () => {
+  const { root, ls } = setup();
+  const store = path.join(root, "demos", "store");
+  mkdirSync(store, { recursive: true });
+  const h1 = sha(demoBytes(8)), h2 = sha(demoBytes(9));
+  writeFileSync(path.join(store, `${h1}.dem`), demoBytes(8));
+  writeFileSync(path.join(store, `${h2}.dem`), demoBytes(9));
+  const file = path.join(root, "state", "demos.json");
+  mkdirSync(path.dirname(file), { recursive: true });
+  const rec = (h: string, f: string) => ({ sha256: h, file: f, originalName: "x.dem", source: "inbox", bytes: 1, addedAt: "2026-10-01T00:00:00.000Z" });
+  // h1: an old absolute path in a folder that is gone; h2: already relative; h3: an absolute file
+  // that exists outside the root (a stranger's demos/ folder), which is used as it is and never rewritten.
+  const h3 = sha(demoBytes(10));
+  const outside = path.join(`${root}-elsewhere`, "demos", "store", `${h3}.dem`);
+  mkdirSync(path.dirname(outside), { recursive: true });
+  writeFileSync(outside, demoBytes(10));
+  // h1's old path has another basename, and a decoy sits where a tail match would land: the
+  // entry must resolve by its own sha, not by the path's tail.
+  writeFileSync(path.join(store, "old-name.dem"), "decoy");
+  writeFileSync(file, JSON.stringify({ [h1]: rec(h1, `${root}-old${path.sep}demos${path.sep}store${path.sep}old-name.dem`), [h2]: rec(h2, `demos/store/${h2}.dem`), [h3]: rec(h3, outside) }));
+  const r = await ingest({ root, keepOriginals: false });
+  assert.equal(r.rewritten, 1);
+  assert.deepEqual(r.added, []); // all were registered; nothing recovered twice
+  const raw = JSON.parse(readFileSync(file, "utf8"));
+  assert.equal(raw[h1].file, `demos/store/${h1}.dem`);
+  assert.equal(raw[h2].file, `demos/store/${h2}.dem`);
+  assert.equal(raw[h3].file, outside);
+  const reg = readRegistry(file, root);
+  assert.equal(reg[h1].file, path.join(store, `${h1}.dem`));
+  assert.equal(reg[h3].file, outside);
+  assert.ok(existsSync(reg[h1].file) && existsSync(reg[h2].file));
+  assert.deepEqual(ls("store").length, 3); // the two demos and the decoy, which nothing touched
+  // A second run rewrites nothing.
+  assert.equal((await ingest({ root, keepOriginals: false })).rewritten, 0);
+});
+
 test("keepOriginals moves archives and duplicates to ingested/ instead", async () => {
   const { root, put, ls } = setup();
   put("1-bbb-1-1.dem.zst", zlib.zstdCompressSync(demoBytes(2)));

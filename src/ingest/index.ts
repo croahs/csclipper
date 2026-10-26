@@ -9,7 +9,8 @@
 // demos/ingested/ with config.json → ingest.keepOriginals. Anything unusable goes to
 // demos/rejected/ with a .reason.txt beside it and is never deleted. A store file that is not in the
 // registry (a run died between the move and the commit) is registered on the
-// next run. Producers must write under a temporary name (a leading dot, or
+// next run. Registry paths are stored relative to the repo root (state-paths.ts) and resolved
+// on read; entries from before that rule are rewritten once. Producers must write under a temporary name (a leading dot, or
 // .part / .tmp / .crdownload) and rename into place when done; such names are
 // ignored. The stable-size wait and the re-checks below catch most writers
 // that do not, but only the rename guarantees the stored bytes match the hash.
@@ -21,6 +22,7 @@ import zlib from "node:zlib";
 import { ROOT, STATE_DIR, loadIngest } from "../config.ts";
 import { sha256File } from "../parse/clip-facts.ts";
 import { demoIncomplete } from "../parse/fileinfo.ts";
+import { toStored } from "../state-paths.ts";
 
 const require = createRequire(import.meta.url);
 const Bunzip = require("seek-bzip");
@@ -30,10 +32,10 @@ export const INBOX = path.join(DEMOS_DIR, "inbox");
 const REGISTRY = path.join(STATE_DIR, "demos.json");
 
 /** The folders ingest works in: the repo's by default, a temp root in tests. */
-type Dirs = { inbox: string; store: string; ingested: string; rejected: string; work: string; registry: string };
-const dirsOf = (root?: string): Dirs => {
-  const demos = root ? path.join(root, "demos") : DEMOS_DIR;
-  return { inbox: path.join(demos, "inbox"), store: path.join(demos, "store"), ingested: path.join(demos, "ingested"), rejected: path.join(demos, "rejected"), work: path.join(demos, ".unpack"), registry: root ? path.join(root, "state", "demos.json") : REGISTRY };
+type Dirs = { root: string; inbox: string; store: string; ingested: string; rejected: string; work: string; registry: string };
+const dirsOf = (root = ROOT): Dirs => {
+  const demos = path.join(root, "demos");
+  return { root, inbox: path.join(demos, "inbox"), store: path.join(demos, "store"), ingested: path.join(demos, "ingested"), rejected: path.join(demos, "rejected"), work: path.join(demos, ".unpack"), registry: path.join(root, "state", "demos.json") };
 };
 
 const STABLE_MS = 2000; // a file must keep its size and mtime this long
@@ -46,14 +48,40 @@ const PARTIAL = /^\.|\.(part|tmp|crdownload)$/i;
 
 export type DemoRecord = { sha256: string; file: string; originalName: string; source: string; bytes: number; addedAt: string };
 export type Registry = Record<string, DemoRecord>;
-export type IngestReport = { added: DemoRecord[]; duplicates: string[]; rejected: { name: string; reason: string }[]; waiting: string[] };
+/** rewritten: registry entries whose stored path was brought into the relative form (a one-time migration). */
+export type IngestReport = { added: DemoRecord[]; duplicates: string[]; rejected: { name: string; reason: string }[]; waiting: string[]; rewritten: number };
 
-export const readRegistry = (file = REGISTRY): Registry => (existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {});
-function writeRegistry(file: string, r: Registry) {
+const readRaw = (file: string): Registry => (existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {});
+/**
+ * A record's file as this checkout sees it: a relative path under the root; an absolute one as it
+ * is while it exists, else this root's store/<sha>.dem (the one place ingest ever puts a demo),
+ * never a tail match that could pick a stranger's file (state-paths.ts).
+ */
+const demoPath = (rec: DemoRecord, root: string) =>
+  !path.isAbsolute(rec.file) ? path.resolve(root, rec.file) : existsSync(rec.file) ? rec.file : path.join(root, "demos", "store", `${rec.sha256}.dem`);
+/** The registry with every `file` resolved for this checkout (on disk they are relative to the root, state-paths.ts). */
+export function readRegistry(file = REGISTRY, root = ROOT): Registry {
+  const r = readRaw(file);
+  for (const rec of Object.values(r)) rec.file = demoPath(rec, root);
+  return r;
+}
+function writeRegistry(file: string, r: Registry, root = ROOT) {
   mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(tmp, JSON.stringify(r, null, 2) + "\n");
+  const stored = Object.fromEntries(Object.entries(r).map(([k, rec]) => [k, { ...rec, file: toStored(rec.file, root) }]));
+  writeFileSync(tmp, JSON.stringify(stored, null, 2) + "\n");
   renameSync(tmp, file);
+}
+/**
+ * Entries written before paths were stored relative (absolute, and 49 of them in a folder this
+ * repo had left on 2026-10-26) are rewritten once, in the stored form; returns how many. An
+ * absolute path that still exists outside the root is not an old entry and stays as it is.
+ */
+function normalizeRegistry(file: string, root: string): number {
+  const raw = readRaw(file);
+  const changed = Object.values(raw).filter((rec) => toStored(demoPath(rec, root), root) !== rec.file);
+  if (changed.length) writeRegistry(file, readRegistry(file, root), root);
+  return changed.length;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -175,7 +203,7 @@ async function reconcileStore(d: Dirs, registry: Registry, report: IngestReport)
     if ((await sha256File(file)) !== m[1]) { reject(d, file, "store file does not match its hash", report); continue; }
     registry[m[1]] = { sha256: m[1], file, originalName: n, source: "store (recovered)", bytes: statSync(file).size, addedAt: new Date().toISOString() };
     report.added.push(registry[m[1]]);
-    writeRegistry(d.registry, registry);
+    writeRegistry(d.registry, registry, d.root);
   }
 }
 
@@ -186,8 +214,8 @@ export async function ingest(o: IngestOptions = {}): Promise<IngestReport> {
   const d = dirsOf(o.root);
   const keep = o.keepOriginals ?? loadIngest().keepOriginals;
   mkdirSync(d.inbox, { recursive: true });
-  const report: IngestReport = { added: [], duplicates: [], rejected: [], waiting: [] };
-  const registry = readRegistry(d.registry);
+  const report: IngestReport = { added: [], duplicates: [], rejected: [], waiting: [], rewritten: normalizeRegistry(d.registry, d.root) };
+  const registry = readRegistry(d.registry, d.root);
   await reconcileStore(d, registry, report);
   const list = () => readdirSync(d.inbox).filter((n) => !PARTIAL.test(n) && statSync(path.join(d.inbox, n)).isFile());
   const first = new Map(list().map((n) => [n, statSync(path.join(d.inbox, n))]));
@@ -232,7 +260,7 @@ export async function ingest(o: IngestOptions = {}): Promise<IngestReport> {
       mkdirSync(d.store, { recursive: true });
       renameSync(dem, stored); // a bare .dem moves too: the store copy is the demo from now on
       registry[sha256] = { sha256, file: stored, originalName: n, source: "inbox", bytes: statSync(stored).size, addedAt: new Date().toISOString() };
-      writeRegistry(d.registry, registry);
+      writeRegistry(d.registry, registry, d.root);
       report.added.push(registry[sha256]);
     }
     // What is left in the inbox is the archive, or a duplicate's own file: its content is in the

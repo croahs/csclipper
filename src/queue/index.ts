@@ -89,6 +89,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   }
   const ing = await ingest();
   report.ingested = ing.added.length;
+  if (ing.rewritten) console.log(`registry: ${ing.rewritten} demo path(s) rewritten relative to the repo (state/demos.json)`);
   for (const a of ing.added) console.log(`ingested ${a.originalName} → ${path.basename(a.file)}`);
   for (const r of ing.rejected) console.log(`rejected ${r.name}: ${r.reason}`);
   for (const d of ing.duplicates) console.log(`duplicate of a registered demo: ${d}`);

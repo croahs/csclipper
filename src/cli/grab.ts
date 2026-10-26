@@ -137,6 +137,7 @@ async function main(): Promise<number> {
     }
     if (dryRun) return code;
     const ing = await ingest();
+    if (ing.rewritten) console.log(`registry: ${ing.rewritten} demo path(s) rewritten relative to the repo (state/demos.json)`);
     for (const a of ing.added) console.log(`ingested ${a.originalName}`);
     for (const d of ing.duplicates) console.log(`already in the store: ${d}`);
     for (const r of ing.rejected) { console.log(`rejected ${r.name}: ${r.reason}`); code = 1; }
