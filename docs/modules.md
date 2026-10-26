@@ -23,6 +23,7 @@ pnpm victims "<demo.dem>" [--timeout <s>] [--dry-run]
 pnpm library [--port <n>]
 pnpm drop <no>...
 pnpm trash --empty
+pnpm tidy
 pnpm unsettle <demo sha256 prefix | clip no>...
 ```
 
@@ -50,7 +51,24 @@ checked mid-take, never on a seam where the fades meet. `pnpm deaths` /
 dependency) moves the clip's mp4 to `library/trash/`, removes its index
 entry (the number is never reused) and keeps it in `state/deleted.json`,
 which counts as held: `pnpm go` never makes that moment or reel again.
-`pnpm trash --empty` deletes the trash for good. `pnpm library` serves
+`pnpm trash --empty` deletes the trash for good. **Raw captures** (HLAE's
+intermediate video and audio per take under `state/render/`, about 700 MB
+per clip, kept so a failed post never costs another launch) are deleted
+right after the clip they belong to is published, and `pnpm go` ends with
+a sweep of every capture of a clip the library holds or `state/deleted.json`
+lists; `pnpm tidy` runs that sweep alone, launching nothing (for captures
+from before this rule, or ones a publish could not delete). The sweep runs
+under `state/.clip.lock`, which every render run holds from its resume
+check to its index write: a same-id `--rerender` writes its fresh capture
+while the old entry is still held, and a sweep meanwhile would eat it. A
+held lock skips the sweep (`pnpm tidy` exits 2), never waits. Only files
+named `video*.mp4` / `audio.wav` physically under `state/render/` (a
+junction inside it does not count) are ever deleted;
+`capture.json`, `console.log`, the cfgs and `render.json` stay. A capture's
+recorded path is re-rooted under this checkout's `state/render/`, since the
+record holds an absolute path and the folder may have moved
+(`src/queue/prune.ts`). Captures of failed-for-good units and launch dirs
+no clip refers to are not touched. `pnpm library` serves
 `library/` at `http://127.0.0.1:8765/` (127.0.0.1 only, no dependencies,
 Range requests; Host and Origin checked, so no other site can delete
 through it); served that way the page has a Delete button and the Delete
@@ -203,7 +221,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 
 | Path | What |
 |---|---|
-| `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds` |
+| `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds`; `ingest.keepOriginals` (default false: the file a demo arrived in is deleted once the store holds it) |
 | `.env` | identities and tool paths (`.env.example`; `pnpm prep` fills it; M0.2 setup in `docs/spikes.md`) |
 | `src/cli/setup.ts` | `pnpm prep` / `pnpm check`: tool pins with their sha256, Steam and CS2 lookup, the requirement report |
 | `docs/m6-mm-fetch.md` | the execution plan for M6 (matchmaking demos fetched through a CS2 launch, no login): phases, agents, gate, tests |
@@ -214,7 +232,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `test/` | `pnpm test`: FACEIT source against recorded fixtures (`test/fixtures/faceit/`), the Valve source against a fake Web API and fetcher, and the folders source on temp folders; no network, no game launch |
 | `src/queue/` | the batch and its job ledger (`index.ts`); one clip job, shared by `pnpm clip` and the batch (`job.ts`) |
 | `src/library/page.html`, `page.ts` | the library page template and its writer |
-| `demos/` | `inbox/` (drop here), `store/<sha256>.dem` (ingested demos), `ingested/` (originals), `rejected/` (with `.reason.txt`) |
+| `demos/` | `inbox/` (drop here), `store/<sha256>.dem` (ingested demos, the only copy by default), `ingested/` (the archives demos arrived in, only with `config.json` → `ingest.keepOriginals`), `rejected/` (with `.reason.txt`) |
 | `state/demos.json`, `state/queue.json`, `state/sources/<name>.json` | demo registry; job ledger; each source's progress |
 | `src/parse/demo.ts` | per-demo extraction, cached in `state/<demo sha256>/parse.json` |
 | `src/parse/clip-facts.ts` | what one render needs: tickrate, demo hash, map, POV slot at the clip's ticks, round |
@@ -224,7 +242,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `src/render/capture/hlae.ts` | HLAE launch arguments and `mirv_streams` lines |
 | `src/post/` | trim and fade (`index.ts`), FFmpeg probes (`ffmpeg.ts`) |
 | `src/library/index.ts` | clip id, atomic publish, index and failures |
-| `state/render/<id>/<attempt>/` | per-attempt work dir: generated cfgs, raw capture, `console.log`, `render.json` |
+| `state/render/<id>/<attempt>/` | per-attempt work dir: generated cfgs, `capture.json`, `console.log`, `render.json`; the raw capture itself only until the clip is published (Deleting, above) |
 
 ## Decisions made in M1
 
@@ -405,8 +423,15 @@ the spectated player (docs/spikes.md, M0.2 open items).
   Node has no bzip2), `.gz` / `.zst` through Node's zlib, all bounded while
   unpacking. The result must start with `PBDEMS2`. Demos are hashed and
   moved to `demos/store/<sha256>.dem`, registered per demo; a store file
-  missing from the registry is registered on the next run. Nothing is
-  deleted: originals go to `ingested/`, bad input to `rejected/`.
+  missing from the registry is registered on the next run. The store copy
+  is the demo from then on: the archive it arrived in, and a file whose
+  demo the store already holds, are deleted once the registry has the
+  demo (decided 2026-10-26: `ingested/` had doubled the disk use), or moved
+  to `ingested/` with `config.json` → `ingest.keepOriginals: true`. A zip
+  that also holds files that are not demos is kept in `ingested/` either
+  way: those are never unpacked, so the zip is their only copy. Bad
+  input goes to `rejected/` and is never deleted; an archive one of whose
+  members was rejected goes there too, beside that member.
 - **Stage keys.** parse.json (demo hash + parser + schema + POV),
   moments.json (parse key + weights + clip rules + schema; an empty list is a valid
   result, a parse error is a failure in `state/failures.json` under

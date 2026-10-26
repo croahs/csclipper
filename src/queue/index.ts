@@ -25,6 +25,7 @@ import { readIndex, recordFailure, writeJsonAtomic } from "../library/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
 import { highlightUnit, prepareJob, runJobs, unitHasCapture, type JobResult, type PreparedJob, type RenderUnit } from "./job.ts";
 import { prepareReel } from "../reel/index.ts";
+import { sweepUnderClipLock, type Pruned } from "./prune.ts";
 
 /** Demos marked processed by pnpm go --settle-existing: sha256 → when. pnpm go skips them. */
 const SETTLED = path.join(STATE_DIR, "settled.json");
@@ -64,6 +65,8 @@ export type BatchReport = {
   settled: number; settledNow?: number;
   /** Demos this run settled because its pass over them finished (every selected moment rendered, held or failed for good). */
   autoSettled: string[];
+  /** The sweep of held clips' raw captures at the end of the run (not on a dry run). */
+  pruned?: Pruned & { clips: number };
   stoppedBy?: "refusal" | "cleanup"; pageError?: string;
 };
 
@@ -283,6 +286,12 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
     if (results.some((x) => x.cleanupVerified === false) || cleanupUnverified()) { report.stoppedBy = "cleanup"; code = 3; break demos; }
   }
   await posting; // the last demo's post
+  // Raw captures of held clips from earlier runs (and any a publish could not remove): dead weight, swept here.
+  if (!o.dryRun) {
+    report.pruned = sweepUnderClipLock();
+    if (!report.pruned) console.log("raw captures not swept: a clip run holds state/.clip.lock (pnpm tidy later)");
+    for (const p of report.pruned?.problems ?? []) console.error(`raw capture not removed: ${p}`);
+  }
   if ((report.demoErrors.length || report.givenUp.length) && code === 0) code = 1;
   // The page is rewritten even after a stop; its own failure never hides the batch's exit code.
   try { writeLibraryPage(); } catch (e) { report.pageError = (e as Error).message; if (code === 0) code = 1; }

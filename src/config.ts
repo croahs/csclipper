@@ -68,6 +68,18 @@ export function loadReels(file = path.join(ROOT, "config.json")): ReelSettings {
   return { deaths: one("deaths"), kills: one("kills") };
 }
 
+/**
+ * Ingest: whether the file a demo arrived in (an archive, or a duplicate of a stored demo) is kept
+ * in demos/ingested/ once the store holds its content. Default false: it is deleted (the store
+ * copy is the demo from then on).
+ */
+export type IngestSettings = { keepOriginals: boolean };
+export function loadIngest(file = path.join(ROOT, "config.json")): IngestSettings {
+  const i = JSON.parse(readFileSync(file, "utf8")).ingest ?? {};
+  if (i.keepOriginals !== undefined && typeof i.keepOriginals !== "boolean") throw new Error("config.json ingest.keepOriginals must be true or false");
+  return { keepOriginals: i.keepOriginals === true };
+}
+
 /** The final encode: "auto" = NVENC when FFmpeg has it (x264 if that encode fails), or always "x264" / "nvenc". */
 export type Encoder = "auto" | "x264" | "nvenc";
 export function loadEncoder(file = path.join(ROOT, "config.json")): Encoder {

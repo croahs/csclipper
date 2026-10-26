@@ -21,6 +21,7 @@
     "library": "tsx src/cli/library.ts",
     "drop": "tsx src/cli/drop.ts drop",
     "trash": "tsx src/cli/drop.ts trash",
+    "tidy": "tsx src/cli/tidy.ts",
     "unsettle": "tsx src/cli/unsettle.ts"
   },
   "dependencies": {

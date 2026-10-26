@@ -17,6 +17,9 @@
     "leadInSeconds": 4,
     "tailSeconds": 5.5
   },
+  "ingest": {
+    "keepOriginals": false
+  },
   "reels": {
     "deaths": { "enabled": true, "beforeSeconds": 7, "afterSeconds": 4 },
     "kills": { "enabled": true, "beforeSeconds": 7, "afterSeconds": 2 }

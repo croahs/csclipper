@@ -19,6 +19,7 @@ import { postReel } from "../post/index.ts";
 import { clipPath, clipTmpPath, ensureClipsDir, publish, readDeleted, readIndex } from "../library/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
 import type { JobInput, JobResult, RenderUnit } from "../queue/job.ts";
+import { pruneTakes } from "../queue/prune.ts";
 
 export type ReelKind = "deaths" | "kills";
 
@@ -110,6 +111,8 @@ export async function prepareReel(demoArg: string, kind: ReelKind, o: Omit<JobIn
       });
       try { writeLibraryPage({ running: !!o.inBatch }); } catch (e) { console.error(`library page not rewritten: ${(e as Error).message}`); }
       console.log(`ok: ${clipPath(id)} (${title}: ${takes.length} takes, ${r.plan!.seconds.toFixed(1)} s)`);
+      // The library holds the reel now, so its raw takes have served their purpose (queue/prune.ts).
+      for (const m of pruneTakes(captures).problems) console.error(`raw capture not removed: ${m}`);
       return { status: "done", id, title, clip: clipPath(id) };
     },
   };

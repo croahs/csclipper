@@ -15,6 +15,7 @@ import { post } from "../post/index.ts";
 import type { ClipSpec } from "../clip/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
 import { clipId, clipPath, clipTmpPath, ensureClipsDir, publish, readDeleted, readIndex, recordFailure, writeJsonAtomic, type ClipEntry } from "../library/index.ts";
+import { pruneTakes } from "./prune.ts";
 
 export type JobInput = {
   demo: string;
@@ -286,5 +287,7 @@ function postAndPublish(prep: PreparedJob, capture: TakeCapture & { renderKey: s
   try { writeLibraryPage({ running: !!o.inBatch }); } catch (e) { console.error(`library page not rewritten: ${(e as Error).message}`); }
   const ff = p.segments!.filter((x) => x.speed !== 1);
   console.log(`ok: ${clipPath(id)} (${p.plan!.seconds.toFixed(1)} s from ${((endTick - startTick) / capture.mapping.tickrate).toFixed(1)} s of play${ff.length ? `, ${ff.length} stretch(es) fast-forwarded` : ""}; trimmed by the scheduled record start)`);
+  // The library holds the clip now, so its raw capture has served its purpose (prune.ts).
+  for (const m of pruneTakes([capture]).problems) console.error(`raw capture not removed: ${m}`);
   return { status: "done", id, title, clip: clipPath(id) };
 }

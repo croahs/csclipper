@@ -15,6 +15,7 @@ import { RenderLock } from "../render/controller/guards.ts";
 import { cleanupUnverified } from "../render/controller/index.ts";
 import { runBatch } from "../queue/index.ts";
 import { PAGE } from "../library/page.ts";
+import { prunedLine } from "../queue/prune.ts";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
@@ -55,6 +56,7 @@ async function main(): Promise<number> {
     if (r.needsRender.length) console.log(`--repost: ${r.needsRender.length} selected moment(s) have no completed capture; a normal pnpm go renders them`);
     for (const d of r.demoErrors) console.log(`demo FAILED: ${d}`);
     if (r.pageError) console.log(`library page FAILED: ${r.pageError}`);
+    if (r.pruned?.files) console.log(prunedLine(r.pruned));
     if (r.stoppedBy) console.log(`batch stopped: ${r.stoppedBy === "refusal" ? "a guard refused" : "cleanup not verified"}`);
     console.log(`library: ${PAGE}`);
     return code;

@@ -18,7 +18,8 @@ checksums before using them.
 - A Windows 11 PC with Steam and Counter-Strike 2 installed, the one you
   play on.
 - A second Steam account. Step 2 explains why and how.
-- 10 GB of free disk space for demos and clips.
+- Disk space: about half a gigabyte per match, for the demo and its
+  clips, which stay until you delete them. 50 matches is about 25 GB.
 
 Do the steps in this order: step 1 while Steam is logged in with your
 main account, step 2 switches to the second one, step 3 runs the setup
@@ -206,6 +207,11 @@ matchmaking** again.
   (https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_execution_policies).
 - A render that failed is listed in `csclipper\state\failures.json`;
   `pnpm go --retry-failed` tries it again.
+- Running out of disk: the demos are in `csclipper\demos\store` (a few
+  hundred MB each) and the clips in `csclipper\library\clips`. Clips you
+  delete sit in `library\trash` until `pnpm trash --empty`. The game's
+  raw recordings are removed on their own once a clip is made; `pnpm
+  tidy` removes any left from before that was so.
 - Still stuck: open an issue with the `pnpm check` output.
   https://github.com/croahs/csclipper/issues/new/choose
 
