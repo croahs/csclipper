@@ -189,6 +189,11 @@ matchmaking** again.
 
 - Run `pnpm check` in the csclipper folder. It prints what is installed
   and what is missing, and prints no IDs or keys.
+- The window prints nothing new and its title starts with "Select": a
+  click in it paused the run. Press Esc and it carries on. `pnpm grab`
+  and `pnpm go` turn this click-to-select off for their own window (and
+  print a note when they cannot); other commands typed in a terminal can
+  still pause this way.
 - "refusing: CS2 is already running": close CS2 first.
 - "refusing: logged-in Steam account is not RENDER_STEAM_ID64": log in
   with the second account.

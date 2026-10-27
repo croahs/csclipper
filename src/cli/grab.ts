@@ -34,6 +34,7 @@ import { RenderLock } from "../render/controller/guards.ts";
 import { cleanupUnverified, exitOnSignal } from "../render/controller/launch.ts";
 import { NO_KEYS, valveSource } from "../ingest/sources/valve.ts";
 import { fetchLauncher } from "../ingest/sources/valve-fetch.ts";
+import { quickEditOff } from "../quickedit.ts";
 
 const dryRun = process.argv.includes("--dry-run");
 const loginOnly = process.argv.includes("--login");
@@ -90,6 +91,7 @@ function sources(): Source[] {
 }
 
 async function main(): Promise<number> {
+  quickEditOff();
   // One grab at a time, --login included: sources advance their state across a
   // whole run, and the browser profile can only be open once.
   // A lock left by a grab that was killed (its pid is gone) is taken over; it guards no game process.

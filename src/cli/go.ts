@@ -17,11 +17,13 @@ import { exitOnSignal } from "../render/controller/launch.ts";
 import { runBatch } from "../queue/index.ts";
 import { PAGE } from "../library/page.ts";
 import { prunedLine } from "../queue/prune.ts";
+import { quickEditOff } from "../quickedit.ts";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
 
 async function main(): Promise<number> {
+  quickEditOff();
   const timeoutS = flag("--timeout") === undefined ? undefined : Number(flag("--timeout"));
   // One batch at a time; released on any exit. A signal outside a launch ends the process so that
   // exit runs (exitOnSignal); inside one, the launch's own hook cleans up first and then exits.
