@@ -228,7 +228,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `setup.ps1`, `GUIDE.md` | the one-line bootstrap (`irm … | iex`: winget for git and Node, corepack or pnpm's installer for pnpm, clone or fast-forward pull of a checkout of this repo, `pnpm prep`, every exit code checked, nothing installed when winget is missing) and the step-by-step guide it points to |
 | `scoring.json` | ranking weights; tuning and current picks in `docs/scoring-notes.md` |
 | `src/cli/go.ts`, `src/cli/clip.ts`, `src/cli/moments.ts` | the entries |
-| `src/ingest/` | watch folder (`index.ts`), the source contract (`sources.ts`), sources (`sources/folders.ts`, `sources/faceit.ts` with its browser path `sources/faceit-browser.ts`, `sources/valve.ts` with its CS2 fetch launch `sources/valve-fetch.ts`) |
+| `src/ingest/` | watch folder (`index.ts`, with the first-full-packet fix in `full-packet.ts`), the source contract (`sources.ts`), sources (`sources/folders.ts`, `sources/faceit.ts` with its browser path `sources/faceit-browser.ts`, `sources/valve.ts` with its CS2 fetch launch `sources/valve-fetch.ts`) |
 | `test/` | `pnpm test`: FACEIT source against recorded fixtures (`test/fixtures/faceit/`), the Valve source against a fake Web API and fetcher, and the folders source on temp folders; no network, no game launch |
 | `src/queue/` | the batch and its job ledger (`index.ts`); one clip job, shared by `pnpm clip` and the batch (`job.ts`) |
 | `src/library/page.html`, `page.ts` | the library page template and its writer |
@@ -421,7 +421,11 @@ the spectated player (docs/spikes.md, M0.2 open items).
   wildcard, option-like, colon or duplicate names; 20 members, 2 GiB per
   demo, 6 GiB total); `.bz2` through `seek-bzip` (the one added dependency;
   Node has no bzip2), `.gz` / `.zst` through Node's zlib, all bounded while
-  unpacking. The result must start with `PBDEMS2`. Demos are hashed and
+  unpacking. The result must start with `PBDEMS2`. A demo whose first
+  `DEM_FullPacket` carries the `instancebaseline` / `AnimAssetData` tables
+  (CS2 crashes re-applying it at playback start, `docs/spikes.md`) is
+  replaced by a copy without them (`src/ingest/full-packet.ts`; the inbox
+  file itself is never rewritten). Demos are hashed and
   moved to `demos/store/<sha256>.dem`, registered per demo; a store file
   missing from the registry is registered on the next run. The store copy
   is the demo from then on: the archive it arrived in, and a file whose

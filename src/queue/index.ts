@@ -91,6 +91,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   report.ingested = ing.added.length;
   if (ing.rewritten) console.log(`registry: ${ing.rewritten} demo path(s) rewritten relative to the repo (state/demos.json)`);
   for (const a of ing.added) console.log(`ingested ${a.originalName} → ${path.basename(a.file)}`);
+  for (const f of ing.fixed) console.log(`first full packet fixed (CS2 crashes on it as recorded): ${f}`);
   for (const r of ing.rejected) console.log(`rejected ${r.name}: ${r.reason}`);
   for (const d of ing.duplicates) console.log(`duplicate of a registered demo: ${d}`);
   for (const w of ing.waiting) console.log(`still being written, next run: ${w}`);

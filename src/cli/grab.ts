@@ -139,6 +139,7 @@ async function main(): Promise<number> {
     const ing = await ingest();
     if (ing.rewritten) console.log(`registry: ${ing.rewritten} demo path(s) rewritten relative to the repo (state/demos.json)`);
     for (const a of ing.added) console.log(`ingested ${a.originalName}`);
+    for (const f of ing.fixed) console.log(`first full packet fixed (CS2 crashes on it as recorded): ${f}`);
     for (const d of ing.duplicates) console.log(`already in the store: ${d}`);
     for (const r of ing.rejected) { console.log(`rejected ${r.name}: ${r.reason}`); code = 1; }
     for (const w of ing.waiting) console.log(`still being written, next run: ${w}`);

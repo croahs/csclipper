@@ -1049,3 +1049,38 @@ and after were not taken). Those are phase 2 tests and phase 5 work.
   from outside (task manager); the window's visibility.
 - Where the game keeps the bytes while downloading.
 - Three of the four hand-over checks (above).
+
+## First full packet crash (2026-10-31)
+
+Not a gate: an investigation of renders that died with 0 takes. Fixed in
+ingest (`src/ingest/full-packet.ts`).
+
+- **Symptom.** Some demos fail every launch with `expected N take
+  folder(s), found 0`. `console.log` ends right after the engine's own
+  seek at playback start (`Demo Skipping: skipping to demo tick 0 …
+  from full packet 1`, before the first scheduled command at tick 96)
+  with `Disconnecting from server: NETWORK_DISCONNECT_HOST_ENDGAME` and
+  `Demo playback finished`; CS2 writes
+  `game/bin/win64/cs2_<date>_accessviolation.mdmp` (null read in
+  `client.dll`, the same offset per build). Every launch does that seek;
+  the same demos crash every time (b3abfffd0c66 and 2c61fd7ff6cb twice
+  each on 2026-10-31, 68297716d51f twice on 2026-10-27).
+- **Cause.** The first `DEM_FullPacket` (tick 1) of those demos carries
+  a string-table snapshot with `instancebaseline` and `AnimAssetData`
+  besides `userinfo`; in every demo that plays, it carries `userinfo`
+  only (all 11 demos in the store on 2026-10-31: the two crashing ones
+  are the only ones with the extra tables). Patch 14194, FACEIT demos.
+  The Oct 27 crashes (a7862a5c8f78, 68297716d51f) match the symptom; their
+  files were pruned, so their full packet is unknown.
+- **Fix, verified.** A copy of b3abfffd0c66 with those two tables dropped
+  from the first full packet only (frame stored uncompressed, header
+  offsets moved by the size change, every other byte unchanged; sha256
+  c72a3bee5afa…) parses the same in demoparser2 0.42.0 (153 deaths both)
+  and rendered `pnpm clip <copy> --top 1` (R5 4k, 1v2 clutch, clip 185) in
+  one launch, 97 s, no crash dump; frames checked by eye.
+- **Ingest.** Every new demo goes through the same rewrite before it is
+  hashed, so the store holds and the hash names the playable demo; the
+  run prints `first full packet fixed …`. Demos stored before 2026-10-31
+  are not rewritten; one that crashes this way is re-ingested by hand
+  (move the store file to `demos/inbox/`, drop its registry entry and
+  `state/<sha>/`).

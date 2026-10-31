@@ -11,7 +11,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 import { ingest, readRegistry } from "../src/ingest/index.ts";
-import { demoBytes, truncatedDemo } from "./demo-bytes.ts";
+import { demoBytes, demoWithFullPacket, truncatedDemo } from "./demo-bytes.ts";
+import { demoIncomplete } from "../src/parse/fileinfo.ts";
 
 const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 
@@ -114,4 +115,34 @@ test("keepOriginals moves archives and duplicates to ingested/ instead", async (
   assert.deepEqual(ls("inbox"), []);
   // The archive, and the bare duplicate (the store already had its bytes).
   assert.deepEqual(ls("ingested"), ["1-bbb-1-1.dem.zst", "1-bbb-copy.dem"]);
+});
+
+test("a demo whose first full packet carries instancebaseline / AnimAssetData is stored without them; a clean one byte for byte", async () => {
+  const { root, put, ls } = setup();
+  const bad = demoWithFullPacket(["instancebaseline", "userinfo", "AnimAssetData"]);
+  const clean = demoWithFullPacket(["userinfo"]);
+  put("1-bad-1-1.dem", bad); // bare: the inbox file itself is never rewritten
+  put("1-bad-plain.dem.zst", zlib.zstdCompressSync(demoWithFullPacket(["instancebaseline", "userinfo", "AnimAssetData"], false)));
+  put("1-clean-1-1.dem.zst", zlib.zstdCompressSync(clean));
+  const r = await ingest({ root, keepOriginals: false });
+  assert.deepEqual(r.fixed.sort(), ["1-bad-1-1.dem: instancebaseline, AnimAssetData", "1-bad-plain.dem.zst: instancebaseline, AnimAssetData"]);
+  // Both bad copies come out the same: the frame is stored uncompressed with only userinfo left.
+  const fixed = demoWithFullPacket(["userinfo"], false);
+  assert.deepEqual(r.duplicates.length + r.added.length, 3);
+  assert.deepEqual(ls("store"), [sha(fixed), sha(clean)].sort().map((h) => `${h}.dem`));
+  const stored = readFileSync(path.join(root, "demos", "store", `${sha(fixed)}.dem`));
+  assert.deepEqual(stored, fixed); // header offsets moved with the frame: DEM_FileInfo still where the header says
+  assert.equal(demoIncomplete(path.join(root, "demos", "store", `${sha(fixed)}.dem`)), undefined);
+  assert.deepEqual(ls("inbox"), []);
+  assert.deepEqual(ls(".unpack"), []);
+});
+
+test("with keepOriginals, a bare demo that was fixed is kept in ingested/ exactly as it arrived", async () => {
+  const { root, put, ls } = setup();
+  const bad = demoWithFullPacket(["instancebaseline", "userinfo", "AnimAssetData"]);
+  put("1-bad-1-1.dem", bad);
+  const r = await ingest({ root, keepOriginals: true });
+  assert.equal(r.fixed.length, 1);
+  assert.deepEqual(ls("store"), [`${sha(demoWithFullPacket(["userinfo"], false))}.dem`]);
+  assert.deepEqual(readFileSync(path.join(root, "demos", "ingested", "1-bad-1-1.dem")), bad);
 });
