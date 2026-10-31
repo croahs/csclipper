@@ -1070,8 +1070,9 @@ ingest (`src/ingest/full-packet.ts`).
   besides `userinfo`; in every demo that plays, it carries `userinfo`
   only (all 11 demos in the store on 2026-10-31: the two crashing ones
   are the only ones with the extra tables). Patch 14194, FACEIT demos.
-  The Oct 27 crashes (a7862a5c8f78, 68297716d51f) match the symptom; their
-  files were pruned, so their full packet is unknown.
+  The Oct 27 crashes (a7862a5c8f78, 68297716d51f) have the same tables
+  there (checked on the FACEIT downloads still in Downloads; the store
+  copies had been pruned).
 - **Fix, verified.** A copy of b3abfffd0c66 with those two tables dropped
   from the first full packet only (frame stored uncompressed, header
   offsets moved by the size change, every other byte unchanged; sha256
