@@ -1049,3 +1049,68 @@ and after were not taken). Those are phase 2 tests and phase 5 work.
   from outside (task manager); the window's visibility.
 - Where the game keeps the bytes while downloading.
 - Three of the four hand-over checks (above).
+
+## First full packet crash (2026-10-31)
+
+Not a gate: an investigation of renders that died with 0 takes. Fixed in
+ingest (`src/ingest/full-packet.ts`).
+
+- **Symptom.** Some demos fail every launch with `expected N take
+  folder(s), found 0`. `console.log` ends right after the engine's own
+  seek at playback start (`Demo Skipping: skipping to demo tick 0 …
+  from full packet 1`, before the first scheduled command at tick 96)
+  with `Disconnecting from server: NETWORK_DISCONNECT_HOST_ENDGAME` and
+  `Demo playback finished`; CS2 writes
+  `game/bin/win64/cs2_<date>_accessviolation.mdmp` (null read in
+  `client.dll`, the same offset per build). Every launch does that seek;
+  the same demos crash every time (b3abfffd0c66 and 2c61fd7ff6cb twice
+  each on 2026-10-31, 68297716d51f twice on 2026-10-27).
+- **Cause.** The first `DEM_FullPacket` (tick 1) of those demos carries
+  a string-table snapshot with `instancebaseline` and `AnimAssetData`
+  besides `userinfo`; in every demo that plays, it carries `userinfo`
+  only (all 11 demos in the store on 2026-10-31: the two crashing ones
+  are the only ones with the extra tables). Patch 14194, FACEIT demos.
+  The Oct 27 crashes (a7862a5c8f78, 68297716d51f) have the same tables
+  there (checked on the FACEIT downloads still in Downloads; the store
+  copies had been pruned).
+- **Fix, verified.** A copy of b3abfffd0c66 with those two tables dropped
+  from the first full packet only (frame stored uncompressed, header
+  offsets moved by the size change, every other byte unchanged; sha256
+  c72a3bee5afa…) parses the same in demoparser2 0.42.0 (153 deaths both)
+  and rendered `pnpm clip <copy> --top 1` (R5 4k, 1v2 clutch, clip 185) in
+  one launch, 97 s, no crash dump; frames checked by eye.
+- **Ingest.** Every new demo goes through the same rewrite before it is
+  hashed, so the store holds and the hash names the playable demo; the
+  run prints `first full packet fixed …`. Demos stored before 2026-10-31
+  are not rewritten; one that crashes this way is re-ingested by hand
+  (move the store file to `demos/inbox/`, drop its registry entry and
+  `state/<sha>/`).
+
+## End-of-match state in a chained launch (2026-11-01)
+
+Not a gate: why clip 186 (de_inferno R17, 2026-10-31) showed the
+end-of-match scoreboard for all of its 11 s. Fixed in `planTakes`
+(`src/queue/job.ts`) and `reelTakes` (`src/reel/index.ts`).
+
+- **What happened.** In the chained launch of fdda80c7d5df, take 23 (the
+  kills reel's R17 kill at tick 127612) recorded to 127772 and the chain
+  played on to 127788 before take 24 (the R17 highlight) seeked back to
+  127116 (full packet 126721). The last `round_end` is 127752. Take 23's
+  own frames show play to its end (the scoreboard appears later, with
+  `cs_win_panel_match` at 127945), but take 24 recorded the end-of-match
+  lineup from its first frame: once playback passes the last round end,
+  a seek back, even to a full packet before it, does not undo CS2's
+  end-of-match state.
+- **Rerender.** `pnpm clip --rerender 186` alone in its launch (47 s)
+  recorded the round correctly: both kills, then the VICTORY banner in
+  the tail.
+- **Scope.** Of the 40 chained launches on disk, 7 had one take past the
+  match end, each already the last take; only this one had two.
+- **Rule.** A take passes the match end when `endTick + MARGIN_TICKS +
+  CHAIN_AFTER_TICKS >= last round_end` (`passesMatchEnd`). Such a take
+  runs last. Reel takes end before it when their event does (the R17
+  kills-reel takes now end at 127679 and 127703); a reel keeps at most
+  one take past it. One unit per launch may pass it; another is deferred
+  (no attempt spent, the demo stays open) and the next `pnpm go` gives it
+  its own launch: a match-ending kill with both a highlight and a
+  kills-reel take costs a second launch, in the next run.

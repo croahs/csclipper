@@ -9,11 +9,11 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { loadCrosshairCutoff, loadIdentities, loadReels, loadSettings } from "../config.ts";
 import { weaponName } from "../clip/index.ts";
-import { parseDemo, type Death, type ParsedDemo } from "../parse/demo.ts";
+import { matchEndTick, parseDemo, type Death, type ParsedDemo } from "../parse/demo.ts";
 import { slotOf } from "../parse/clip-facts.ts";
 import { povKills } from "../score/index.ts";
-import { MARGIN_TICKS, SETTLE_TICKS, type TakeSpec } from "../render/controller/index.ts";
-import { FIRST_SCHEDULE, SPECTATOR_PANELS, crosshairSource, lookCfg } from "../render/controller/cfg.ts";
+import { MARGIN_TICKS, SETTLE_TICKS, passesMatchEnd, type TakeSpec } from "../render/controller/index.ts";
+import { CHAIN_AFTER_TICKS, FIRST_SCHEDULE, SPECTATOR_PANELS, crosshairSource, lookCfg } from "../render/controller/cfg.ts";
 import { toolVersions } from "../render/versions.ts";
 import { postReel } from "../post/index.ts";
 import { clipPath, clipTmpPath, ensureClipsDir, publish, readDeleted, readIndex } from "../library/index.ts";
@@ -42,11 +42,17 @@ export function reelTakes(p: ParsedDemo, kind: ReelKind, log: (m: string) => voi
   // The first take's seek must land after FIRST_SCHEDULE, and every take inside the demo.
   const earliest = FIRST_SCHEDULE + SETTLE_TICKS + MARGIN_TICKS + 32;
   const latest = p.demo.playbackTicks - MARGIN_TICKS - 1;
+  // A take stops short of the match end when its event does: past it CS2 shows its end-of-match
+  // screen in every later take of the launch (passesMatchEnd). A take whose event is that late
+  // still passes it; a reel keeps one such take, which the launch runs last.
+  const matchEnd = matchEndTick(p);
+  const beforeEnd = matchEnd - MARGIN_TICKS - CHAIN_AFTER_TICKS - 1; // the last end tick that stays short of it
+  let passing = false;
   const out: ReelTake[] = [];
   for (const d of reelEvents(p, kind)) {
     const round = p.rounds.find((r) => r.n === d.round)!;
     const startTick = Math.max(round.startTick, earliest, Math.round(d.tick - w.beforeS * t));
-    const endTick = Math.min(latest, Math.round(d.tick + w.afterS * t));
+    const endTick = Math.min(latest, Math.round(d.tick + w.afterS * t), d.tick <= beforeEnd ? beforeEnd : Infinity);
     // A death without another player behind it (the POV's own grenade, a fall) is shown from the POV's own view.
     const byOther = kind === "kills" || (d.attacker !== null && d.attacker !== d.victim);
     const steamid = kind === "deaths" ? (byOther ? d.attacker! : d.victim) : d.victim;
@@ -55,6 +61,10 @@ export function reelTakes(p: ParsedDemo, kind: ReelKind, log: (m: string) => voi
     if (!(startTick < d.tick && d.tick <= endTick)) { log(`${kind} reel: R${d.round} tick ${d.tick}: outside what the demo can show; skipped`); continue; }
     const slot = slotOf(p.demo.path, steamid, startTick, endTick);
     if (slot === undefined) { log(`${kind} reel: R${d.round} tick ${d.tick}: ${player || steamid} cannot be spectated over the take; skipped`); continue; }
+    if (passesMatchEnd({ endTick }, matchEnd)) {
+      if (passing) { log(`${kind} reel: R${d.round} tick ${d.tick}: a second take past the match end; skipped`); continue; }
+      passing = true;
+    }
     out.push({ startTick, endTick, slot, tick: d.tick, round: d.round, weapon: weaponName(d.weapon), player, steamid });
   }
   return out;
@@ -92,7 +102,7 @@ export async function prepareReel(demoArg: string, kind: ReelKind, o: Omit<JobIn
   return {
     id, title, demo, demoSha256: p.demo.sha256, map: p.demo.map, o: { ...o, demo },
     takes: takes.map(({ startTick, endTick, slot }) => ({ startTick, endTick, slot })),
-    startTick: takes[0].startTick, endTick: takes[takes.length - 1].endTick,
+    startTick: takes[0].startTick, endTick: takes[takes.length - 1].endTick, matchEndTick: matchEndTick(p),
     renderKey, settings, ids, look, crosshair, debugCommands: [],
     inLibrary: () => !!heldReel(p.demo.sha256, kind),
     finish: (captures, workDir, attempt, fail): JobResult => {

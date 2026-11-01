@@ -198,7 +198,10 @@ again by `pnpm go` or `pnpm clip`, whatever changed (AGENTS.md); `pnpm clip
 --rerender <no|id>` is the one way: it ranks the demo afresh, renders that
 moment now, and when the span rules gave the moment a new id, moves the
 old clip to `library/replaced/` in the same index write that adds the new
-one, which keeps the old one's number (the file moves after that write). A hand-written range re-renders by
+one, which keeps the old one's number (the file moves after that write);
+under the same id the old file moves to `library/replaced/<id>.<ms>.mp4`
+first, since Windows will not replace a file the library page has open.
+A hand-written range re-renders by
 its ticks; a ranked moment takes the ranked spec with its id, else the one
 sharing the most kills with it that shares none with another clip (a tie
 refuses). `--lead <s>` (ranked moments only, 0 to 30 s) builds that clip's spec with an s-second lead-in
@@ -228,7 +231,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `setup.ps1`, `GUIDE.md` | the one-line bootstrap (`irm … | iex`: winget for git and Node, corepack or pnpm's installer for pnpm, clone or fast-forward pull of a checkout of this repo, `pnpm prep`, every exit code checked, nothing installed when winget is missing) and the step-by-step guide it points to |
 | `scoring.json` | ranking weights; tuning and current picks in `docs/scoring-notes.md` |
 | `src/cli/go.ts`, `src/cli/clip.ts`, `src/cli/moments.ts` | the entries |
-| `src/ingest/` | watch folder (`index.ts`), the source contract (`sources.ts`), sources (`sources/folders.ts`, `sources/faceit.ts` with its browser path `sources/faceit-browser.ts`, `sources/valve.ts` with its CS2 fetch launch `sources/valve-fetch.ts`) |
+| `src/ingest/` | watch folder (`index.ts`, with the first-full-packet fix in `full-packet.ts`), the source contract (`sources.ts`), sources (`sources/folders.ts`, `sources/faceit.ts` with its browser path `sources/faceit-browser.ts`, `sources/valve.ts` with its CS2 fetch launch `sources/valve-fetch.ts`) |
 | `test/` | `pnpm test`: FACEIT source against recorded fixtures (`test/fixtures/faceit/`), the Valve source against a fake Web API and fetcher, and the folders source on temp folders; no network, no game launch |
 | `src/queue/` | the batch and its job ledger (`index.ts`); one clip job, shared by `pnpm clip` and the batch (`job.ts`) |
 | `src/library/page.html`, `page.ts` | the library page template and its writer |
@@ -379,7 +382,17 @@ the spectated player (docs/spikes.md, M0.2 open items).
   126.2 MB.
 - **Chained takes.** One launch renders every take of a demo
   (`runJobs`, `src/queue/job.ts`): the jobs the library does not hold and
-  that have no validated capture, in tick order. The main cfg schedules
+  that have no validated capture, in tick order (`planTakes`), except that
+  a take playing past the match end runs last: past the last `round_end`
+  CS2 is in its end-of-match state, which no seek back undoes, so every
+  later take would record the end-of-match screen (clip 186, 2026-10-31).
+  Reel takes stop short of the match end when their event does; one unit
+  per launch may still pass it (the first: highlights before reels); any
+  other is deferred: left out of the launch without spending an attempt,
+  its demo stays open, and the next `pnpm go` renders it in a launch of
+  its own (the batch report lists it). The match end is the last parsed
+  round's end (`matchEndTick`, `src/parse/demo.ts`) for highlights and
+  reels alike. The main cfg schedules
   take 0; each take's record end runs the next take's cfg
   (`croclip_<ms>_t<i>`), which clears every scheduled command, points the
   recorder at its own ffmpeg slot (`croclip<i>`, video `video<i>.mp4`),
@@ -421,7 +434,11 @@ the spectated player (docs/spikes.md, M0.2 open items).
   wildcard, option-like, colon or duplicate names; 20 members, 2 GiB per
   demo, 6 GiB total); `.bz2` through `seek-bzip` (the one added dependency;
   Node has no bzip2), `.gz` / `.zst` through Node's zlib, all bounded while
-  unpacking. The result must start with `PBDEMS2`. Demos are hashed and
+  unpacking. The result must start with `PBDEMS2`. A demo whose first
+  `DEM_FullPacket` carries the `instancebaseline` / `AnimAssetData` tables
+  (CS2 crashes re-applying it at playback start, `docs/spikes.md`) is
+  replaced by a copy without them (`src/ingest/full-packet.ts`; the inbox
+  file itself is never rewritten). Demos are hashed and
   moved to `demos/store/<sha256>.dem`, registered per demo; a store file
   missing from the registry is registered on the next run. The store copy
   is the demo from then on: the archive it arrived in, and a file whose

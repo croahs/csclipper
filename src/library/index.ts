@@ -122,9 +122,15 @@ function publishLocked(tmp: string, entry: ClipEntry, replaces?: string) {
   // A clip made again keeps its number, under the same id or as the clip it replaces.
   const no = old?.no ?? (replaces ? index.clips[replaces]?.no : undefined);
   if (old) { delete index.clips[entry.id]; writeJsonAtomic(INDEX, index); }
+  // A clip made again under its own id: its old file moves to replaced/ first. Windows refuses to
+  // replace a file another program has open (the library page playing it) but lets it be renamed.
+  const dest = clipPath(entry.id);
+  const aside = existsSync(dest) ? path.join(path.dirname(CLIPS_DIR), "replaced", `${entry.id}.${Date.now()}.mp4`) : undefined;
   try {
-    renameSync(tmp, clipPath(entry.id));
+    if (aside) { mkdirSync(path.dirname(aside), { recursive: true }); renameSync(dest, aside); }
+    renameSync(tmp, dest);
   } catch (e) {
+    if (aside && existsSync(aside) && !existsSync(dest)) renameSync(aside, dest);
     if (old) { index.clips[entry.id] = old; writeJsonAtomic(INDEX, index); }
     throw e;
   }

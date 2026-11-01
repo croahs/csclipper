@@ -58,6 +58,7 @@ async function main(): Promise<number> {
     if (r.emptyDemos.length) console.log(`no moment above the threshold: ${r.emptyDemos.join(", ")}`);
     for (const f of r.failed) console.log(`FAILED: ${f}`);
     for (const g of r.givenUp) console.log(`not retried (use --retry-failed): ${g}`);
+    for (const d of r.deferred) console.log(`deferred to the next pnpm go (a launch of its own: it plays past the match end): ${d}`);
     if (r.needsRender.length) console.log(`--repost: ${r.needsRender.length} selected moment(s) have no completed capture; a normal pnpm go renders them`);
     for (const d of r.demoErrors) console.log(`demo FAILED: ${d}`);
     if (r.pageError) console.log(`library page FAILED: ${r.pageError}`);

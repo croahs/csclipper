@@ -22,6 +22,7 @@ import zlib from "node:zlib";
 import { ROOT, STATE_DIR, loadIngest } from "../config.ts";
 import { sha256File } from "../parse/clip-facts.ts";
 import { demoIncomplete } from "../parse/fileinfo.ts";
+import { fixFirstFullPacket } from "./full-packet.ts";
 import { toStored } from "../state-paths.ts";
 
 const require = createRequire(import.meta.url);
@@ -48,8 +49,11 @@ const PARTIAL = /^\.|\.(part|tmp|crdownload)$/i;
 
 export type DemoRecord = { sha256: string; file: string; originalName: string; source: string; bytes: number; addedAt: string };
 export type Registry = Record<string, DemoRecord>;
-/** rewritten: registry entries whose stored path was brought into the relative form (a one-time migration). */
-export type IngestReport = { added: DemoRecord[]; duplicates: string[]; rejected: { name: string; reason: string }[]; waiting: string[]; rewritten: number };
+/**
+ * rewritten: registry entries whose stored path was brought into the relative form (a one-time migration).
+ * fixed: inbox files whose demo was stored without the first-full-packet tables CS2 crashes on, with the tables dropped.
+ */
+export type IngestReport = { added: DemoRecord[]; duplicates: string[]; rejected: { name: string; reason: string }[]; waiting: string[]; rewritten: number; fixed: string[] };
 
 const readRaw = (file: string): Registry => (existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {});
 /**
@@ -214,7 +218,7 @@ export async function ingest(o: IngestOptions = {}): Promise<IngestReport> {
   const d = dirsOf(o.root);
   const keep = o.keepOriginals ?? loadIngest().keepOriginals;
   mkdirSync(d.inbox, { recursive: true });
-  const report: IngestReport = { added: [], duplicates: [], rejected: [], waiting: [], rewritten: normalizeRegistry(d.registry, d.root) };
+  const report: IngestReport = { added: [], duplicates: [], rejected: [], waiting: [], rewritten: normalizeRegistry(d.registry, d.root), fixed: [] };
   const registry = readRegistry(d.registry, d.root);
   await reconcileStore(d, registry, report);
   const list = () => readdirSync(d.inbox).filter((n) => !PARTIAL.test(n) && statSync(path.join(d.inbox, n)).isFile());
@@ -242,13 +246,30 @@ export async function ingest(o: IngestOptions = {}): Promise<IngestReport> {
       const why = demoIncomplete(dem);
       return why ? { dem, ok: false, reason: `incomplete demo (${why})` } : { dem, ok: true, reason: "" };
     });
+    // A demo whose first full packet CS2 crashes on is replaced by a copy without the offending
+    // tables before hashing, so the store holds (and the hash names) the playable demo (full-packet.ts).
+    // Bytes it does not understand leave the demo as it came; a file-system error ends the run.
+    const fixedCopies: string[] = [];
+    const fixed: string[] = [];
+    for (const c of checked) {
+      if (!c.ok) continue;
+      const out = scratch(d);
+      let dropped: string[];
+      try { dropped = fixFirstFullPacket(c.dem, out); } catch (e) { rmSync(out, { force: true }); throw e; }
+      if (!dropped.length) { rmSync(out, { force: true }); continue; }
+      if (c.dem !== file) rmSync(c.dem, { force: true });
+      c.dem = out;
+      fixedCopies.push(out);
+      fixed.push(`${n}: ${dropped.join(", ")}`);
+    }
     const hashed: { dem: string; sha256: string }[] = [];
     for (const c of checked) if (c.ok) hashed.push({ dem: c.dem, sha256: await sha256File(c.dem) });
     if (!existsSync(file) || !sameFile(s1, statSync(file))) {
-      for (const x of dems) if (x !== file) rmSync(x, { force: true }); // scratch copies of a moving target
+      for (const x of [...dems, ...fixedCopies]) if (x !== file) rmSync(x, { force: true }); // scratch copies of a moving target
       report.waiting.push(n);
       continue;
     }
+    report.fixed.push(...fixed);
     for (const c of checked) if (!c.ok) reject(d, c.dem, c.reason, report, c.dem === file ? n : `${n}.dem`);
     for (const { dem, sha256 } of hashed) {
       if (registry[sha256] && existsSync(registry[sha256].file)) {

@@ -56,7 +56,9 @@ export type BatchOptions = {
 };
 export type BatchReport = {
   ingested: number; demos: number; selected: number;
-  rendered: string[]; skipped: string[]; failed: string[]; givenUp: string[]; emptyDemos: string[]; demoErrors: string[];
+  rendered: string[]; skipped: string[]; failed: string[]; givenUp: string[];
+  /** Left out of a launch because another job's take already plays past the match end; the next run renders them. */
+  deferred: string[]; emptyDemos: string[]; demoErrors: string[];
   /** --repost: selected moments without a completed capture (a normal pnpm go renders them). */
   needsRender: string[];
   /** Clips this run added to the library, with their numbers (the standing order's report). */
@@ -75,7 +77,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   // The whole batch refuses up front: nothing is ingested or rendered.
   const refusal = batchRefusal(o);
   if (refusal) throw refusal;
-  const report: BatchReport = { ingested: 0, demos: 0, selected: 0, rendered: [], skipped: [], failed: [], givenUp: [], emptyDemos: [], demoErrors: [], needsRender: [], made: [], settled: 0, autoSettled: [] };
+  const report: BatchReport = { ingested: 0, demos: 0, selected: 0, rendered: [], skipped: [], failed: [], givenUp: [], deferred: [], emptyDemos: [], demoErrors: [], needsRender: [], made: [], settled: 0, autoSettled: [] };
   // --settle-existing: before ingest, so a demo still in the inbox is never settled unprocessed.
   const settled = readSettled();
   if (o.settleExisting) {
@@ -91,6 +93,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   report.ingested = ing.added.length;
   if (ing.rewritten) console.log(`registry: ${ing.rewritten} demo path(s) rewritten relative to the repo (state/demos.json)`);
   for (const a of ing.added) console.log(`ingested ${a.originalName} → ${path.basename(a.file)}`);
+  for (const f of ing.fixed) console.log(`first full packet fixed (CS2 crashes on it as recorded): ${f}`);
   for (const r of ing.rejected) console.log(`rejected ${r.name}: ${r.reason}`);
   for (const d of ing.duplicates) console.log(`duplicate of a registered demo: ${d}`);
   for (const w of ing.waiting) console.log(`still being written, next run: ${w}`);
@@ -246,6 +249,12 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
     }
     clearTimeout(testTimer);
     const record = (r: Ready, res: JobResult) => {
+      // Deferred (planTakes): not launched, so no attempt spent and the entry keeps its earlier status.
+      if (res.status === "deferred") {
+        ledger[r.key] = { ...ledger[r.key], status: r.prevStatus ?? "failed", attempts: r.attempts - 1, lastReasons: res.reasons, updatedAt: new Date().toISOString() };
+        report.deferred.push(res.title);
+        return;
+      }
       ledger[r.key] = { ...ledger[r.key], status: res.status === "failed" ? "failed" : "done", attempts: res.status === "skipped" ? r.attempts - 1 : r.attempts, lastReasons: res.reasons, updatedAt: new Date().toISOString() };
       if (res.status === "done") {
         report.rendered.push(res.title);
@@ -335,5 +344,5 @@ export function batchRefusal(o: Pick<BatchOptions, "dryRun" | "repostOnly" | "se
   if (imageRunning("cs2.exe")) return new Refusal("refusing: CS2 is already running");
   return o.dryRun ? undefined : faceitRefusal();
 }
-/** A moment's outcome is final for settling: rendered, held, or failed with no retry left. */
-export const isFinal = (status: JobResult["status"], attempts: number) => status !== "failed" || attempts >= MAX_ATTEMPTS;
+/** A moment's outcome is final for settling: rendered, held, or failed with no retry left; never deferred. */
+export const isFinal = (status: JobResult["status"], attempts: number) => status !== "deferred" && (status !== "failed" || attempts >= MAX_ATTEMPTS);
