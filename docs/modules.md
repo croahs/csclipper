@@ -198,7 +198,10 @@ again by `pnpm go` or `pnpm clip`, whatever changed (AGENTS.md); `pnpm clip
 --rerender <no|id>` is the one way: it ranks the demo afresh, renders that
 moment now, and when the span rules gave the moment a new id, moves the
 old clip to `library/replaced/` in the same index write that adds the new
-one, which keeps the old one's number (the file moves after that write). A hand-written range re-renders by
+one, which keeps the old one's number (the file moves after that write);
+under the same id the old file moves to `library/replaced/<id>.<ms>.mp4`
+first, since Windows will not replace a file the library page has open.
+A hand-written range re-renders by
 its ticks; a ranked moment takes the ranked spec with its id, else the one
 sharing the most kills with it that shares none with another clip (a tie
 refuses). `--lead <s>` (ranked moments only, 0 to 30 s) builds that clip's spec with an s-second lead-in
