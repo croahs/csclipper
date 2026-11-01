@@ -1085,3 +1085,32 @@ ingest (`src/ingest/full-packet.ts`).
   are not rewritten; one that crashes this way is re-ingested by hand
   (move the store file to `demos/inbox/`, drop its registry entry and
   `state/<sha>/`).
+
+## End-of-match state in a chained launch (2026-11-01)
+
+Not a gate: why clip 186 (de_inferno R17, 2026-10-31) showed the
+end-of-match scoreboard for all of its 11 s. Fixed in `planTakes`
+(`src/queue/job.ts`) and `reelTakes` (`src/reel/index.ts`).
+
+- **What happened.** In the chained launch of fdda80c7d5df, take 23 (the
+  kills reel's R17 kill at tick 127612) recorded to 127772 and the chain
+  played on to 127788 before take 24 (the R17 highlight) seeked back to
+  127116 (full packet 126721). The last `round_end` is 127752. Take 23's
+  own frames show play to its end (the scoreboard appears later, with
+  `cs_win_panel_match` at 127945), but take 24 recorded the end-of-match
+  lineup from its first frame: once playback passes the last round end,
+  a seek back, even to a full packet before it, does not undo CS2's
+  end-of-match state.
+- **Rerender.** `pnpm clip --rerender 186` alone in its launch (47 s)
+  recorded the round correctly: both kills, then the VICTORY banner in
+  the tail.
+- **Scope.** Of the 40 chained launches on disk, 7 had one take past the
+  match end, each already the last take; only this one had two.
+- **Rule.** A take passes the match end when `endTick + MARGIN_TICKS +
+  CHAIN_AFTER_TICKS >= last round_end` (`passesMatchEnd`). Such a take
+  runs last. Reel takes end before it when their event does (the R17
+  kills-reel takes now end at 127679 and 127703); a reel keeps at most
+  one take past it. One unit per launch may pass it; another is deferred
+  (no attempt spent, the demo stays open) and the next `pnpm go` gives it
+  its own launch: a match-ending kill with both a highlight and a
+  kills-reel take costs a second launch, in the next run.

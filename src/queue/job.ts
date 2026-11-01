@@ -7,7 +7,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { Refusal, STATE_DIR, captureSize, loadCrosshairCutoff, loadIdentities, loadSettings, type Identities, type RenderSettings } from "../config.ts";
 import { clipFacts } from "../parse/clip-facts.ts";
-import { MARGIN_TICKS, SETTLE_TICKS, render, validateCapture, type TakeSpec, type TickMapping } from "../render/controller/index.ts";
+import { matchEndTick, parseDemo } from "../parse/demo.ts";
+import { MARGIN_TICKS, SETTLE_TICKS, passesMatchEnd, render, validateCapture, type TakeSpec, type TickMapping } from "../render/controller/index.ts";
 import { SPECTATOR_PANELS, crosshairSource, lookCfg, type CrosshairSource } from "../render/controller/cfg.ts";
 import { RenderLock } from "../render/controller/guards.ts";
 import { toolVersions } from "../render/versions.ts";
@@ -38,7 +39,8 @@ export type JobInput = {
 };
 /** done: rendered now; skipped: already in the library; failed: recorded in state/failures.json. */
 /** captured: rendered and its capture recorded, post still to come (runJobs renderOnly). */
-export type JobResult = { status: "done" | "skipped" | "failed" | "dry" | "captured"; id: string; title: string; reasons?: string[]; cleanupVerified?: boolean; clip?: string };
+/** deferred: left out of this launch (planTakes), no attempt spent; the next run renders it. */
+export type JobResult = { status: "done" | "skipped" | "failed" | "dry" | "captured" | "deferred"; id: string; title: string; reasons?: string[]; cleanupVerified?: boolean; clip?: string };
 
 // Written into an attempt's work dir once its raw capture validated: the
 // render stage is done for this render key, and a retry goes straight to post.
@@ -83,6 +85,7 @@ export type RenderUnit = {
   o: JobInput;
   takes: TakeSpec[];
   startTick: number; endTick: number; // for failure records: the span the unit covers
+  matchEndTick: number; // the demo's last round end (passesMatchEnd)
   renderKey: string;
   settings: RenderSettings; ids: Identities; look: string; crosshair: CrosshairSource; debugCommands: string[];
   inLibrary: () => boolean;
@@ -120,6 +123,9 @@ export async function prepareJob(o: JobInput) {
   const settings = loadSettings();
   const ids = loadIdentities();
   const facts = await clipFacts(demo, ids.pov, startTick, endTick);
+  // Where CS2's end-of-match state starts (passesMatchEnd), by the same rule as the reels. A range in
+  // a demo the parser refuses (pnpm clip on a demo without a match start) has no reels beside it.
+  const matchEnd = await parseDemo(demo, ids.pov).then(matchEndTick, () => facts.playbackTicks);
   // A moment carries the match round (pre-match rounds excluded) and its own title.
   const round = spec ? spec.round : facts.round;
   const id = clipId(facts.demoSha256, round, startTick, endTick);
@@ -152,7 +158,7 @@ export async function prepareJob(o: JobInput) {
     if (!existsSync(clipPath(held.id))) console.log(`library entry ${held.id} has no file; kept as done (pnpm clip --rerender ${held.id} re-makes it)`);
     return true;
   };
-  return { o, demo, spec, debugCommands, startTick, endTick, settings, ids, facts, round, id, title, look, crosshair, cutoff, versions, renderInputs, renderKey, inLibrary, hasCapture };
+  return { o, demo, spec, debugCommands, startTick, endTick, matchEnd, settings, ids, facts, round, id, title, look, crosshair, cutoff, versions, renderInputs, renderKey, inLibrary, hasCapture };
 }
 
 export async function clipJob(o: JobInput): Promise<JobResult> {
@@ -169,11 +175,26 @@ export async function clipJob(o: JobInput): Promise<JobResult> {
 export function highlightUnit(p: PreparedJob): RenderUnit {
   return {
     id: p.id, title: p.title, demo: p.demo, demoSha256: p.facts.demoSha256, map: p.facts.map, o: p.o,
-    takes: [{ startTick: p.startTick, endTick: p.endTick, slot: p.facts.slot }], startTick: p.startTick, endTick: p.endTick,
+    takes: [{ startTick: p.startTick, endTick: p.endTick, slot: p.facts.slot }], startTick: p.startTick, endTick: p.endTick, matchEndTick: p.matchEnd,
     renderKey: p.renderKey, settings: p.settings, ids: p.ids, look: p.look, crosshair: p.crosshair, debugCommands: p.debugCommands,
     inLibrary: p.inLibrary,
     finish: (takes, workDir, attempt, fail) => postAndPublish(p, { renderKey: p.renderKey, ...takes[0], workDir }, attempt, fail),
   };
+}
+
+/**
+ * The launch's takes in render order: tick order (fewest backward seeks), except that a take that
+ * plays past the match end runs last, since after it every take would record the end-of-match
+ * screen (passesMatchEnd). Only one unit may have such a take: the first in unit order (pnpm go puts
+ * highlights before reels); any other is `deferred`: left out of this launch without spending an
+ * attempt, so its demo stays open and the next run renders it.
+ */
+export function planTakes(units: RenderUnit[]): { plan: { u: RenderUnit; k: number; t: TakeSpec }[]; deferred: RenderUnit[] } {
+  const late = (t: TakeSpec, u: RenderUnit) => Number(passesMatchEnd(t, u.matchEndTick));
+  const deferred = units.filter((u) => u.takes.some((t) => late(t, u))).slice(1);
+  const plan = units.filter((u) => !deferred.includes(u)).flatMap((u) => u.takes.map((t, k) => ({ u, k, t })))
+    .sort((x, y) => late(x.t, x.u) - late(y.t, y.u) || x.t.startTick - y.t.startTick);
+  return { plan, deferred };
 }
 
 /** One clip: runJobs with a single job. */
@@ -184,7 +205,7 @@ export async function runJob(prep: PreparedJob): Promise<JobResult> {
 /**
  * Units of ONE demo, with one launch for all of them (chained takes, PLAN.md §5): every
  * take of every unit the library does not hold and that has no validated capture is
- * rendered in tick order (fewest backward seeks); then every unit with all its takes
+ * rendered in planTakes order (tick order, a take past the match end last); then every unit with all its takes
  * captured is finished (posted and published). Results come back in the order of `units`.
  */
 /**
@@ -225,10 +246,17 @@ export async function runJobs(units: RenderUnit[], ro: RunOptions = {}): Promise
       else toRender.push(u);
     }
 
+    // The last word on --repost's no-launch promise, at the launch boundary itself.
+    if (toRender.some((u) => u.o.postOnly)) throw new Refusal("post only: no completed capture for a job; nothing launched");
+    const { plan, deferred } = planTakes(toRender);
+    for (const u of deferred) {
+      const reason = "a take plays past the match end, and another job in this launch already does (CS2 would show its end-of-match screen); the next pnpm go renders it in a launch of its own";
+      console.log(`deferred ${u.title}: ${reason}`);
+      results.set(u.id, { status: "deferred", id: u.id, title: u.title, reasons: [reason] });
+      toRender.splice(toRender.indexOf(u), 1);
+    }
+
     if (toRender.length) {
-      // The last word on --repost's no-launch promise, at the launch boundary itself.
-      if (toRender.some((u) => u.o.postOnly)) throw new Refusal("post only: no completed capture for a job; nothing launched");
-      const plan = toRender.flatMap((u) => u.takes.map((t, k) => ({ u, k, t }))).sort((x, y) => x.t.startTick - y.t.startTick);
       const first = toRender[0];
       const single = toRender.length === 1 && first.takes.length === 1;
       const launchDir = single ? path.join(STATE_DIR, "render", first.id, attempt) : path.join(STATE_DIR, "render", `launch-${first.demoSha256.slice(0, 12)}-${attempt}`);

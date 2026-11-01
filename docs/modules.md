@@ -379,7 +379,17 @@ the spectated player (docs/spikes.md, M0.2 open items).
   126.2 MB.
 - **Chained takes.** One launch renders every take of a demo
   (`runJobs`, `src/queue/job.ts`): the jobs the library does not hold and
-  that have no validated capture, in tick order. The main cfg schedules
+  that have no validated capture, in tick order (`planTakes`), except that
+  a take playing past the match end runs last: past the last `round_end`
+  CS2 is in its end-of-match state, which no seek back undoes, so every
+  later take would record the end-of-match screen (clip 186, 2026-10-31).
+  Reel takes stop short of the match end when their event does; one unit
+  per launch may still pass it (the first: highlights before reels); any
+  other is deferred: left out of the launch without spending an attempt,
+  its demo stays open, and the next `pnpm go` renders it in a launch of
+  its own (the batch report lists it). The match end is the last parsed
+  round's end (`matchEndTick`, `src/parse/demo.ts`) for highlights and
+  reels alike. The main cfg schedules
   take 0; each take's record end runs the next take's cfg
   (`croclip_<ms>_t<i>`), which clears every scheduled command, points the
   recorder at its own ffmpeg slot (`croclip<i>`, video `video<i>.mp4`),

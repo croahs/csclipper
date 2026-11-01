@@ -22,7 +22,7 @@ import { Refusal, captureSize, type Identities, type RenderSettings } from "../.
 import { TICKRATE } from "../../parse/clip-facts.ts";
 import { countFrames, decodeProblems, probe } from "../../post/ffmpeg.ts";
 import { FINISHED_RE, STARTED_RE, hlaeArgs, hlaeCapture, takeOutputs } from "../capture/hlae.ts";
-import { jobCfgs, type CrosshairSource } from "./cfg.ts";
+import { CHAIN_AFTER_TICKS, jobCfgs, type CrosshairSource } from "./cfg.ts";
 import { RenderLock, guard } from "./guards.ts";
 import { cleanupUnverified, consoleLogPath, launchLog, onEmergency, ownedCleanup } from "./launch.ts";
 import { OwnedTree, isRunning } from "./processes.ts";
@@ -37,6 +37,14 @@ const HEARTBEAT_MS = 5000;
 
 /** One take: the requested ticks and the spectator slot to watch them from. */
 export type TakeSpec = { startTick: number; endTick: number; slot: number };
+
+/**
+ * Playback passes the match end (the last round_end) during this take: it plays on to the record
+ * end and, in a chain, CHAIN_AFTER_TICKS more before the next take seeks. Past that tick CS2 is in
+ * its end-of-match state, which no seek back undoes: every later take of the launch records the
+ * end-of-match screen (clip 186, 2026-10-31; docs/spikes.md). So such a take runs last.
+ */
+export const passesMatchEnd = (t: { endTick: number }, matchEndTick: number) => t.endTick + MARGIN_TICKS + CHAIN_AFTER_TICKS >= matchEndTick;
 
 export type RenderJob = {
   title: string;

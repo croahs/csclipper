@@ -207,6 +207,12 @@ function extract(demo: string, sha256: string, pov: string, key: string): Parsed
   };
 }
 
+/**
+ * The last match round's end: CS2's end-of-match state starts there (passesMatchEnd); a demo
+ * without rounds has no match end before its last tick. One rule for highlights and reels.
+ */
+export const matchEndTick = (p: ParsedDemo) => (p.rounds.length ? Math.max(...p.rounds.map((r) => r.endTick)) : p.demo.playbackTicks);
+
 /** Parse once per demo, cached; a cached file counts only if its key matches. */
 export async function parseDemo(demo: string, pov: string): Promise<ParsedDemo> {
   const sha256 = await sha256File(demo);
