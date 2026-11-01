@@ -200,6 +200,8 @@
       b.append(left, el("span", "count num", String(count)));
       b.addEventListener("click", () => {
         state[key] = state[key] === value ? null : value;
+        // Reels have no score: picking deaths or kills sorts by newest match, anything else by score.
+        if (key === "kind") $("sort").value = state.kind === "deaths" || state.kind === "kills" ? "match" : "score";
         render();
         // The facet buttons were rebuilt: keep keyboard focus on the one just used.
         const again = [...document.querySelectorAll("[data-facet]")].find((x) => x.dataset.facet === key + ":" + value);

@@ -495,7 +495,9 @@ re-made. Only a guard refusal gives
   window allows at 16:9, with sound (browsers allow sound only after a
   click or key, so the first clip on load waits); a compact list of the
   category's clips (number, title, score, length) with the playing one
-  marked; left/right or j/k step through it. Controls reset on every
+  marked; left/right or j/k step through it. Sort defaults to highest
+  score; picking the deaths or kills kind switches it to newest match
+  (reels carry no score), and the select still overrides it. Controls reset on every
   load, so a browser restoring old form values cannot leave it looking
   empty. "Newest clips" at the top of the sidebar clears the filters and
   sorts by date added; the playing clip is marked by a tint and a bold
