@@ -131,7 +131,8 @@ Score per moment from, first ranking only:
 | Signal | Why it matters |
 |---|---|
 | kill count in cluster (2k…5k) | multikills are the backbone |
-| time between kills | fast 3k > slow 3k |
+| time between kills | fast 3k > slow 3k; decided by Peder 2026-11-02: weighted up and sliding, every second between kills counts (1 s more than 2 s, ... 7 s more than 8 s), flat from 8 s, not a step at a cutoff |
+| collateral (one shot, several kills: POV gun kills on the same tick, shotgun blasts included) | decided by Peder 2026-11-02: a flat bonus per extra kill, on par with a third kill's tempo |
 | clutch state (1vX, won) | highest-value single signal, but scaled by X and by kills in the clutch: a 1v1 with one kill is small, 1v3+ is big (recalibrated 2026-10-15 after clip 90) |
 | headshot, wallbang, no-scope, through smoke, while blind | flavour, straight from the death event |
 | weapon class (pistol/Deagle/scout vs rifle vs AWP) | difficulty |

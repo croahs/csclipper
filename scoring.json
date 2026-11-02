@@ -14,7 +14,8 @@
     "2026-10-15 two flick tiers (Peder): 15-45 degrees keeps flick 1.5; 45 degrees or more is a big flick, bigFlick 2.5 on that kill. On the 29 stored demos no gun kill reaches 45 (max 35 of 531), so nothing moves today",
     "2026-10-15 round outcome as a multiplier (Peder): the flat roundWon +8 is replaced by x1.1 for a won round and x0.9 for a lost one on the round's whole score, a light weight for impact; the clutch won bonus stays separate",
     "2026-10-15 facing per kill (Peder): the victim looking within 60 degrees of him at the kill tick multiplies that kill's share by 1.1, a kill from behind by 0.9 (few bullets in the back is easy); unknown angles count 1",
-    "2026-10-15 hand-pick fixes (Peder: 63 and 29 > 90, 13 > 84/105): clutch scales with enemies and with the share killed (1v1 with one kill 10, 1v2 30, 1v3 50, ...; lost x0.3); the low-HP penalty skips a victim his own damage brought low and is capped at 8 per moment; economy multiplies only the kill points; new direction spread bonus (yaw turned between the tightest run's kills, 4 points above 60 degrees, +2 per 45 degrees, at most 10)"
+    "2026-10-15 hand-pick fixes (Peder: 63 and 29 > 90, 13 > 84/105): clutch scales with enemies and with the share killed (1v1 with one kill 10, 1v2 30, 1v3 50, ...; lost x0.3); the low-HP penalty skips a victim his own damage brought low and is capped at 8 per moment; economy multiplies only the kill points; new direction spread bonus (yaw turned between the tightest run's kills, 4 points above 60 degrees, +2 per 45 degrees, at most 10)",
+    "2026-11-02 tempo slides and collats count (Peder: \"vekte tempo høyere, samme med collats\"; \"1s er en boost, 2s en annen ... flate ut på 8\"): speed and tightness are replaced by one pace curve over the average seconds between the fastest run's kills, (1 - gap/8)^1.5, 0 from 8 s: speed speedMax 24 times it, and 35 times it per kill past the second (was a flat 15 inside a 6 s window, and speed 0 from 3 s); new collat part, 30 per extra kill on the same tick, shotgun blasts included (1 real collat in 1388 kills on the 74 stored demos). On those demos 19 more 2ks reach 40 (239 -> 258), none drop; hand-pick 86 > 42 now holds, 13 > 105 still does not (72.5 vs 75.1)"
   ],
   "killBase": {
     "1": 10,
@@ -23,16 +24,12 @@
     "4": 80,
     "5": 110
   },
-  "speed": {
-    "_note": "scored on the tightest run (the best tightness window), not the whole round",
-    "referenceSeconds": 3,
-    "pointsPerSecondFaster": 4,
-    "max": 12
-  },
-  "tightness": {
-    "_note": "kills in quick succession: each kill beyond the second inside the best windowSeconds window; a 2k's pace is already in speed",
-    "windowSeconds": 6,
-    "perKillBeyondTwo": 15
+  "pace": {
+    "_note": "the fastest run (consecutive kills earning the most pace points): factor (1 - average seconds between its kills / flatSeconds)^curve, 0 from flatSeconds; speed = speedMax x factor for 2+ kills, tight = perKillBeyondTwo x factor per kill past the second",
+    "flatSeconds": 8,
+    "curve": 1.5,
+    "speedMax": 24,
+    "perKillBeyondTwo": 35
   },
   "spread": {
     "_note": "direction spread: the yaw he turned between consecutive kills of the tightest run, summed; above minDegrees it earns points, a kill turned through several directions",
@@ -57,6 +54,10 @@
     "wallbang": 8,
     "thrusmoke": 8,
     "attackerblind": 8
+  },
+  "collat": {
+    "_note": "collateral: his gun kills on the same tick are one shot (a shotgun blast counts); each past the first earns perExtraKill",
+    "perExtraKill": 30
   },
   "style": {
     "_note": "per-kill multipliers on that kill's share of the kill base; they stack on the kill (a one-tap flick is 1.5 x 1.5 = 2.25). A flick of bigFlickMinDegrees or more counts bigFlick instead of flick. A kill with none is 1.0, so plain rounds keep their scores",

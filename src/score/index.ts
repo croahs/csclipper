@@ -1,8 +1,8 @@
 // Scoring (PLAN.md §3): one moment per round with all of the POV's kills in it,
-// scored with the weights in scoring.json: kill count, pace (the tightest run
-// inside the round), clutch, outcome, flags and weapon as the backbone, and
+// scored with the weights in scoring.json: kill count, pace (the fastest run
+// inside the round, on a sliding curve), clutch, outcome, flags and weapon as the backbone, and
 // per-kill style multipliers for one-bullet kills, flicks, no-scopes and
-// airborne kills. Trades and "saved a teammate" are deferred.
+// airborne kills, and collaterals (one bullet, several kills). Trades and "saved a teammate" are deferred.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { ROOT } from "../config.ts";
@@ -10,11 +10,11 @@ import { NOT_A_GUN, type Death, type ParsedDemo, type Round, type Team } from ".
 
 export type Weights = {
   killBase: Record<string, number>;
-  speed: { referenceSeconds: number; pointsPerSecondFaster: number; max: number };
-  tightness: { windowSeconds: number; perKillBeyondTwo: number };
+  pace: { flatSeconds: number; curve: number; speedMax: number; perKillBeyondTwo: number };
   clutch: { byEnemies: Record<string, number>; lostFactor: number };
   spread: { minDegrees: number; points: number; pointsPer45Degrees: number; max: number };
   flags: { headshot: number; wallbang: number; thrusmoke: number; attackerblind: number };
+  collat: { perExtraKill: number };
   style: { oneBulletKill: number; flick: number; flickMinDegrees: number; bigFlick: number; bigFlickMinDegrees: number; noscope: number; airborne: number; facing: number; behind: number; facingMaxDegrees: number };
   economy: { perLnRatio: number; min: number; max: number; pistolRounds: number[] };
   weaponMultiplier: Record<WeaponClass, number>;
@@ -91,15 +91,22 @@ export function povKills(p: ParsedDemo, r: Round): Death[] {
 
 const ENGAGE_S = 5; // the first kill's bullets count from this long before it
 
-/** The most kills inside any `windowS` window (ties: the shortest such run), and that run's kills. */
-export function tightestRun(kills: Death[], windowS: number, tickrate: number): Death[] {
-  let best: Death[] = kills.slice(0, 1);
-  for (let i = 0; i < kills.length; i++) {
-    let j = i;
-    while (j + 1 < kills.length && kills[j + 1].tick - kills[i].tick <= windowS * tickrate) j++;
-    const span = (r: Death[]) => r[r.length - 1].tick - r[0].tick;
-    const run = kills.slice(i, j + 1);
-    if (run.length > best.length || (run.length === best.length && span(run) < span(best))) best = run;
+/** Pace factor by the average seconds between kills: 1 at 0 s, sliding down to 0 at flatSeconds and flat after. */
+export const paceFactor = (avgGapS: number, w: Weights) => Math.max(0, 1 - avgGapS / w.pace.flatSeconds) ** w.pace.curve;
+
+/** Pace points of a run of kills: speed for every run of 2+, and perKillBeyondTwo per kill past the second, both times the pace factor. */
+function pacePoints(run: Death[], w: Weights, tickrate: number): { speed: number; tight: number } {
+  if (run.length < 2) return { speed: 0, tight: 0 };
+  const f = paceFactor((run[run.length - 1].tick - run[0].tick) / (run.length - 1) / tickrate, w);
+  return { speed: w.pace.speedMax * f, tight: (run.length - 2) * w.pace.perKillBeyondTwo * f };
+}
+
+/** The consecutive kills that earn the most pace points (ties: the longer run); a single kill when no run earns any. */
+export function fastestRun(kills: Death[], w: Weights, tickrate: number): Death[] {
+  let best = kills.slice(0, 1), bestPts = 0;
+  for (let i = 0; i < kills.length; i++) for (let j = i + 1; j < kills.length; j++) {
+    const run = kills.slice(i, j + 1), pts = pacePoints(run, w, tickrate);
+    if (pts.speed + pts.tight > bestPts || (pts.speed + pts.tight === bestPts && bestPts > 0 && run.length > best.length)) { best = run; bestPts = pts.speed + pts.tight; }
   }
   return best;
 }
@@ -114,13 +121,12 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
   for (const k of kills) counts.set(weaponClass(k.weapon), (counts.get(weaponClass(k.weapon)) ?? 0) + 1);
   const cls = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "other";
   b.kills = Math.round(base * (w.weaponMultiplier[cls] ?? 1) * 10) / 10;
-  // Pace: kills in quick succession are worth more than the same kills spread over the round.
-  const run = tightestRun(kills, w.tightness.windowSeconds, tickrate);
-  if (run.length >= 2) {
-    const avgGap = (run[run.length - 1].tick - run[0].tick) / (run.length - 1) / tickrate;
-    b.speed = Math.round(Math.min(w.speed.max, Math.max(0, (w.speed.referenceSeconds - avgGap) * w.speed.pointsPerSecondFaster)) * 10) / 10;
-    if (run.length >= 3) b.tight = (run.length - 2) * w.tightness.perKillBeyondTwo;
-  }
+  // Pace: kills in quick succession are worth more than the same kills spread over the round, sliding
+  // with the seconds between them (Peder, 2026-11-02: every second counts, flat from 8 s).
+  const run = fastestRun(kills, w, tickrate);
+  const pace = pacePoints(run, w, tickrate);
+  if (pace.speed > 0) b.speed = Math.round(pace.speed * 10) / 10;
+  if (pace.tight > 0) b.tight = Math.round(pace.tight * 10) / 10;
   // Clutch: by enemies alive at its start, times the share of them the POV killed in it (at least half).
   if (clutch) {
     const inClutch = kills.filter((k) => k.tick >= clutch.fromTick).length;
@@ -130,6 +136,12 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
   }
   const f = w.flags;
   b.flags = kills.reduce((s, k) => s + (k.headshot ? f.headshot : 0) + (k.penetrated ? f.wallbang : 0) + (k.thrusmoke ? f.thrusmoke : 0) + (k.attackerblind ? f.attackerblind : 0), 0);
+  // Collateral: gun kills on the same tick are one shot; each kill past the first earns perExtraKill.
+  // A shotgun blast killing two counts too (Peder, 2026-11-02).
+  const gunKillsByTick = new Map<number, number>();
+  for (const k of kills) if (!NOT_A_GUN.test(k.weapon)) gunKillsByTick.set(k.tick, (gunKillsByTick.get(k.tick) ?? 0) + 1);
+  const collats = [...gunKillsByTick.values()].reduce((a, n) => a + n - 1, 0);
+  if (collats) b.collat = collats * w.collat.perExtraKill;
   // Style: per-kill multipliers on that kill's share of the kill base (one-bullet, flick, no-scope,
   // airborne), stacking on the kill. A kill with none counts 1, so a plain round scores as before.
   const st = w.style;
@@ -162,7 +174,7 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
   };
   const low = kills.filter((k) => k.victimHpBefore <= w.lowHp.threshold && broughtLowByOthers(k)).length;
   if (low) b.lowHp = -Math.min(w.lowHp.maxPerMoment, low * w.lowHp.penaltyPerKill);
-  // Direction spread: the yaw the POV turned between consecutive kills of the tightest run.
+  // Direction spread: the yaw the POV turned between consecutive kills of the fastest run.
   if (run.length >= 2) {
     // Between consecutive known yaws: a kill without one (a victim with no SteamID) is bridged over.
     const yaws = run.map((k) => k.povYaw).filter((y): y is number => y !== undefined);

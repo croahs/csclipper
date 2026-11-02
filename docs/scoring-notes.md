@@ -31,11 +31,12 @@ the round end do not count. A moment needs at least one POV kill.
 | Part | From `scoring.json` | Meaning |
 |---|---|---|
 | kills | `killBase[n]` × `weaponMultiplier[class]` | 1k…5k, times the class most of its kills used (pistol, deagle, scout, smg, shotgun, rifle, awp, knife) |
-| speed | `speed` | on the tightest run (below): (referenceSeconds − its average seconds between kills) × pointsPerSecondFaster, 0…max |
-| tight | `tightness` | each kill beyond the second inside the best `windowSeconds` (6 s) window (ties: the fastest) earns `perKillBeyondTwo`; a 2k's pace is already in `speed`. A 3k in 4 s gets about 19 more than a 3k over 40 s, and both stay one clip |
-| spread | `spread` | direction spread: the yaw he turned between consecutive kills of the tightest run (his view the tick before each kill), summed; above `minDegrees` 60 it earns `points` 4 plus `pointsPer45Degrees` 2 per 45° more, at most `max` 10: kills through several directions |
+| speed | `pace` | on the fastest run (the consecutive kills that earn the most pace points): `speedMax` 24 × the pace factor (1 − average seconds between its kills / `flatSeconds` 8)^`curve` 1.5, so every second slides it down (1 s 19.6, 2 s 15.6, 3 s 11.9, 4 s 8.5, 5 s 5.5, 6 s 3.0, 7 s 1.1) and it is 0 from 8 s (Peder, 2026-11-02) |
+| tight | `pace` | each kill past the second in that run earns `perKillBeyondTwo` 35 × the same factor; a 2k's pace is in `speed` only. A 3k in 4 s gets about 35 more than a 3k over 40 s (lost round), and both stay one clip |
+| spread | `spread` | direction spread: the yaw he turned between consecutive kills of the fastest run (his view the tick before each kill), summed; above `minDegrees` 60 it earns `points` 4 plus `pointsPer45Degrees` 2 per 45° more, at most `max` 10: kills through several directions |
 | clutch | `clutch` | by the enemies alive at its start (`byEnemies`: 1v1 10, 1v2 30, 1v3 50, 1v4 70, 1v5 90), times the share of them he killed in it (at least half), times `lostFactor` 0.3 when lost: a 1v1 won with one kill is small (Peder, 2026-10-15) |
 | flags | `flags` | per kill: headshot, wallbang, through smoke, while blind |
+| collat | `collat` | a collateral: gun kills on the same tick are one shot (a shotgun blast killing two counts too); each past the first earns `perExtraKill` 30. Rare: 1 in 1388 kills on the 74 stored demos (2026-11-02) |
 | style | `style` | per-kill multipliers on that kill's share of the kill base, stacking on the kill: a one-bullet kill (POV gun `weapon_fire` count since the previous kill, or 5 s before the first, is 1) 1.5, a flick (the largest POV yaw turn from 100–200 ms before the kill gunshot to the shot, wrapped, over `flickMinDegrees` 15°) 1.5, or a big flick (`bigFlickMinDegrees` 45° or more) `bigFlick` 2.5 instead, a no-scope 1.4, an airborne kill (`attackerinair`) 1.3, and facing: the victim's view within `facingMaxDegrees` 60° of the line to him the tick before the kill 1.1, otherwise (from behind) 0.9; an unknown angle counts 1. `style` in the breakdown is what they add: the kill part times (average factor − 1). Two one-tap flicks in a 2k score about double a plain 2k; a single kill with every style stays below a strong 3k (about 41 with a normal flick, 68 with a big one, against about 74 for a quick 3k; a spread-out 3k at 55 can be passed by a big-flick 1k); a kill with none counts 1. Facing applies to almost every kill (797 of 900 face him), so a plain kill now gains about 10 % and one from behind loses 10 %; with the outcome multiplier replacing the flat +8 the calibration anchor moved (a plain won 2k from about 38 to about 36, a plain lost 2k from 30 to about 30) and is not re-tuned: Peder's call |
 | outcome | `roundOutcome` | the round's whole score (after economy) times `won` 1.1 or `lost` 0.9: a light weight for the round's result; a won clutch is valued in `clutch` on its own |
 | lowHp | `lowHp` | − penaltyPerKill for each victim at or below threshold HP before the killing hit whom others (teammates, the world) damaged at least as much as he did before the kill (his own spraydown is never "low HP"), at most `maxPerMoment` 8 |
@@ -55,7 +56,7 @@ flick; the 15° threshold keeps most of them out, and a flick multiplies only it
    re-run takes seconds.
 3. Typical levers: a clutch that ranks above a cleaner multikill → lower
    `clutch.perEnemy` or raise `lowHp.penaltyPerKill`; spread-out rounds
-   ranking too close to tight ones → raise `tightness.perKillInWindow`;
+   ranking too close to tight ones → raise `pace.speedMax` / `pace.perKillBeyondTwo`, or lower `pace.curve` for more weight on slower runs;
    pistol rounds too high → lower `weaponMultiplier.pistol`.
 
 Clip boundaries (`src/clip/index.ts`), not weights: start = first
@@ -96,8 +97,11 @@ the scale is held to it: the moments that scored about 40 in the
 46-moment batch of 2026-10-15 (plain 2ks such as clip 25, de_ancient R9 at
 40.8, and clip 48, de_dust2 R17 at 44.8) must score about 40 again. A first
 per-round version gave every 2k a flat +18 for "tightness" and lifted 116
-moments over 40; tightness now pays only from the third kill in the 6 s
-window, and those 2ks score exactly what they did. Moments that gained
+moments over 40; tightness then paid only from the third kill in a 6 s
+window, and those 2ks scored exactly what they did. Since the sliding pace
+curve (2026-11-02) a quick 2k gains up to about 20 for pace, so the anchor
+moves: clip 25 33 → 46, clip 48 42 → 55; 258 of 835 moments on the 74
+stored demos clear 40 (239 before). Moments that gained
 kills under the per-round rule rise for that reason (e.g. clip 41, a 2k
 that is a 3k round, 40 to 67). With it, 98 moments across the 29 stored
 demos clear 40.

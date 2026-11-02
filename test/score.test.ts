@@ -1,7 +1,7 @@
 // Per-round scoring (pace from the tightest run, the light signals' cap) and the batch selection.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { economyFactor, loadWeights, moments, scoreKills, tightestRun } from "../src/score/index.ts";
+import { economyFactor, fastestRun, loadWeights, moments, paceFactor, scoreKills } from "../src/score/index.ts";
 import type { Death, ParsedDemo } from "../src/parse/demo.ts";
 import { pickMoments } from "../src/config.ts";
 
@@ -17,11 +17,21 @@ const demo = (o: { fires?: number[]; flicks?: { killTick: number; yawDegrees: nu
   flicks: (o.flicks ?? []).map((f) => ({ ...f, shotTick: f.killTick })),
 }) as unknown as ParsedDemo;
 
-test("tightest run: the most kills inside the window", () => {
+test("fastest run: the consecutive kills earning the most pace", () => {
   const ks = [kill(0), kill(1000), kill(1200), kill(1300), kill(5000)];
-  assert.deepEqual(tightestRun(ks, 6, 64).map((k) => k.tick), [1000, 1200, 1300]);
-  assert.deepEqual(tightestRun([kill(0), kill(1000)], 6, 64).map((k) => k.tick), [0], "nothing within 6 s: one kill");
-  assert.deepEqual(tightestRun([kill(0), kill(384), kill(1920), kill(1926)], 6, 64).map((k) => k.tick), [1920, 1926], "equal size: the faster pair");
+  assert.deepEqual(fastestRun(ks, w, 64).map((k) => k.tick), [1000, 1200, 1300]);
+  assert.deepEqual(fastestRun([kill(0), kill(1000)], w, 64).map((k) => k.tick), [0], "15.6 s apart: no pace, one kill");
+  assert.deepEqual(fastestRun([kill(0), kill(384), kill(1920), kill(1926)], w, 64).map((k) => k.tick), [1920, 1926], "the faster pair");
+});
+
+test("pace slides with every second and is flat from flatSeconds", () => {
+  const pts = [1, 2, 3, 4, 5, 6, 7, 8, 12].map((s) => paceFactor(s, w));
+  for (let i = 1; i < 8; i++) assert.ok(pts[i] < pts[i - 1], `${i + 1} s below ${i} s`);
+  assert.equal(pts[7], 0);
+  assert.equal(pts[8], 0);
+  const at = (gapS: number) => scoreKills(demo(), [kill(0), kill(gapS * 64)], undefined, false, w).breakdown.speed;
+  assert.ok(at(5)! > at(6)! && at(6)! > at(7)!, "5 s, 6 s and 7 s each score differently");
+  assert.equal(at(8), undefined);
 });
 
 test("all kills of a round are one moment, however far apart", () => {
@@ -40,9 +50,10 @@ test("a 3k in 4 s beats a 3k over 40 s by a visible margin; a quick 2k gains onl
   const fast = scoreKills(demo(), [kill(0), kill(128), kill(256)], undefined, false, w).score;
   const slow = scoreKills(demo(), [kill(0), kill(1280), kill(2560)], undefined, false, w).score;
   assert.ok(fast - slow >= 15, `fast ${fast} vs slow ${slow}`);
-  // The anchored scale (scoring-notes, Calibration anchor): 15 for the third kill in the window, nothing for a 2k.
-  assert.equal(scoreKills(demo(), [kill(0), kill(128), kill(256)], undefined, false, w).breakdown.tight, 15);
-  assert.equal(scoreKills(demo(), [kill(0), kill(64), kill(128), kill(192)], undefined, false, w).breakdown.tight, 30);
+  // perKillBeyondTwo times the pace factor for each kill past the second, nothing for a 2k.
+  const tight = (n: number) => Math.round(n * w.pace.perKillBeyondTwo * paceFactor(2, w) * 10) / 10;
+  assert.equal(scoreKills(demo(), [kill(0), kill(128), kill(256)], undefined, false, w).breakdown.tight, tight(1));
+  assert.equal(scoreKills(demo(), [kill(0), kill(128), kill(256), kill(384)], undefined, false, w).breakdown.tight, tight(2));
   assert.equal(scoreKills(demo(), [kill(0), kill(128)], undefined, false, w).breakdown.tight, undefined);
 });
 
@@ -77,6 +88,15 @@ test("flick tiers: 15-45 degrees the flick factor, 45 or more the big-flick fact
   assert.equal(at(30), Math.round(share * (w.style.flick - 1) * 10) / 10);
   assert.equal(at(45), Math.round(share * (w.style.bigFlick - 1) * 10) / 10);
   assert.equal(at(90), at(45));
+});
+
+test("collat: gun kills on the same tick count once per extra kill, shotgun blasts too; a grenade on the same tick does not", () => {
+  assert.equal(scoreKills(demo(), [kill(100, { weapon: "awp" }), kill(100, { weapon: "awp", victim: "v2" })], undefined, false, w).breakdown.collat, w.collat.perExtraKill);
+  assert.equal(scoreKills(demo(), [kill(100), kill(100, { victim: "v2" }), kill(100, { victim: "v3" })], undefined, false, w).breakdown.collat, 2 * w.collat.perExtraKill);
+  assert.equal(scoreKills(demo(), [kill(100), kill(100, { victim: "v2", weapon: "hegrenade" })], undefined, false, w).breakdown.collat, undefined);
+  assert.equal(scoreKills(demo(), [kill(100), kill(101, { victim: "v2" })], undefined, false, w).breakdown.collat, undefined, "a tick apart: two bullets");
+  assert.equal(scoreKills(demo(), [kill(100, { weapon: "nova" }), kill(100, { weapon: "nova", victim: "v2" })], undefined, false, w).breakdown.collat, w.collat.perExtraKill, "one shotgun blast");
+  assert.equal(scoreKills(demo(), [kill(100, { weapon: "nova" }), kill(100, { weapon: "inferno", victim: "v2" }), kill(100, { weapon: "nova", victim: "v3" })], undefined, false, w).breakdown.collat, w.collat.perExtraKill, "a fire kill in between");
 });
 
 test("one-bullet kills count guns only; flicks below the threshold multiply nothing", () => {
