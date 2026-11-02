@@ -6,7 +6,7 @@ import { existsSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { captureSize, loadEncoder, type RenderSettings } from "../config.ts";
 import type { TickMapping } from "../render/controller/index.ts";
-import { decodeProblems, encodeFinal, meanLuma, probe } from "./ffmpeg.ts";
+import { decodeProblems, encodeFinal, meanLuma, probe, type FinalEncoder } from "./ffmpeg.ts";
 
 /**
  * Where recording really starts, against the scheduled record-start tick, in
@@ -83,14 +83,14 @@ export function segments(m: TickMapping, startTick: number, endTick: number, win
   });
 }
 
-export type PostResult = { status: "ok" | "failed"; reasons: string[]; plan?: TrimPlan; segments?: Segment[]; encoder?: "x264" | "nvenc" };
+export type PostResult = { status: "ok" | "failed"; reasons: string[]; plan?: TrimPlan; segments?: Segment[]; encoder?: FinalEncoder };
 
 /** Writes outTmp; on any failure the temp file is removed. windows: the spec's action windows, if any. */
 export function post(video: string, audio: string, m: TickMapping, startTick: number, endTick: number, s: RenderSettings, outTmp: string, windows?: { startTick: number; endTick: number }[]): PostResult {
   const reasons: string[] = [];
   let plan: TrimPlan | undefined;
   let segs: Segment[] | undefined;
-  let encoder: "x264" | "nvenc" | undefined;
+  let encoder: FinalEncoder | undefined;
   try {
     segs = segments(m, startTick, endTick, windows);
     const d = segs.reduce((n, x) => n + x.outSeconds, 0);
@@ -147,7 +147,7 @@ const filterPath = (p: string) => `'${p.replaceAll("\\", "/").replace(/^([A-Za-z
 export function postReel(takes: ReelTakeInput[], s: RenderSettings, workDir: string, outTmp: string): PostResult {
   const reasons: string[] = [];
   let plan: TrimPlan | undefined;
-  let encoder: "x264" | "nvenc" | undefined;
+  let encoder: FinalEncoder | undefined;
   try {
     if (!takes.length) throw new Error("a reel needs at least one take");
     const cap = captureSize(s);

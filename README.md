@@ -20,7 +20,7 @@ version.
 - A second Steam account to render on. [Why](#why-a-second-steam-account).
 - Node 22 or newer, pnpm and git. (Node from nodejs.org; then
   `corepack enable` gives you pnpm.)
-- An NVIDIA GPU makes the final encode faster; without one it uses x264.
+- The final encode is H.265 (x265) on the CPU, about 5x slower than real time. It runs in the background behind the CS2 launches, which never wait for it, so the game is done early and the last encodes finish afterwards.
 
 ## Set up
 

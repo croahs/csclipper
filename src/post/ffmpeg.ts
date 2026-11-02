@@ -92,12 +92,17 @@ export function nvencFfmpeg(): string | null {
   return nvencBin;
 }
 
+export type FinalEncoder = "x264" | "nvenc" | "x265";
+
 /**
  * Video encoder arguments for the final clip. NVENC -cq (CRF + 4) at preset p5 matches x264 CRF 18
  * in SSIM against the raw capture (0.9773 vs 0.9769 on a 15 s segment), at 2.3x the speed and
- * about 16 % more size (docs/modules.md).
+ * about 16 % more size. x265 (H.265) CRF 22 at preset slow is about as good as that NVENC encode
+ * (VMAF 98.7 against 99.0-99.5) at 24-54 % less size, and about 5x slower than real time
+ * (docs/modules.md). hvc1 so players that read MP4 (Windows, QuickTime) play it.
  */
-export function videoArgs(encoder: "x264" | "nvenc", crf: number): string[] {
+export function videoArgs(encoder: FinalEncoder, crf: number): string[] {
+  if (encoder === "x265") return ["-c:v", "libx265", "-preset", "slow", "-crf", String(crf), "-x265-params", "log-level=error", "-tag:v", "hvc1", "-pix_fmt", "yuv420p"];
   return encoder === "nvenc"
     ? ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", String(crf + 4), "-b:v", "0", "-pix_fmt", "yuv420p"]
     : ["-c:v", "libx264", "-preset", "slow", "-crf", String(crf), "-pix_fmt", "yuv420p"];
@@ -106,11 +111,12 @@ export function videoArgs(encoder: "x264" | "nvenc", crf: number): string[] {
 /**
  * Runs a final encode: `build(videoArgs)` gives the whole FFmpeg argument list. With "auto",
  * NVENC whenever a probe encode succeeds on either FFmpeg, and x264 if the real encode then fails
- * (session limit, driver hiccup; logged). Returns the result and the encoder that produced the file.
+ * (session limit, driver hiccup; logged); "x265" and "x264" run on the post FFmpeg alone.
+ * Returns the result and the encoder that produced the file.
  */
-export function encodeFinal(encoder: "auto" | "x264" | "nvenc", crf: number, build: (video: string[]) => string[]): { status: number | null; stderr: string; encoder: "x264" | "nvenc" } {
-  const nv = encoder === "x264" ? null : nvencFfmpeg();
-  const order: ("x264" | "nvenc")[] = encoder === "x264" ? ["x264"] : encoder === "nvenc" ? ["nvenc"] : nv ? ["nvenc", "x264"] : ["x264"];
+export function encodeFinal(encoder: "auto" | FinalEncoder, crf: number, build: (video: string[]) => string[]): { status: number | null; stderr: string; encoder: FinalEncoder } {
+  const nv = encoder === "x264" || encoder === "x265" ? null : nvencFfmpeg();
+  const order: FinalEncoder[] = encoder === "x264" || encoder === "x265" ? [encoder] : encoder === "nvenc" ? ["nvenc"] : nv ? ["nvenc", "x264"] : ["x264"];
   let last = { status: null as number | null, stderr: "", encoder: order[0] };
   for (const e of order) {
     const r = ff(build(videoArgs(e, crf)), e === "nvenc" ? nv ?? postFfmpeg() : postFfmpeg());

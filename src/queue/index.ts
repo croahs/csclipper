@@ -13,6 +13,7 @@
 // twice is not retried until --retry-failed.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { constants, setPriority } from "node:os";
 import path from "node:path";
 import { Refusal, STATE_DIR, loadBatch, loadIdentities, loadReels, pickMoments } from "../config.ts";
 import { buildMoments } from "../clip/moments.ts";
@@ -274,10 +275,11 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
     }
     writeLedger(ledger);
     if (!toPost.length && allFinal) settle(sha256);
-    // One post at a time: wait for the previous demo's, then start this one's and go on launching.
+    // Posts queue behind each other, one at a time, and the launches never wait for them: every
+    // capture runs back to back, so CS2 is done early, and the posts catch up afterwards (Peder, 2026-11-02).
     if (toPost.length) {
-      await posting;
-      posting = postWorker(file, toPost.map((r) => ({ id: r.unit.id, title: r.unit.title, kind: r.kind }))).then((done) => {
+      const units = toPost.map((r) => ({ id: r.unit.id, title: r.unit.title, kind: r.kind }));
+      posting = posting.then(() => postWorker(file, units)).then((done) => {
         let finalHere = allFinal;
         for (const r of toPost) {
           const res = done.find((d) => d.id === r.unit.id) ?? { status: "failed" as const, id: r.unit.id, title: r.unit.title, reasons: ["no result from the post worker"] };
@@ -295,7 +297,9 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
     // An unverified cleanup may have left a game running: stop everything.
     if (results.some((x) => x.cleanupVerified === false) || cleanupUnverified()) { report.stoppedBy = "cleanup"; code = 3; break demos; }
   }
-  await posting; // the last demo's post
+  // Only when the loop ran through: a refusal or an unverified cleanup says nothing about the game being closed.
+  if (launchedOne && !o.dryRun && report.stoppedBy === undefined) console.log("all launches done, CS2 closed; the posts still queued finish now (the PC is free to use)");
+  await posting; // the posts still queued
   // Raw captures of held clips from earlier runs (and any a publish could not remove): dead weight, swept here.
   if (!o.dryRun) {
     report.pruned = sweepUnderClipLock();
@@ -322,6 +326,8 @@ function postWorker(demo: string, units: { id: string; title: string; kind: "hig
   const fail = (reason: string): JobResult[] => units.map((u) => ({ status: "failed", id: u.id, title: u.title, reasons: [reason] }));
   return new Promise((resolve) => {
     const child = spawn(process.execPath, ["--import", "tsx", path.join(import.meta.dirname, "..", "cli", "post-worker.ts"), jobFile, resultFile], { stdio: "inherit", windowsHide: true });
+    // Below normal priority: an x265 encode uses every core, and a capture running meanwhile must not starve.
+    if (child.pid !== undefined) try { setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL); } catch {}
     child.on("error", (e) => resolve(fail(`post worker did not start: ${e.message}`)));
     child.on("exit", (code) => {
       try { resolve(JSON.parse(readFileSync(resultFile, "utf8")) as JobResult[]); }

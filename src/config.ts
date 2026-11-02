@@ -80,11 +80,11 @@ export function loadIngest(file = path.join(ROOT, "config.json")): IngestSetting
   return { keepOriginals: i.keepOriginals === true };
 }
 
-/** The final encode: "auto" = NVENC when FFmpeg has it (x264 if that encode fails), or always "x264" / "nvenc". */
-export type Encoder = "auto" | "x264" | "nvenc";
+/** The final encode: "auto" = NVENC when FFmpeg has it (x264 if that encode fails), or always "x264" / "nvenc" / "x265". */
+export type Encoder = "auto" | "x264" | "nvenc" | "x265";
 export function loadEncoder(file = path.join(ROOT, "config.json")): Encoder {
   const e = JSON.parse(readFileSync(file, "utf8")).post?.encoder ?? "auto";
-  if (e !== "auto" && e !== "x264" && e !== "nvenc") throw new Error('config.json post.encoder must be "auto", "x264" or "nvenc"');
+  if (!["auto", "x264", "nvenc", "x265"].includes(e)) throw new Error('config.json post.encoder must be "auto", "x264", "nvenc" or "x265"');
   return e;
 }
 

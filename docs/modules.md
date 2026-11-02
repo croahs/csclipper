@@ -348,20 +348,33 @@ the spectated player (docs/spikes.md, M0.2 open items).
   CS2 install each launch; the job cfg has a per-launch name
   (`croclip_<ms>`), and the log counts as this launch's only when its
   `[CommandLine]` line carries that name.
-- **Post overlaps the next launch.** `pnpm go` renders a demo (`runJobs`
-  with `renderOnly`), then hands its captured units to a post worker
-  (`src/cli/post-worker.ts`, its own process: post is synchronous FFmpeg
-  and would stall the controller's polling) and launches the next demo
-  meanwhile; at most one worker runs, and the batch waits for the last one.
+- **Captures first, posts behind.** `pnpm go` renders a demo (`runJobs`
+  with `renderOnly`), then queues its captured units for a post worker
+  (`src/cli/post-worker.ts`, its own process at below-normal priority:
+  post is synchronous FFmpeg and would stall the controller's polling)
+  and launches the next demo at once, never waiting for a post (Peder,
+  2026-11-02): every launch runs back to back, so CS2 is done and closed
+  early, and go says so; the posts run one at a time behind the launches,
+  and the batch waits for the last one. Raw captures (about 700 MB per
+  clip) wait on disk until their post has run.
   The worker only posts (every unit post-only, so a missing capture is a
   refusal, never a launch), takes no clip lock, and writes results to a
   file; `pnpm go` alone writes the ledger. Index writes are serialised by
   `state/.index.lock`. Measured on the 19-demo run of 2026-10-15 before
   this: capture 2000 s, post 1246 s (24 s per clip), post blocking the
   next launch.
-- **Final encode.** `config.json` → `post.encoder`: `auto` (default) uses
+- **Final encode.** `config.json` → `post.encoder`: `x265` (the setting
+  since 2026-11-02, Peder) encodes H.265 with libx265 (`-preset slow -crf
+  <crf> -tag:v hvc1`) on the post FFmpeg, at `render.crf` 22. Measured
+  2026-11-02 on two 12 s 1080p60 captures (clip 222's demo, hard; and a
+  calmer one) against the earlier NVENC CQ 22 default: 37 vs 49 MB and
+  18 vs 39 MB, VMAF 98.7 / 98.8 vs 99.0 / 99.5 against the raw, about
+  55 s to encode 12 s (NVENC 4 s); tuned hevc_nvenc (p7, multipass,
+  lookahead, B-frames) at CQ 24 saved only 22-26 % and lost more on the
+  hard segment; the RTX 3080 Ti has no AV1 encoder. `auto` uses
   h264_nvenc (`-preset p5 -tune hq -rc vbr -cq <crf + 4>`, so 22 for CRF
-  18) whenever a one-frame test encode works on either FFmpeg, else x264
+  18; `render.crf` means each encoder's own scale, so set it back to 18
+  with `auto`, `nvenc` or `x264`) whenever a one-frame test encode works on either FFmpeg, else x264
   (`-preset slow -crf 18`); a failed NVENC encode falls back to x264 and
   logs why. The entry's `render.encoder` says which made it. Post runs
   the FFmpeg in PATH (`postFfmpeg()`, on this machine the same system

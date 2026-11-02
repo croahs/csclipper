@@ -6,12 +6,12 @@
     "height": 1080,
     "fps": 60,
     "captureCrf": 12,
-    "crf": 18,
+    "crf": 22,
     "fadeSeconds": 0.25
   },
   "crosshairFromDemoSincePatch": 14182,
   "post": {
-    "encoder": "auto"
+    "encoder": "x265"
   },
   "clip": {
     "leadInSeconds": 4,
