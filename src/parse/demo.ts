@@ -213,6 +213,9 @@ function extract(demo: string, sha256: string, pov: string, key: string): Parsed
  */
 export const matchEndTick = (p: ParsedDemo) => (p.rounds.length ? Math.max(...p.rounds.map((r) => r.endTick)) : p.demo.playbackTicks);
 
+/** A cached parse made by this parser version and schema (an older one lacks fields scoring reads). */
+export const parseIsCurrent = (p: ParsedDemo) => p.key.includes(`:demoparser2@${DEMOPARSER_VERSION}:schema${SCHEMA}:`);
+
 /** Parse once per demo, cached; a cached file counts only if its key matches. */
 export async function parseDemo(demo: string, pov: string): Promise<ParsedDemo> {
   const sha256 = await sha256File(demo);

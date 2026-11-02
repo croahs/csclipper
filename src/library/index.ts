@@ -159,6 +159,16 @@ export function recordFailure(id: string, f: Failures[string]) {
   });
 }
 
+/** Change entries in place under the index lock (pnpm rescore); fn returns the number it changed, 0 skips the write. */
+export function editIndex(fn: (clips: Record<string, ClipEntry>) => number): number {
+  return withIndexLock(() => {
+    const index = readIndex();
+    const n = fn(index.clips);
+    if (n) writeJsonAtomic(INDEX, index);
+    return n;
+  });
+}
+
 export const ensureClipsDir = () => mkdirSync(CLIPS_DIR, { recursive: true });
 export { writeJsonAtomic };
 

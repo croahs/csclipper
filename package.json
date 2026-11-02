@@ -22,7 +22,8 @@
     "drop": "tsx src/cli/drop.ts drop",
     "trash": "tsx src/cli/drop.ts trash",
     "tidy": "tsx src/cli/tidy.ts",
-    "unsettle": "tsx src/cli/unsettle.ts"
+    "unsettle": "tsx src/cli/unsettle.ts",
+    "rescore": "tsx src/cli/rescore.ts"
   },
   "dependencies": {
     "@laihoe/demoparser2": "^0.42.0",

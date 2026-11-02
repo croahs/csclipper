@@ -54,6 +54,8 @@ flick; the 15° threshold keeps most of them out, and a flick multiplies only it
 2. Change one weight in `scoring.json`, add a `_changes` line saying why
    (which moment moved, and in which demo), re-run. Parsing is cached, so a
    re-run takes seconds.
+   `pnpm rescore` then puts the new scores on the clips the library
+   already holds (display only; nothing is rendered again).
 3. Typical levers: a clutch that ranks above a cleaner multikill → lower
    `clutch.perEnemy` or raise `lowHp.penaltyPerKill`; spread-out rounds
    ranking too close to tight ones → raise `pace.speedMax` / `pace.perKillBeyondTwo`, or lower `pace.curve` for more weight on slower runs;

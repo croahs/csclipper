@@ -25,6 +25,7 @@ pnpm drop <no>...
 pnpm trash --empty
 pnpm tidy
 pnpm unsettle <demo sha256 prefix | clip no>...
+pnpm rescore [--dry-run]
 ```
 
 **Reels** (`src/reel/`). `pnpm go` makes two reels for every new demo, in
@@ -169,7 +170,10 @@ over it finishes, with every selected moment rendered, held or failed
 for good (not on a dry run, a repost or a `--no-reels` pass), or by
 `pnpm go --settle-existing`; rule changes apply from the
 next new demo, never to settled ones; `pnpm unsettle <hash prefix | clip
-no>` reopens one), with one CS2 launch per demo for all
+no>` reopens one; `pnpm rescore` only updates the scores the library
+shows: each highlight's rank, score and breakdown recomputed with the
+current `scoring.json` from the demo's cached parse, nothing rendered or
+unsettled), with one CS2 launch per demo for all
 of them (chained takes, below), and rewrites
 `library/index.html` (open it from disk). It refuses to start while CS2 or
 the FACEIT client runs (its anti-cheat stops HLAE from creating cs2.exe, 2026-10-25;
