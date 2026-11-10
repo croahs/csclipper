@@ -4,8 +4,12 @@ A locally run Allstar.gg alternative: pull in your CS2 demos, find your
 best frags, render them as real in-game footage, and browse the result
 in a local library.
 
-Status: M0 gates passed, M1 (one clip by hand) built; see `docs/modules.md`
-for the code and the decisions M1 made. Written 2026-10-14 by Fable,
+Status: built through M3, with both reels and M6. M5 is built; its check
+on a PC that is not this one is open. M4 is built in part: the sources
+and the reel overlays are in, the montage builder and the OBS fallback
+are not, and M6 replaced the Valve GC download. See `docs/modules.md`
+for the code and the decisions made while building.
+Written 2026-10-14 by Fable,
 reviewed the same day by GPT-6 Astra; the review's accepted findings are
 folded in below, so this is the version to build from.
 
@@ -66,10 +70,12 @@ rendering or with Peder playing.
   Valve hands out) in `demos/inbox/`. Ingest waits until the file has
   stopped growing, unpacks with path and size limits, hashes the
   unpacked `.dem`, and registers it in `state/demos.json`.
-- **FACEIT**: the FACEIT Data API gives a demo URL per match for a
-  player ID. Poll recent matches, download new ones. Needs a free
-  FACEIT API key in a local `.env` (never committed). After the render
-  gate (see milestones).
+- **FACEIT**: click "Watch demo" in the FACEIT client or the match
+  room; the file lands in CS2's folder or in Downloads, and `pnpm grab`
+  takes it in through the folders source. With a free FACEIT API key in
+  a local `.env` (never committed), `pnpm grab` also prints each pending
+  match with its room link. The automated browser download is blocked by
+  FACEIT's bot check (M5).
 - **Valve matchmaking**: demos live ~30 days; the official route is
   the in-game Watch tab. The automation is two steps. (a) The Steam
   Web API `GetNextMatchSharingCode` walks forward from the last known
@@ -445,7 +451,8 @@ Decisions:
   with CS2 added is enough. The ban guard is not softened for strangers.
 - The folders source is the documented way to get FACEIT demos: click
   "Watch demo" in the FACEIT client or the match room, the file lands
-  in CS2's `game/csgo/` or in Downloads, `pnpm go` takes it from there.
+  in CS2's `game/csgo/` or in Downloads, `pnpm grab` copies it into the
+  inbox and `pnpm go` makes the clips.
   No key, no browser profile, no extra install. The automated browser
   path is retired as the hands-off way: since 2026-10-24 FACEIT runs a
   Cloudflare Turnstile check behind "Watch demo" that fails in the
@@ -540,8 +547,7 @@ launch options counts as hard to undo: Sol reviews before it lands.
 
 ## Open decisions
 
-1. Sources for v1: FACEIT, Valve MM, or both. Affects which demos go
-   through the gates.
-2. Your SteamID64 (needed for M0.1). Keep it in local config, not in
-   the repo.
-3. Where the repo lives, so M0 can start in a real folder.
+None. The three this plan started with are settled: the sources are
+both (Valve MM through the fetch launch, FACEIT through the folder scan;
+M5 and M6), the SteamID64 lives in `.env` as `STEAM_ID64`, and the repo
+is github.com/croahs/csclipper.
