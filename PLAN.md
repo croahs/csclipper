@@ -5,9 +5,9 @@ best frags, render them as real in-game footage, and browse the result
 in a local library.
 
 Status: built through M3, with both reels and M6. M5 is built; its check
-on a PC that is not this one is open. M4 is built in part: the sources
-and the reel overlays are in, the montage builder and the OBS fallback
-are not, and M6 replaced the Valve GC download. See `docs/modules.md`
+on a PC that is not this one is open. M4 is built in part: the sources,
+the reel overlays and the montage builder (`pnpm week`) are in, the
+OBS fallback is not, and M6 replaced the Valve GC download. See `docs/modules.md`
 for the code and the decisions made while building.
 Written 2026-10-14 by Fable,
 reviewed the same day by GPT-6 Astra; the review's accepted findings are
@@ -316,8 +316,37 @@ FFmpeg only:
 - overlay: map, round, score, title. Simple drawtext, no HTML
   compositing.
 - optional later: custom killfeed via HLAE `mirv_deathmsg`.
-- montage mode: top N clips of a week concatenated, optional music
-  track from a local folder.
+- best of the week (decided 2026-11-10): `pnpm week [<yyyy-Www>]
+  [--top <n>] [--music <file>] [--no-music] [--dry-run]` writes
+  `library/montage/<yyyy>-W<ww>.mp4`. No week given: the latest ISO
+  week (Monday to Sunday, local time) with a highlight. A clip belongs
+  to the week of the date the library page shows it under (FACEIT
+  match date, else the day its demo was added, else when the clip was
+  made; one rule, `src/library/match-date.ts`, so the page and the
+  montage cannot disagree). Highlights only, the top `montage.top`
+  (8) by moment score; one without a score or a file is skipped and
+  named; fewer than 2 is refused. Played in ascending score, so the
+  best comes last. Picture: a 2 s card on black (`Best of week 45 ·
+  2026` and the dates), then each clip as it is, at the first clip's
+  size and rate (letterboxed, never cropped), joined by 0.25 s
+  crossfades (the card's too), so the length is card + clips − one
+  fade per clip; for the first 3 s of each clip its number and title
+  sit bottom left, above the HUD's money and health row (the reel
+  overlay's font, text through files with `expansion=none`). Sound:
+  the game audio always; music from `--music`, else the first audio
+  file by name in `montage.musicDir`, looped or cut to length, faded
+  out over the last 3 s, `montage.musicGainDb` (-14) under the game
+  and ducked further by `sidechaincompress` keyed on it, so shots
+  stay on top; music is never copied anywhere. One FFmpeg run, one
+  `filter_complex`, x264 slow CRF 18, AAC 192k, `+faststart`. The
+  share-file contract: temp path, validate (decodes, one video and
+  one audio stream, h264, length within 1 s of the plan), rename; the
+  key (clip ids with their files' size and time, in play order, the
+  music file's size and time, the gain, the recipe) sits in the
+  file's comment tag, so an unchanged week is reused and a changed
+  one remade; never written to `index.json`. It prints the path,
+  size, length, the clip numbers in play order and a caption
+  (`Best of week 45 · 8 clips #CS2`).
 - outputs `library/clips/<id>.mp4` + `library/index.json`.
 - share copies (decided 2026-11-10): library clips are H.265, which
   Discord, many browsers and phones do not play inline, and often
@@ -510,7 +539,7 @@ After the victim's death the take shows what the game gives a dead
 player, normally the death camera; that is accepted.
 
 **M4. Sources and polish.** FACEIT auto-download, overlays, killfeed,
-montage builder, OBS fallback, Valve GC download.
+montage builder (built 2026-11-10, `pnpm week`), OBS fallback, Valve GC download.
 
 **M5. Sharing** (decided 2026-10-25). Other players run it on their
 own Windows PC from the public repo (github.com/croahs/csclipper).

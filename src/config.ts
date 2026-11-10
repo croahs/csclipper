@@ -150,3 +150,18 @@ export function loadIdentities(envFile = path.join(ROOT, ".env")): Identities {
 }
 
 export const accountId = (steamId64: string) => (BigInt(steamId64) - STEAMID64_BASE).toString();
+
+/**
+ * pnpm week (PLAN.md §6, best of the week): how many highlights, the music folder (the first audio
+ * file by name is used when no --music is given; empty or absent = no music) and how far under the
+ * game audio the music sits.
+ */
+export type MontageSettings = { top: number; musicDir: string | null; musicGainDb: number };
+export function loadMontage(file = path.join(ROOT, "config.json")): MontageSettings {
+  const m = JSON.parse(readFileSync(file, "utf8")).montage ?? {};
+  const top = m.top ?? 8, gain = m.musicGainDb ?? -14, dir = m.musicDir ?? "";
+  if (!Number.isInteger(top) || top < 2) throw new Error("config.json montage.top must be a whole number >= 2");
+  if (typeof gain !== "number" || gain > 0) throw new Error("config.json montage.musicGainDb must be a number of dB <= 0");
+  if (typeof dir !== "string") throw new Error("config.json montage.musicDir must be a folder path or empty");
+  return { top, musicDir: dir.trim() ? path.resolve(ROOT, dir.trim()) : null, musicGainDb: gain };
+}

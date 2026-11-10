@@ -21,6 +21,11 @@
     "height": 1920,
     "crf": 18
   },
+  "montage": {
+    "top": 8,
+    "musicDir": "",
+    "musicGainDb": -14
+  },
   "clip": {
     "leadInSeconds": 4,
     "tailSeconds": 5.5
