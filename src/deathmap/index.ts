@@ -146,14 +146,16 @@ export type Loaded = { demos: { sha: string; p: ParsedDemo }[]; noPositions: { s
  */
 export async function loadDemos(registry: Registry, pov: string, src: Sources): Promise<Loaded> {
   const out: Loaded = { demos: [], noPositions: [], reparsed: [], unread: [] };
+  // A fresh parse whose position extraction failed (the parse itself is complete) has no positions either.
+  const add = (sha: string, p: ParsedDemo) => { if (hasPositions(p)) out.demos.push({ sha, p }); else out.noPositions.push({ sha, map: p.demo.map }); };
   for (const [sha, rec] of Object.entries(registry)) {
     try {
       const c = src.readCache(sha);
       const current = c && parseIsCurrent(c) && c.identity.steamid === pov ? c : undefined;
       if (current && hasPositions(current)) out.demos.push({ sha, p: current });
-      else if (current && src.hasDemo(rec.file)) { out.demos.push({ sha, p: await src.reparse(rec.file) }); out.reparsed.push(sha); }
+      else if (current && src.hasDemo(rec.file)) { add(sha, await src.reparse(rec.file)); out.reparsed.push(sha); }
       else if (current) out.noPositions.push({ sha, map: current.demo.map });
-      else if (src.hasDemo(rec.file)) out.demos.push({ sha, p: await src.parse(rec.file) });
+      else if (src.hasDemo(rec.file)) add(sha, await src.parse(rec.file));
       else out.unread.push({ sha, why: "no current parse and the demo is no longer in the store" });
     } catch (e) { out.unread.push({ sha, why: (e as Error).message }); }
   }

@@ -78,3 +78,12 @@ test("weaponsOf: each weapon once, the game's names for non-guns labelled", () =
   assert.deepEqual(weaponsOf(moment(2, ["inferno", "molotov"])), ["Fire"]);
   assert.deepEqual(weaponsOf({ weapons: ["Deagle", 3, "", null] }), ["Deagle"]);
 });
+
+test("the library page's inlined data escapes every <, so no title can end the script element", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/library/page.ts", import.meta.url), "utf8");
+  // In the source the replacement is written with two backslashes: at run time that is the six
+  // characters of the JSON escape, never a literal "<".
+  const bs = String.fromCharCode(92);
+  assert.ok(src.includes('.replaceAll("<", "' + bs + bs + 'u003c")'), "page.ts must replace < with the JSON escape");
+});

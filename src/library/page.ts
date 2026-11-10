@@ -35,7 +35,7 @@ export function writeLibraryPage(o: { running?: boolean } = {}): string {
   const stars = readStars().filter((n) => nos.has(n));
   const hasDeathMap = existsSync(path.join(LIBRARY_DIR, "deaths.html")); // pnpm deathmap has written it: the sidebar links to it
   // Every "<" escaped, so no title can end or reinterpret the script element.
-  const json = JSON.stringify({ generatedAt: new Date().toISOString(), running: !!o.running, hasDeathMap, clips, stars, featLabels: FEATS }).replaceAll("<", "\u003c");
+  const json = JSON.stringify({ generatedAt: new Date().toISOString(), running: !!o.running, hasDeathMap, clips, stars, featLabels: FEATS }).replaceAll("<", "\\u003c");
   const html = readFileSync(TEMPLATE, "utf8").replace("/*__CLIPS__*/[]", () => json);
   mkdirSync(LIBRARY_DIR, { recursive: true });
   const tmp = `${PAGE}.${process.pid}.${Date.now()}.tmp`;
