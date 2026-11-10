@@ -391,6 +391,23 @@ FFmpeg only:
   the same name: one vertical file per clip, the last crop asked for
   wins. Never written to `index.json`; the source only read. Prints
   share's caption.
+- even sound (decided 2026-11-10): an AWP crack sits 30-40 dB over the
+  footsteps between shots, so a clip turned up to hear the footsteps
+  blasts at the shot. One pure function (`src/post/audio.ts`) builds
+  the chain from `config.json` → `audio`: a fast compressor with
+  make-up gain, then a lookahead peak limiter whose ceiling leaves room
+  for the AAC encode's overshoot; one pass, no two-pass `loudnorm` (a
+  measuring pass per clip buys nothing on 30 s of gunfire). Share
+  copies are even by default (`share.audio`, `--raw-audio` for one
+  run), the audio filter part of the share file's key. Library masters
+  default to raw (`post.audio`): a master is never re-rendered and its
+  capture is deleted after publish, so a sound baked into it cannot be
+  taken back, while a share copy can always be made again. `"even"`
+  runs the chain in the final encode's single pass, after the
+  fast-forward concat (muted stretches stay silent) and before the
+  fades; the entry records `render.audio` (absent on older clips). The
+  setting is outside the render key, so changing it never makes a
+  finished clip look undone.
 
 ### 7. Library
 

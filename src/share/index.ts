@@ -5,8 +5,9 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { LIBRARY_DIR, ROOT } from "../config.ts";
+import { LIBRARY_DIR, loadAudioMode, loadEvenAudio, ROOT, type AudioMode } from "../config.ts";
 import { readIndex, type ClipEntry } from "../library/index.ts";
+import { audioFilter } from "../post/audio.ts";
 import { decodeProblems, ff, probe } from "../post/ffmpeg.ts";
 import { shareCaption } from "./caption.ts";
 
@@ -84,13 +85,14 @@ export function planShare(src: ShareSource, maxBytes: number): SharePlan {
 
 // --- arguments (pure) ------------------------------------------------------------------
 
-export type ShareArgs = { no: number; maxMb?: number; json: boolean };
+export type ShareArgs = { no: number; maxMb?: number; json: boolean; rawAudio: boolean };
 export function parseShareArgs(argv: string[]): ShareArgs {
-  const usage = "usage: pnpm share <clip number> [--max-mb <n>]";
-  let no: number | undefined, maxMb: number | undefined, json = false;
+  const usage = "usage: pnpm share <clip number> [--max-mb <n>] [--raw-audio]";
+  let no: number | undefined, maxMb: number | undefined, json = false, rawAudio = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--json") json = true;
+    else if (a === "--raw-audio") rawAudio = true;
     else if (a === "--max-mb") {
       maxMb = Number(argv[++i]);
       if (!(maxMb > 0)) throw new Error(`--max-mb needs a number of megabytes > 0; ${usage}`);
@@ -98,7 +100,7 @@ export function parseShareArgs(argv: string[]): ShareArgs {
     else throw new Error(`unexpected argument "${a}"; ${usage}`);
   }
   if (no === undefined) throw new Error(usage);
-  return { no, maxMb, json };
+  return { no, maxMb, json, rawAudio };
 }
 
 // --- files -------------------------------------------------------------------------------
@@ -111,11 +113,13 @@ export const findClip = (no: number) => Object.values(readIndex().clips).find((c
 /**
  * What a share file was made from, written into its own metadata (comment tag), so a valid file
  * with the same key is reused: the clip's id, its file's size and time (a re-render changes them),
- * the limit and the recipe. Kept in the file itself, so no record can disagree with it.
+ * the limit, the recipe and the audio filter. Raw ("") keeps the key a file made before even sound
+ * has (that file is raw); even adds its whole chain, so a changed parameter makes the file again.
+ * Kept in the file itself, so no record can disagree with it.
  */
-export function shareKey(e: ClipEntry, source: string, maxBytes: number): string {
+export function shareKey(e: Pick<ClipEntry, "id">, source: string, maxBytes: number, audio = ""): string {
   const st = statSync(source);
-  return createHash("sha256").update(`${RECIPE}:${e.id}:${st.size}:${Math.round(st.mtimeMs)}:${maxBytes}`).digest("hex").slice(0, 16);
+  return createHash("sha256").update(`${RECIPE}:${e.id}:${st.size}:${Math.round(st.mtimeMs)}:${maxBytes}${audio ? `:even:${audio}` : ""}`).digest("hex").slice(0, 16);
 }
 const TAG = "croclipper-share:";
 const readTag = (file: string) => ff(["-i", file]).stderr.match(new RegExp(`comment\\s*:\\s*${TAG}([0-9a-f]+)`))?.[1];
@@ -141,12 +145,16 @@ export type ShareResult = {
   caption: string;
   reused: boolean;
   mode: "crf" | "two-pass" | "reused";
+  audio: AudioMode;
   width: number; height: number; fps: number;
   encodeSeconds: number;
 };
 
-/** Makes (or reuses) the share file for clip `no` under maxMb megabytes. Synchronous: the server runs it in a child process. */
-export function makeShare(no: number, maxMb: number, log: (s: string) => void = () => {}): ShareResult {
+/**
+ * Makes (or reuses) the share file for clip `no` under maxMb megabytes, its sound as `sound` says
+ * (default config.json → share.audio, "even"). Synchronous: the server runs it in a child process.
+ */
+export function makeShare(no: number, maxMb: number, log: (s: string) => void = () => {}, sound: AudioMode = loadAudioMode("share")): ShareResult {
   const e = findClip(no);
   if (!e) throw new ShareRefusal(`no clip ${no}`);
   const source = path.join(LIBRARY_DIR, e.file);
@@ -157,12 +165,13 @@ export function makeShare(no: number, maxMb: number, log: (s: string) => void = 
   if (!sp.video || !sw || !sh || !sp.fps || !sp.duration) throw new Error(`clip ${no}'s file cannot be read: ${JSON.stringify(sp)}`);
   const src: ShareSource = { width: sw, height: sh, fps: sp.fps, seconds: sp.duration, audio: sp.audio };
   const dest = sharePath(e);
-  const key = shareKey(e, source, maxBytes);
+  const af = sound === "even" && sp.audio ? audioFilter("even", loadEvenAudio()) : "";
+  const key = shareKey(e, source, maxBytes, af);
   const caption = shareCaption(e);
   const result = (mode: ShareResult["mode"], t0: number): ShareResult => {
     const p = probe(dest);
     const [width, height] = (p.size ?? "0x0").split("x").map(Number);
-    return { file: path.relative(LIBRARY_DIR, dest).replaceAll("\\", "/"), path: dest, bytes: statSync(dest).size, caption, reused: mode === "reused", mode, width, height, fps: p.fps ?? 0, encodeSeconds: (Date.now() - t0) / 1000 };
+    return { file: path.relative(LIBRARY_DIR, dest).replaceAll("\\", "/"), path: dest, bytes: statSync(dest).size, caption, reused: mode === "reused", mode, audio: sound, width, height, fps: p.fps ?? 0, encodeSeconds: (Date.now() - t0) / 1000 };
   };
   const t0 = Date.now();
 
@@ -173,12 +182,12 @@ export function makeShare(no: number, maxMb: number, log: (s: string) => void = 
   mkdirSync(SHARE_DIR, { recursive: true });
   const tmp = `${dest}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp.mp4`;
   const work = mkdtempSync(path.join(os.tmpdir(), "croclipper-share-"));
-  const audio = (kbps: number) => (src.audio ? ["-map", "0:a:0", "-c:a", "aac", "-b:a", `${kbps}k`] : ["-an"]);
+  const audio = (kbps: number) => (src.audio ? ["-map", "0:a:0", ...(af ? ["-af", af] : []), "-c:a", "aac", "-b:a", `${kbps}k`] : ["-an"]);
   const common = ["-map_metadata", "-1", "-metadata", `comment=${TAG}${key}`, "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-f", "mp4"];
   try {
     // 1. Constant quality at the source size and rate; -fs stops it at the limit, so a clip that
     // does not fit costs only the part encoded before it got there (it then fails the duration check).
-    log(`clip ${no}: constant-quality encode (x264 CRF ${CRF}, ${src.width}x${src.height}@${src.fps})`);
+    log(`clip ${no}: constant-quality encode (x264 CRF ${CRF}, ${src.width}x${src.height}@${src.fps}, ${af ? "even" : "raw"} sound)`);
     const evenSize = src.width % 2 || src.height % 2 ? ["-vf", `scale=${even(src.width)}:${even(src.height)}`] : [];
     let r = ff(["-v", "error", "-y", "-i", source, "-map", "0:v:0", ...evenSize, "-c:v", "libx264", "-preset", "slow", "-crf", String(CRF), ...audio(128), "-fs", String(maxBytes), ...common, tmp]);
     let mode: ShareResult["mode"] = "crf";

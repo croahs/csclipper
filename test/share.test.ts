@@ -64,9 +64,10 @@ test("shareName: clip number and a file-safe slug of the title", () => {
 });
 
 test("parseShareArgs", () => {
-  assert.deepEqual(parseShareArgs(["12"]), { no: 12, maxMb: undefined, json: false });
-  assert.deepEqual(parseShareArgs(["12", "--max-mb", "8.5"]), { no: 12, maxMb: 8.5, json: false });
-  assert.deepEqual(parseShareArgs(["--max-mb", "50", "7", "--json"]), { no: 7, maxMb: 50, json: true });
+  assert.deepEqual(parseShareArgs(["12"]), { no: 12, maxMb: undefined, json: false, rawAudio: false });
+  assert.deepEqual(parseShareArgs(["12", "--max-mb", "8.5"]), { no: 12, maxMb: 8.5, json: false, rawAudio: false });
+  assert.deepEqual(parseShareArgs(["--max-mb", "50", "7", "--json"]), { no: 7, maxMb: 50, json: true, rawAudio: false });
+  assert.deepEqual(parseShareArgs(["7", "--raw-audio"]), { no: 7, maxMb: undefined, json: false, rawAudio: true });
   assert.throws(() => parseShareArgs([]), /usage/);
   assert.throws(() => parseShareArgs(["0"]), /unexpected/);
   assert.throws(() => parseShareArgs(["12", "13"]), /unexpected/);

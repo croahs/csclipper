@@ -22,7 +22,7 @@ pnpm deaths "<demo.dem>" [--timeout <s>] [--dry-run]
 pnpm victims "<demo.dem>" [--timeout <s>] [--dry-run]
 pnpm library [--port <n>]
 pnpm drop <no>...
-pnpm share <no> [--max-mb <n>]
+pnpm share <no> [--max-mb <n>] [--raw-audio]
 pnpm vertical <no> [--shift <percent>]
 pnpm fav <no>...               (star clips; pnpm's own star / unstar star npm packages)
 pnpm unfav <no>...
@@ -154,6 +154,42 @@ dB RMS where the game is silent (the track -25.9 dB RMS, -14 dB gain)
 and adds nothing measurable in a loud second (-19.11 vs -19.13 dB);
 the peak is -5.0 dB with music and -4.6 dB without. A second run
 with nothing changed reuses the file in about 6 s.
+
+**Even sound** (`src/post/audio.ts`; PLAN.md §6 has the rules).
+`audioFilter(mode, params)` is the one builder: `"raw"` gives `""` (no
+filter added), `"even"` gives
+`acompressor=threshold=-40dB:ratio=3:attack=5:release=400:makeup=20dB,alimiter=limit=-3dB:attack=5:release=100:level=0:latency=1`
+from `config.json` → `audio` (`thresholdDb`, `ratio`, `attackMs`,
+`releaseMs`, `makeupDb`, `limitDb`; out of FFmpeg's range is refused).
+The limiter's 5 ms lookahead and 100 ms release are fixed;
+`latency=1` keeps the sound in step with the picture (sample count
+unchanged), `level=0` stops alimiter normalising. The ceiling is
+-3 dBFS sample peak because the AAC encode adds up to about 1.5 dB on
+a shot: at -1.5 dBFS the four clips reached up to 0.0 dBTP, and limiting
+oversampled at 192 kHz did not help, so the overshoot is the
+encoder's. The chain keeps the source's rate and channels (the masters
+are 44.1 kHz stereo). `share.audio` (default `"even"`; `--raw-audio`
+for one run) adds `-af <chain>` to the share encode, and the chain is
+part of the share key (raw keeps the key files made before even sound
+have). `post.audio` (default `"raw"`, today's graph byte for byte,
+`test/audio.test.ts`) or `"even"`, which `postGraph` puts after the
+concat and before the fades, in `post` and over the whole reel in
+`postReel`; the entry's `render.audio` records it. Measured
+2026-11-10 (FFmpeg 9.0.1; AAC 128k of the clip's sound, raw → even;
+gap: RMS of the 50 ms around the loudest sample minus RMS of the
+quietest non-silent 1 s, mono downmix):
+
+| clip | integrated LUFS | LRA LU | true peak dBTP | gap dB |
+| --- | --- | --- | --- | --- |
+| 50, AWP 2k, 11 s | -21.4 → -18.9 | 10.9 → 5.3 | -4.6 → -2.7 | 30.2 → 15.7 |
+| 3, AK 3k, 25 s | -23.1 → -20.4 | 15.9 → 7.7 | -5.7 → -1.6 | 37.3 → 18.1 |
+| 11, USP-S 4k, 19 s | -26.8 → -21.5 | 6.9 → 5.1 | -8.6 → -1.3 | 37.6 → 21.2 |
+| 53, kills reel, 162 s | -21.5 → -18.8 | 15.7 → 7.8 | -4.0 → -1.4 | 40.9 → 22.4 |
+
+Tried and dropped: `dynaudnorm` (f=100, g=11) closed the gap no more than a
+gentler compressor and overshot 0 dBTP (+0.7) through the same limiter;
+ratio 4-6 with 100-200 ms release closed the gap 1-3 dB more but pumps
+more, so ratio 3 with 400 ms release. Nobody has listened to it yet.
 
 `pnpm prep` (PLAN.md M5; pnpm's own `setup` and `doctor` commands take the
 obvious names, so `pnpm check` is the report-only form) makes a PC ready:
@@ -306,7 +342,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 
 | Path | What |
 |---|---|
-| `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds`; `ingest.keepOriginals` (default false: the file a demo arrived in is deleted once the store holds it); `montage` for `pnpm week`: `top` (8), `musicDir` (empty: no music unless `--music`; else its first audio file by name), `musicGainDb` (-14, music under the game audio) |
+| `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds`; `ingest.keepOriginals` (default false: the file a demo arrived in is deleted once the store holds it); `montage` for `pnpm week`: `top` (8), `musicDir` (empty: no music unless `--music`; else its first audio file by name), `musicGainDb` (-14, music under the game audio); `post.audio` (`raw` default, `even`) and `share.audio` (`even` default, `raw`), the even-sound chain's `audio` parameters (`thresholdDb`, `ratio`, `attackMs`, `releaseMs`, `makeupDb`, `limitDb`; Even sound above) |
 | `.env` | identities and tool paths (`.env.example`; `pnpm prep` fills it; M0.2 setup in `docs/spikes.md`) |
 | `src/cli/setup.ts` | `pnpm prep` / `pnpm check`: tool pins with their sha256, Steam and CS2 lookup, the requirement report |
 | `docs/m6-mm-fetch.md` | the execution plan for M6 (matchmaking demos fetched through a CS2 launch, no login): phases, agents, gate, tests |

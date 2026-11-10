@@ -4,8 +4,9 @@
 // final clip to a temp path and validate it.
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { captureSize, loadEncoder, type RenderSettings } from "../config.ts";
+import { captureSize, loadEncoder, type AudioMode, type RenderSettings } from "../config.ts";
 import type { TickMapping } from "../render/controller/index.ts";
+import { loadAudio } from "./audio.ts";
 import { decodeProblems, encodeFinal, meanLuma, probe, type FinalEncoder } from "./ffmpeg.ts";
 
 /**
@@ -83,7 +84,36 @@ export function segments(m: TickMapping, startTick: number, endTick: number, win
   });
 }
 
-export type PostResult = { status: "ok" | "failed"; reasons: string[]; plan?: TrimPlan; segments?: Segment[]; encoder?: FinalEncoder };
+export type PostResult = { status: "ok" | "failed"; reasons: string[]; plan?: TrimPlan; segments?: Segment[]; encoder?: FinalEncoder; audio?: AudioMode };
+
+/**
+ * The final encode's filter graph for a clip's segments (d: its output seconds). audioFilter ""
+ * (post.audio "raw") leaves the sound as captured; otherwise the even-sound chain runs after the
+ * concat, so the muted fast-forward stretches stay silent, and before the fades, so they still apply.
+ */
+export function postGraph(segs: Segment[], fps: number, s: RenderSettings, d: number, audioFilter = ""): string {
+  const f = Math.min(s.fadeSeconds, d / 4);
+  const fades = f > 0;
+  // Stretched captures are scaled to the output size ignoring aspect (square pixels after).
+  const cap = captureSize(s);
+  const scale = cap.width !== s.width || cap.height !== s.height ? `,scale=${s.width}:${s.height}:flags=lanczos,setsar=1` : "";
+  const k = segs.length;
+  const graph: string[] = [];
+  graph.push(k > 1 ? `[0:v]split=${k}${segs.map((_, i) => `[vs${i}]`).join("")}` : "[0:v]null[vs0]");
+  graph.push(k > 1 ? `[1:a]asplit=${k}${segs.map((_, i) => `[as${i}]`).join("")}` : "[1:a]anull[as0]");
+  for (const [i, x] of segs.entries()) {
+    const t0 = x.startFrame / fps;
+    // Fast-forward: every frame sped up, then resampled to the clip's frame rate; the audio is that
+    // stretch's own length cut to the sped-up length and muted, so the streams stay in step.
+    const speed = x.speed === 1 ? "setpts=PTS-STARTPTS" : `setpts=(PTS-STARTPTS)/${x.speed},fps=${fps}`;
+    graph.push(`[vs${i}]trim=start_frame=${x.startFrame}:end_frame=${x.startFrame + x.frames},${speed}[v${i}]`);
+    graph.push(`[as${i}]atrim=start=${t0.toFixed(6)}:end=${(t0 + x.outSeconds).toFixed(6)},asetpts=PTS-STARTPTS${x.speed === 1 ? "" : ",volume=0"}[a${i}]`);
+  }
+  graph.push(`${segs.map((_, i) => `[v${i}][a${i}]`).join("")}concat=n=${k}:v=1:a=1[vc][ac]`);
+  graph.push(`[vc]null${scale}${fades ? `,fade=t=in:st=0:d=${f},fade=t=out:st=${(d - f).toFixed(6)}:d=${f}` : ""}[v]`);
+  graph.push(`[ac]anull${audioFilter ? `,${audioFilter}` : ""}${fades ? `,afade=t=in:st=0:d=${f},afade=t=out:st=${(d - f).toFixed(6)}:d=${f}` : ""}[a]`);
+  return graph.join(";");
+}
 
 /** Writes outTmp; on any failure the temp file is removed. windows: the spec's action windows, if any. */
 export function post(video: string, audio: string, m: TickMapping, startTick: number, endTick: number, s: RenderSettings, outTmp: string, windows?: { startTick: number; endTick: number }[]): PostResult {
@@ -91,33 +121,17 @@ export function post(video: string, audio: string, m: TickMapping, startTick: nu
   let plan: TrimPlan | undefined;
   let segs: Segment[] | undefined;
   let encoder: FinalEncoder | undefined;
+  let sound: AudioMode | undefined;
   try {
     segs = segments(m, startTick, endTick, windows);
     const d = segs.reduce((n, x) => n + x.outSeconds, 0);
     plan = { startFrame: segs[0].startFrame, frames: Math.round(d * m.fps), seconds: d };
-    const f = Math.min(s.fadeSeconds, d / 4);
-    const fades = f > 0;
-    // Stretched captures are scaled to the output size ignoring aspect (square pixels after).
-    const cap = captureSize(s);
-    const scale = cap.width !== s.width || cap.height !== s.height ? `,scale=${s.width}:${s.height}:flags=lanczos,setsar=1` : "";
-    const k = segs.length;
-    const graph: string[] = [];
-    graph.push(k > 1 ? `[0:v]split=${k}${segs.map((_, i) => `[vs${i}]`).join("")}` : "[0:v]null[vs0]");
-    graph.push(k > 1 ? `[1:a]asplit=${k}${segs.map((_, i) => `[as${i}]`).join("")}` : "[1:a]anull[as0]");
-    for (const [i, x] of segs.entries()) {
-      const t0 = x.startFrame / m.fps;
-      // Fast-forward: every frame sped up, then resampled to the clip's frame rate; the audio is that
-      // stretch's own length cut to the sped-up length and muted, so the streams stay in step.
-      const speed = x.speed === 1 ? "setpts=PTS-STARTPTS" : `setpts=(PTS-STARTPTS)/${x.speed},fps=${m.fps}`;
-      graph.push(`[vs${i}]trim=start_frame=${x.startFrame}:end_frame=${x.startFrame + x.frames},${speed}[v${i}]`);
-      graph.push(`[as${i}]atrim=start=${t0.toFixed(6)}:end=${(t0 + x.outSeconds).toFixed(6)},asetpts=PTS-STARTPTS${x.speed === 1 ? "" : ",volume=0"}[a${i}]`);
-    }
-    graph.push(`${segs.map((_, i) => `[v${i}][a${i}]`).join("")}concat=n=${k}:v=1:a=1[vc][ac]`);
-    graph.push(`[vc]null${scale}${fades ? `,fade=t=in:st=0:d=${f},fade=t=out:st=${(d - f).toFixed(6)}:d=${f}` : ""}[v]`);
-    graph.push(`[ac]anull${fades ? `,afade=t=in:st=0:d=${f},afade=t=out:st=${(d - f).toFixed(6)}:d=${f}` : ""}[a]`);
+    const a = loadAudio("post");
+    sound = a.mode;
+    const graph = postGraph(segs, m.fps, s, d, a.filter);
     const r = encodeFinal(loadEncoder(), s.crf, (v) => [
       "-v", "error", "-y", "-i", video, "-i", audio,
-      "-filter_complex", graph.join(";"), "-map", "[v]", "-map", "[a]",
+      "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
       ...v, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", outTmp,
     ]);
     encoder = r.encoder;
@@ -127,7 +141,7 @@ export function post(video: string, audio: string, m: TickMapping, startTick: nu
     reasons.push(`post error: ${(e as Error).message}`);
   }
   if (reasons.length) rmSync(outTmp, { force: true });
-  return { status: reasons.length ? "failed" : "ok", reasons, plan, segments: segs, encoder };
+  return { status: reasons.length ? "failed" : "ok", reasons, plan, segments: segs, encoder, audio: sound };
 }
 
 /** One take of a reel: its capture, the ticks to show and the overlay line. */
@@ -148,6 +162,7 @@ export function postReel(takes: ReelTakeInput[], s: RenderSettings, workDir: str
   const reasons: string[] = [];
   let plan: TrimPlan | undefined;
   let encoder: FinalEncoder | undefined;
+  let sound: AudioMode | undefined;
   try {
     if (!takes.length) throw new Error("a reel needs at least one take");
     const cap = captureSize(s);
@@ -156,6 +171,8 @@ export function postReel(takes: ReelTakeInput[], s: RenderSettings, workDir: str
     const size = Math.round(s.height / 30);
     const inputs: string[] = [];
     const graph: string[] = [];
+    const a = loadAudio("post");
+    sound = a.mode;
     let total = 0, frames = 0;
     const mids: number[] = [];
     for (const [i, t] of takes.entries()) {
@@ -173,7 +190,9 @@ export function postReel(takes: ReelTakeInput[], s: RenderSettings, workDir: str
       total += p.seconds; frames += p.frames;
       if (i === 0) plan = { startFrame: p.startFrame, frames: 0, seconds: 0 };
     }
-    graph.push(`${takes.map((_, i) => `[v${i}][a${i}]`).join("")}concat=n=${takes.length}:v=1:a=1[v][a]`);
+    graph.push(`${takes.map((_, i) => `[v${i}][a${i}]`).join("")}concat=n=${takes.length}:v=1:a=1[v][${a.filter ? "ac" : "a"}]`);
+    // Even sound over the whole reel, after the concat (post.audio; raw adds nothing).
+    if (a.filter) graph.push(`[ac]${a.filter}[a]`);
     plan = { startFrame: plan!.startFrame, frames, seconds: total };
     const r = encodeFinal(loadEncoder(), s.crf, (v) => [
       "-v", "error", "-y", ...inputs,
@@ -188,5 +207,5 @@ export function postReel(takes: ReelTakeInput[], s: RenderSettings, workDir: str
     reasons.push(`post error: ${(e as Error).message}`);
   }
   if (reasons.length) rmSync(outTmp, { force: true });
-  return { status: reasons.length ? "failed" : "ok", reasons, plan, encoder };
+  return { status: reasons.length ? "failed" : "ok", reasons, plan, encoder, audio: sound };
 }

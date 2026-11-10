@@ -97,6 +97,34 @@ export function loadVertical(file = path.join(ROOT, "config.json")): VerticalSet
   return { width: v.width, height: v.height, crf: v.crf };
 }
 
+/** Sound of the final encode (post.audio) and of share copies (share.audio): "raw" as captured, "even" through src/post/audio.ts's chain. */
+export type AudioMode = "raw" | "even";
+/**
+ * config.json → post.audio (default "raw": a library master keeps the capture's sound, since a clip
+ * is never re-rendered and its capture is deleted after publish) or share.audio (default "even").
+ */
+export function loadAudioMode(section: "post" | "share", file = path.join(ROOT, "config.json")): AudioMode {
+  const v = JSON.parse(readFileSync(file, "utf8"))[section]?.audio ?? (section === "post" ? "raw" : "even");
+  if (v !== "raw" && v !== "even") throw new Error(`config.json ${section}.audio must be "raw" or "even"`);
+  return v;
+}
+
+/** config.json → audio: the even-sound chain's parameters, a compressor with make-up gain, then a peak limiter (ranges: src/post/audio.ts). */
+export type EvenAudio = {
+  thresholdDb: number; // compressor threshold, dBFS
+  ratio: number;
+  attackMs: number;
+  releaseMs: number;
+  makeupDb: number; // gain after the compressor
+  limitDb: number; // limiter ceiling, dBFS sample peak; its margin to 0 dBTP covers the AAC encode's overshoot
+};
+export function loadEvenAudio(file = path.join(ROOT, "config.json")): EvenAudio {
+  const a = JSON.parse(readFileSync(file, "utf8")).audio ?? {};
+  const keys = ["thresholdDb", "ratio", "attackMs", "releaseMs", "makeupDb", "limitDb"] as const;
+  for (const k of keys) if (typeof a[k] !== "number" || !Number.isFinite(a[k])) throw new Error(`config.json audio.${k} must be a number`);
+  return Object.fromEntries(keys.map((k) => [k, a[k]])) as EvenAudio;
+}
+
 /** Clip span rules (PLAN.md §4): lead-in before the engagement start, tail after the last kill. */
 export type ClipRules = { leadInSeconds: number; tailSeconds: number };
 export function loadClipRules(file = path.join(ROOT, "config.json")): ClipRules {

@@ -310,7 +310,7 @@ function postAndPublish(prep: PreparedJob, capture: TakeCapture & { renderKey: s
     id, file: `clips/${id}.mp4`, title, map: facts.map, demo, demoSha256: facts.demoSha256, round,
     ...(spec ? { moment: { rank: spec.rank, score: spec.score, breakdown: spec.breakdown, kills: spec.kills, killTicks: spec.killTicks, weapons: spec.weapons, flags: spec.flags, ...(spec.clutch ? { clutch: { vs: spec.clutch.vs, won: spec.clutch.won } } : {}) } } : {}),
     startTick, endTick, seconds: p.plan!.seconds, frames: p.plan!.frames, createdAt: new Date().toISOString(),
-    renderKey, render: { ...renderInputs, node: versions.node, mapping: capture.mapping, trim: p.plan, segments: p.segments!.map(({ startTick, endTick, speed, outSeconds }) => ({ startTick, endTick, speed, outSeconds })), encoder: p.encoder, workDir: capture.workDir },
+    renderKey, render: { ...renderInputs, node: versions.node, mapping: capture.mapping, trim: p.plan, segments: p.segments!.map(({ startTick, endTick, speed, outSeconds }) => ({ startTick, endTick, speed, outSeconds })), encoder: p.encoder, audio: p.audio, workDir: capture.workDir },
     kind: "highlight", timing: "scheduled",
     crosshair: { source: crosshair, demoPatch: facts.patch, cutoff: cutoff ?? null },
     ...(o.leadOverride !== undefined ? { leadOverride: o.leadOverride } : {}),

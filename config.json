@@ -11,10 +11,20 @@
   },
   "crosshairFromDemoSincePatch": 14182,
   "post": {
-    "encoder": "x265"
+    "encoder": "x265",
+    "audio": "raw"
   },
   "share": {
-    "maxMegabytes": 20
+    "maxMegabytes": 20,
+    "audio": "even"
+  },
+  "audio": {
+    "thresholdDb": -40,
+    "ratio": 3,
+    "attackMs": 5,
+    "releaseMs": 400,
+    "makeupDb": 20,
+    "limitDb": -3
   },
   "vertical": {
     "width": 1080,
