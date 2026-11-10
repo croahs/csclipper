@@ -41,7 +41,8 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (req.method === "POST") {
     const origin = req.headers.origin;
     if (origin && !hosts.has(origin.replace(/^http:\/\//, ""))) return send(403, "wrong origin");
-    const json = (status: number, body: unknown) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+    // An encode outlives a closed tab: answer only a response that is still there.
+    const json = (status: number, body: unknown) => { if (res.destroyed || res.writableEnded) return; res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
     const sh = /^\/(share|reveal)\/(\d+)$/.exec(url.pathname);
     if (sh?.[1] === "share") {
       if (!findClip(Number(sh[2]))) return send(404, `no clip ${sh[2]}`);
