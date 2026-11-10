@@ -106,7 +106,8 @@ const matchLabel = (m) => (m.dateFrom === "added" ? "added " : "") + day(m.date)
 
 let mapI = 0, f = { ...ALL }, rows = [], sum = null, spot = null, hoverSpot = null, picked = null, hover = null, view = null;
 
-$("stamp").textContent = "built " + DATA.generatedAt.slice(0, 16).replace("T", " ");
+// Local time, as the library page shows its own "Updated" stamp.
+$("stamp").textContent = "built " + new Date(DATA.generatedAt).toLocaleString();
 function seg(id, opts, key) {
   $(id).innerHTML = opts.map(([v, l]) => `<button type="button" data-v="${v}">${l}</button>`).join("");
   $(id).onclick = (e) => { const b = e.target.closest("button"); if (b) { f[key] = b.dataset.v; reset(); } };

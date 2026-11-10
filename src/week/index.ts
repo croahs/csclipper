@@ -289,7 +289,7 @@ export function validateMontage(file: string, seconds: number, full = true): str
 export type PlayItem = { no?: number; id: string; title: string; score: number; seconds: number };
 export type WeekPlan = {
   week: string; range: string; path: string; seconds: number; width: number; height: number; fps: number;
-  clips: PlayItem[]; skipped: Skip[]; music: string | null; caption: string; key: string;
+  clips: PlayItem[]; skipped: Skip[]; music: string | null; musicGainDb: number; caption: string; key: string;
 };
 export type WeekResult = WeekPlan & { bytes: number; reused: boolean; encodeSeconds: number };
 
@@ -326,7 +326,7 @@ export function planWeek(a: WeekArgs): WeekPlan & { sources: string[]; audio: bo
   return {
     week: weekLabel(week), range: rangeLabel(week), path: montagePath(week),
     seconds: plannedSeconds(items.map((c) => c.seconds)), width, height, fps: first.fps!,
-    clips: items, skipped: sel.skipped, music, caption: weekCaption(week, items.length), key,
+    clips: items, skipped: sel.skipped, music, musicGainDb: cfg.musicGainDb, caption: weekCaption(week, items.length), key,
     sources: keep.map((i) => sources[i]), audio: keep.map((i) => probes[i].audio),
   };
 }
@@ -351,7 +351,7 @@ export function makeWeek(plan: ReturnType<typeof planWeek>, log: (s: string) => 
       clips: plan.clips.map((c, i) => ({ seconds: c.seconds, audio: plan.audio[i], labelFile: write(`label-${i}.txt`, `#${c.no ?? "?"}  ${c.title}`) })),
       cardTitleFile: write("card-title.txt", `Best of week ${w.week} · ${w.year}`),
       cardRangeFile: write("card-range.txt", plan.range),
-      music: plan.music ? { input: plan.clips.length, gainDb: loadMontage().musicGainDb } : null,
+      music: plan.music ? { input: plan.clips.length, gainDb: plan.musicGainDb } : null,
       font: existsSync(OVERLAY_FONT) ? OVERLAY_FONT : null,
     });
     const graphFile = write("graph.txt", graph);

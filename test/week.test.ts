@@ -116,6 +116,10 @@ test("plannedSeconds and the graph's crossfade offsets agree", () => {
   assert.deepEqual([...g.matchAll(/offset=([\d.]+)/g)].map((m) => Number(m[1])), [1.75, 11.5]);
   assert.match(g, /anullsrc=r=48000:cl=stereo,atrim=duration=20\.000000/); // the clip without audio gets silence
   assert.doesNotMatch(g, /sidechaincompress/);
+  // Three clips: the running length accumulates per joint, so an off-by-one would show from the third offset on.
+  const g3 = buildGraph({ width: 1920, height: 1080, fps: 60, clips: [10, 20, 5].map((seconds, i) => ({ seconds, audio: true, labelFile: String(i) })), cardTitleFile: "t", cardRangeFile: "r", music: { input: 3, gainDb: -14 }, font: null });
+  assert.deepEqual([...g3.matchAll(/offset=([0-9.]+)/g)].map((m) => Number(m[1])), [1.75, 11.5, 31.25]);
+  assert.ok(g3.includes("[3:a]") && g3.includes("atrim=duration=36.250000"), "the music is cut to the planned length");
   const m = buildGraph({ width: 1920, height: 1080, fps: 60, clips: [{ seconds: 10, audio: true, labelFile: "a" }, { seconds: 20, audio: true, labelFile: "b" }], cardTitleFile: "t", cardRangeFile: "r", music: { input: 2, gainDb: -14 }, font: null });
   assert.match(m, /\[2:a\].*atrim=duration=31\.500000.*volume=-14dB,afade=t=out:st=28\.500000:d=3/);
   assert.match(m, /\[mus\]\[key\]sidechaincompress/);
