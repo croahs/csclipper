@@ -74,8 +74,11 @@
   .facet .sub { color: var(--muted); font-size: 12px; }
   .facet.top { margin: 0 0 12px; }
   .facet.top button { font-weight: 600; }
-  /* Delete / the command to delete, under the player */
-  .act { display: flex; align-items: center; gap: 8px; margin-left: auto; white-space: nowrap; }
+  /* Share and Delete / the commands for them, under the player */
+  .act { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin-left: auto; white-space: nowrap; }
+  .act .grp { display: inline-flex; align-items: center; gap: 8px; }
+  .act .note { font-size: 12px; color: var(--muted); }
+  .act .note.err { color: #f0b3a8; white-space: normal; max-width: 40ch; }
   .act button { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 10px; cursor: pointer; color: var(--text); font-size: 12px; }
   .act button.danger:hover { border-color: #b4483c; color: #f0b3a8; }
   .act code { font-size: 12px; color: var(--muted); }
@@ -240,6 +243,8 @@
       c.clutch ? "1v" + c.clutch.vs + (c.clutch.won ? " won" : " lost") : null, ...(c.flags || []), day(dateOf(c))].filter(Boolean);
     text.append(el("div", "facts num", facts.join("  /  ")));
     const act = el("span", "act");
+    act.id = "act";
+    shareControls(c, act);
     if (served) {
       const del = el("button", "danger", "Delete clip " + c.no);
       del.type = "button";
@@ -248,10 +253,9 @@
     } else {
       // From disk the page cannot delete: pnpm library serves it with a Delete button.
       const cmd = "pnpm drop " + c.no;
-      const copy = el("button", "", "Copy");
-      copy.type = "button";
-      copy.addEventListener("click", () => { navigator.clipboard?.writeText(cmd).then(() => { copy.textContent = "Copied"; }, () => {}); });
-      act.append(el("code", "", cmd), copy);
+      const grp = el("span", "grp");
+      grp.append(el("code", "", cmd), copyButton("Copy", cmd));
+      act.append(grp);
     }
     now.append(text, act);
     for (const b of document.querySelectorAll("#rows button")) b.setAttribute("aria-current", String(b.dataset.id === c.id));
@@ -317,6 +321,83 @@
     render();
     if (next) play(next, true);
   }
+
+  // Copy that also works opened from disk, where the async clipboard API may be missing or refused:
+  // then a hidden textarea and execCommand("copy").
+  function copyText(text) {
+    const fallback = () => {
+      const t = el("textarea");
+      t.value = text; t.setAttribute("readonly", ""); t.style.position = "fixed"; t.style.opacity = "0";
+      document.body.append(t); t.select();
+      let ok = false;
+      try { ok = document.execCommand("copy"); } catch {}
+      t.remove();
+      return ok ? Promise.resolve() : Promise.reject(new Error("copy refused"));
+    };
+    return navigator.clipboard && window.isSecureContext ? navigator.clipboard.writeText(text).catch(fallback) : fallback();
+  }
+  function copyButton(label, text) {
+    const b = el("button", "", label);
+    b.type = "button";
+    b.addEventListener("click", () => copyText(text).then(() => { b.textContent = "Copied"; setTimeout(() => { b.textContent = label; }, 1500); }, () => { b.textContent = "Copy failed"; }));
+    return b;
+  }
+
+  // Share: served, a button makes library/share/<no>-<title>.mp4 (H.264, under the upload limit)
+  // and then offers the caption and the file in Explorer; from disk, the pnpm share command.
+  // shares: clip no -> { since } while it runs, { result } or { error } after, for this page view.
+  const shares = new Map();
+  const mb = (bytes) => (bytes / 1048576).toFixed(1) + " MB";
+  function shareControls(c, act) {
+    const s = shares.get(c.no);
+    if (!served) {
+      const cmd = "pnpm share " + c.no;
+      const grp = el("span", "grp");
+      grp.append(el("code", "", cmd), copyButton("Copy", cmd));
+      if (c.caption) grp.append(copyButton("Copy caption", c.caption));
+      act.append(grp);
+      return;
+    }
+    if (s && s.result) {
+      const r = s.result;
+      act.append(el("span", "note", r.file.split("/").pop() + "  " + mb(r.bytes)), copyButton("Copy caption", r.caption));
+      const show = el("button", "", "Show in folder");
+      show.type = "button";
+      show.addEventListener("click", () => fetch("/reveal/" + c.no, { method: "POST" }).catch(() => {}));
+      act.append(show);
+      return;
+    }
+    if (s && s.since) { act.append(el("span", "note busy", "Making the share file... " + Math.round((Date.now() - s.since) / 1000) + " s")); return; }
+    if (s && s.error) act.append(el("span", "note err", s.error));
+    const b = el("button", "", s && s.error ? "Share again" : "Share");
+    b.type = "button";
+    b.addEventListener("click", () => share(c));
+    act.append(b);
+  }
+  // Redraws the controls of the clip on screen (the clip may have changed while an encode ran).
+  function redrawShare() {
+    const c = clips.find((x) => x.id === state.current);
+    const act = $("act");
+    if (!c || !act) return;
+    for (const n of [...act.childNodes]) if (!(n instanceof HTMLButtonElement && n.classList.contains("danger"))) n.remove();
+    const tmp = el("span");
+    shareControls(c, tmp);
+    act.prepend(...tmp.childNodes);
+  }
+  async function share(c) {
+    if (shares.get(c.no)?.since) return;
+    shares.set(c.no, { since: Date.now() });
+    redrawShare();
+    let next;
+    try {
+      const r = await fetch("/share/" + c.no, { method: "POST" });
+      const body = await r.json().catch(() => ({}));
+      next = r.ok ? { result: body } : { error: body.error || r.statusText || String(r.status) };
+    } catch (e) { next = { error: String(e) }; }
+    shares.set(c.no, next);
+    redrawShare();
+  }
+  setInterval(() => { if (document.querySelector("#act .busy")) redrawShare(); }, 1000);
 
   function step(d) {
     const list = shown();

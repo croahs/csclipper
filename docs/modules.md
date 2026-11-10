@@ -22,6 +22,7 @@ pnpm deaths "<demo.dem>" [--timeout <s>] [--dry-run]
 pnpm victims "<demo.dem>" [--timeout <s>] [--dry-run]
 pnpm library [--port <n>]
 pnpm drop <no>...
+pnpm share <no> [--max-mb <n>]
 pnpm trash --empty
 pnpm tidy
 pnpm unsettle <demo sha256 prefix | clip no>...
@@ -76,6 +77,21 @@ through it); served that way the page has a Delete button and the Delete
 key (with a confirm), opened from disk it shows the `pnpm drop <no>`
 command to copy. Index writes (publish, delete) take a short lock,
 `state/.index.lock`, so a delete during a run is never lost.
+
+**Sharing** (`src/share/`, `src/cli/share.ts`; PLAN.md §6 has the rules).
+`pnpm share <no>` writes `library/share/<no>-<slug>.mp4` (H.264, AAC,
+faststart, under `config.json` → `share.maxMegabytes`, default 20;
+`--max-mb` for one run) and prints the path, the size and a caption.
+`planShare` (the two-pass ladder and the refusal) and `shareCaption`
+(`src/share/caption.ts`, also inlined per clip into the page) are pure
+and tested in `test/share.test.ts`. Reuse is recognised by a key in the
+share file's own `comment` tag; nothing is written to `index.json`, and
+the page only changes when a run or a delete rewrites it. Exit 2: the
+clip is too long for the limit. `pnpm library` runs `pnpm share <no>
+--json` as a child process for `POST /share/<no>` (one per clip at a
+time) and opens Explorer for `POST /reveal/<no>`. Measured 2026-11-10
+at 20 MB: a 31 s 1080p60 highlight went to 720p60 two-pass (18.7 MB,
+38 s); a 198 s kills reel to 480p30 (19.0 MB, 95 s).
 
 `pnpm prep` (PLAN.md M5; pnpm's own `setup` and `doctor` commands take the
 obvious names, so `pnpm check` is the report-only form) makes a PC ready:

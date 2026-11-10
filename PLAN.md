@@ -319,6 +319,27 @@ FFmpeg only:
 - montage mode: top N clips of a week concatenated, optional music
   track from a local folder.
 - outputs `library/clips/<id>.mp4` + `library/index.json`.
+- share copies (decided 2026-11-10): library clips are H.265, which
+  Discord, many browsers and phones do not play inline, and often
+  larger than chat upload limits. `pnpm share <no> [--max-mb <n>]`
+  writes `library/share/<no>-<slug>.mp4`: H.264 (libx264), AAC,
+  yuv420p, `+faststart`, never over the limit (`config.json` →
+  `share.maxMegabytes`, default 20, Discord's free upload limit; MB is
+  1024² bytes; aimed at 94 % of it). Quality first: a constant-quality
+  encode (CRF 20) at the source size and rate is kept when it fits
+  (`-fs` stops it at the limit, so a miss costs little); otherwise a
+  two-pass encode at the computed bitrate on a ladder, 1080p60 →
+  720p60 → 720p30 → 480p30, each rung used only above its floor
+  (5000 / 2500 / 1400 / 500 kbps video), never upscaled. Below the
+  bottom floor the clip is refused, naming a limit that would work.
+  Same contract as every stage: temp path, validate (decodes, h264,
+  audio when the source has it, duration within 0.5 s, under the
+  limit), rename. The file carries its own key (clip id, source size
+  and time, limit, recipe) in its metadata, so a valid one is reused;
+  share files are derived output found by name, never written to
+  `index.json`, and the source clip is only read. A one-line caption
+  comes with it (`3k Deagle clutch · Cache · round 12 #CS2`; reels:
+  `Cache · all 9 deaths from the killer's view #CS2`).
 
 ### 7. Library
 
@@ -337,6 +358,16 @@ from disk the page shows the equivalent `pnpm drop <no>` command
 instead (pnpm's own `rm` removes a dependency). Delete moves the file to `library/trash/`, removes the index
 entry, and marks the moment as deleted in the ledger so no run renders
 it again; `pnpm trash --empty` frees the disk. No framework.
+Sharing follows the same two modes (decided 2026-11-10): served, a
+Share button next to Delete asks the server to make the share file
+(§6) in a child process, so the server keeps serving while it
+encodes and a second click joins the running encode; the page then
+shows the file name and size, "Copy caption" and "Show in folder"
+(Explorer with the file selected). Opened from disk it shows the
+`pnpm share <no>` command and the caption to copy (with a fallback
+where the async clipboard API is unavailable). The share and reveal
+routes sit behind the same Host and Origin checks as delete and take
+a clip number only, never a path.
 
 ## Stack
 

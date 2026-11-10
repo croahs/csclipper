@@ -34,7 +34,7 @@ export const ffmpegVersion = () => {
   return r.error || r.status !== 0 ? "unknown" : (r.stdout ?? "").split(/\r?\n/)[0] || "unknown";
 };
 
-export type Probe = { duration: number | null; video: boolean; audio: boolean; videoStreams: number; audioStreams: number; unreadable: boolean; size: string | null };
+export type Probe = { duration: number | null; video: boolean; audio: boolean; videoStreams: number; audioStreams: number; unreadable: boolean; size: string | null; videoCodec: string | null; fps: number | null };
 
 export function probe(file: string): Probe {
   const r = ff(["-i", file]); // exits 1 by design (no output); the stream info is on stderr
@@ -47,6 +47,8 @@ export function probe(file: string): Probe {
     audioStreams: (r.stderr.match(/Stream #\S+.*?: Audio:/g) ?? []).length,
     unreadable: /moov atom not found|Invalid data found/.test(r.stderr),
     size: r.stderr.match(/Stream #.*Video:.*?, (\d{2,5}x\d{2,5})/)?.[1] ?? null,
+    videoCodec: r.stderr.match(/Stream #.*Video: (\w+)/)?.[1] ?? null,
+    fps: Number(r.stderr.match(/Stream #.*Video:.*?, ([\d.]+) fps/)?.[1]) || null,
   };
 }
 

@@ -13,6 +13,9 @@
   "post": {
     "encoder": "x265"
   },
+  "share": {
+    "maxMegabytes": 20
+  },
   "clip": {
     "leadInSeconds": 4,
     "tailSeconds": 5.5

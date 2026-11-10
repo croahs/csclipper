@@ -1,15 +1,22 @@
 // pnpm library [--port <n>]: serve library/ at http://127.0.0.1:<port>/ (default 8765) so the
-// page can delete clips while watching. No dependencies; bound to 127.0.0.1 only.
+// page can delete and share clips while watching. No dependencies; bound to 127.0.0.1 only.
 //   GET  /...          files under library/ (Range requests, so videos can seek)
 //   POST /delete/<no>  as pnpm drop <no>; then the page is rewritten
+//   POST /share/<no>   as pnpm share <no>, in a child process so the server keeps serving;
+//                      answers { file, bytes, caption }. One encode per clip at a time: a second
+//                      request while one runs waits for the same result.
+//   POST /reveal/<no>  opens Explorer with that clip's share file selected
 // Requests whose Host is not this server, or a POST whose Origin is another site, are refused,
-// so no other web page (or DNS rebinding) can delete clips through it.
+// so no other web page (or DNS rebinding) can delete or share clips through it. The POST routes
+// take a clip number only, never a path.
+import { spawn } from "node:child_process";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { LIBRARY_DIR } from "../config.ts";
 import { deleteClip } from "../library/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
+import { findClip, sharePath, type ShareResult } from "../share/index.ts";
 
 const args = process.argv.slice(2);
 const portArg = args.indexOf("--port");
@@ -34,6 +41,21 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (req.method === "POST") {
     const origin = req.headers.origin;
     if (origin && !hosts.has(origin.replace(/^http:\/\//, ""))) return send(403, "wrong origin");
+    const json = (status: number, body: unknown) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+    const sh = /^\/(share|reveal)\/(\d+)$/.exec(url.pathname);
+    if (sh?.[1] === "share") {
+      if (!findClip(Number(sh[2]))) return send(404, `no clip ${sh[2]}`);
+      share(Number(sh[2])).then((r) => json(200, { file: r.file, bytes: r.bytes, caption: r.caption }), (err: ShareError) => json(err.status ?? 500, { error: err.message }));
+      return;
+    }
+    if (sh?.[1] === "reveal") {
+      const e = findClip(Number(sh[2]));
+      const file = e && sharePath(e);
+      if (!file || !existsSync(file)) return send(404, `no share file for clip ${sh[2]}`);
+      // explorer.exe wants /select,"<path>" as one verbatim argument; it exits 1 even when it worked.
+      spawn("explorer.exe", [`/select,"${file}"`], { detached: true, stdio: "ignore", windowsVerbatimArguments: true }).on("error", () => {}).unref();
+      return json(200, { revealed: path.relative(LIBRARY_DIR, file).replaceAll("\\", "/") });
+    }
     const m = /^\/delete\/(\d+)$/.exec(url.pathname);
     if (!m) return send(404, "not found");
     let e;
@@ -67,6 +89,32 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   res.writeHead(200, { "content-type": type, "content-length": size, "accept-ranges": "bytes", "cache-control": "no-store" });
   if (req.method === "HEAD") return res.end();
   stream(file, res);
+}
+
+// Share encodes run as `pnpm share <no> --json` in a child process (the same tsx loader as this
+// one): the encode is synchronous FFmpeg work for up to minutes. In flight, keyed by clip number.
+type ShareError = Error & { status?: number };
+const sharing = new Map<number, Promise<ShareResult>>();
+function share(no: number): Promise<ShareResult> {
+  const running = sharing.get(no);
+  if (running) return running;
+  const p = new Promise<ShareResult>((resolve, reject) => {
+    console.log(`sharing clip ${no}...`);
+    const child = spawn(process.execPath, [...process.execArgv, path.join(import.meta.dirname, "share.ts"), String(no), "--json"], { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "", err = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (err += d));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        try { const r = JSON.parse(out.trim().split(/\r?\n/).pop()!) as ShareResult; console.log(`shared clip ${no}: ${r.file}`); return resolve(r); } catch {}
+      }
+      // Exit 2: refused (too long for the limit, no such clip); the message is for the page.
+      reject(Object.assign(new Error(err.trim() || `pnpm share ${no} exited ${code}`), { status: code === 2 ? 422 : 500 }));
+    });
+  }).finally(() => sharing.delete(no));
+  sharing.set(no, p);
+  return p;
 }
 
 // A file can vanish between the check and the read (a delete): end that response, keep serving.

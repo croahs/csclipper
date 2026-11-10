@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import path from "node:path";
 import { LIBRARY_DIR, STATE_DIR } from "../config.ts";
 import { readRegistry } from "../ingest/index.ts";
+import { shareCaption } from "../share/caption.ts";
 import { readIndex } from "./index.ts";
 
 const TEMPLATE = path.join(import.meta.dirname, "page.html");
@@ -30,6 +31,7 @@ export function writeLibraryPage(o: { running?: boolean } = {}): string {
       no: c.no, id: c.id, file: c.file, title: c.title, map: c.map, round: c.round, seconds: c.seconds, createdAt: c.createdAt,
       kind: c.kind ?? "highlight", match: c.demoSha256, matchDate, dateFrom: finished ? "faceit" : matchDate ? "added" : null,
       rank: m.rank, score: m.score, kills: m.kills, flags: m.flags, clutch: m.clutch,
+      caption: shareCaption(c),
     };
   });
   // Every "<" escaped, so no title can end or reinterpret the script element.

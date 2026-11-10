@@ -70,7 +70,9 @@ no IDs or keys.
 `Make clips.cmd` in the repo root does steps 3 and 4's commands on a
 double-click (`pnpm grab`, then `pnpm go`; the window stays open).
 `pnpm go` again later renders only what is new. `pnpm drop <clip number>`
-removes a clip. More commands and every setting (`config.json`) are in
+removes a clip. `pnpm share <clip number>` makes a copy that plays in
+Discord, browsers and phones and fits a 20 MB upload, with a caption to
+paste. More commands and every setting (`config.json`) are in
 [docs/modules.md](docs/modules.md).
 
 ## Why a second Steam account
