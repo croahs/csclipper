@@ -31,6 +31,9 @@
     "height": 1920,
     "crf": 18
   },
+  "cut": {
+    "crf": 18
+  },
   "montage": {
     "top": 8,
     "musicDir": "",

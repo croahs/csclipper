@@ -8,11 +8,15 @@ import { LIBRARY_DIR } from "../config.ts";
 import { readRegistry } from "../ingest/index.ts";
 import { shareCaption } from "../share/caption.ts";
 import { FEATS, featsOf, weaponsOf } from "./facets.ts";
+import { parseClipHash } from "./hash.ts";
 import { readIndex } from "./index.ts";
 import { readStars } from "./stars.ts";
 import { matchDateOf, readMatchDates } from "./match-date.ts";
 
 const TEMPLATE = path.join(import.meta.dirname, "page.html");
+
+/** The deep-link parser (hash.ts) as the page's script runs it: its own source, compiled. */
+export const hashParserSource = () => `(${parseClipHash.toString()})`;
 export const PAGE = path.join(LIBRARY_DIR, "index.html");
 
 /** running: a pnpm go run is still adding clips (the page says so). */
@@ -36,7 +40,7 @@ export function writeLibraryPage(o: { running?: boolean } = {}): string {
   const hasDeathMap = existsSync(path.join(LIBRARY_DIR, "deaths.html")); // pnpm deathmap has written it: the sidebar links to it
   // Every "<" escaped, so no title can end or reinterpret the script element.
   const json = JSON.stringify({ generatedAt: new Date().toISOString(), running: !!o.running, hasDeathMap, clips, stars, featLabels: FEATS }).replaceAll("<", "\\u003c");
-  const html = readFileSync(TEMPLATE, "utf8").replace("/*__CLIPS__*/[]", () => json);
+  const html = readFileSync(TEMPLATE, "utf8").replace("/*__CLIPS__*/[]", () => json).replace("/*__HASH__*/null", () => hashParserSource());
   mkdirSync(LIBRARY_DIR, { recursive: true });
   const tmp = `${PAGE}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmp, html);

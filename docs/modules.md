@@ -25,6 +25,7 @@ pnpm deathmap
 pnpm drop <no>...
 pnpm share <no> [--max-mb <n>] [--raw-audio]
 pnpm vertical <no> [--shift <percent>]
+pnpm cut <no> <from> <to>      (seconds as the clip plays: 4.5 or 0:04.5)
 pnpm fav <no>...               (star clips; pnpm's own star / unstar star npm packages)
 pnpm unfav <no>...
 pnpm week [<yyyy-Www>] [--top <n>] [--music <file>] [--no-music] [--dry-run] [--json]
@@ -113,7 +114,29 @@ child process. Measured 2026-11-10 (1920x1080p60 sources, preset slow):
 a 7.0 s highlight in 6 s (13.2 MB), a 36.4 s highlight in 31 s
 (73.1 MB), a 162 s kills reel in 188 s (292 MB); about 15-17 Mbps, a
 reuse in about 2 s. The viewmodel, like the radar and kill feed, sits
-mostly outside the centre column.
+mostly outside the centre column. `pnpm library` runs it for `POST
+/vertical/<no>` (answer `{ file, bytes, seconds, caption }`) and
+reveals it for `POST /reveal/<no>/vertical`.
+
+**Cuts** (`src/share/cut.ts`, `src/cli/cut.ts`; PLAN.md §6 has the
+rules). `pnpm cut <no> <from> <to>` writes
+`library/cuts/<no>-<slug>_<from>-<to>.mp4` (tenths, `_0045-0120`) and
+prints the path, the size, the length and share's caption; the library
+clip is untouched. `parseTime`, `parseCutArgs`, `planCut` (the
+refusals and the end clamp), `cutName`, `cutKey` and `cutArgs` (the
+input seek, `-t`, fades capped at a quarter of the cut) are pure and
+tested in `test/cut.test.ts`. Reuse, exit codes (2: no such clip, or a
+refused cut) and `--json` (`file`, `path`, `bytes`, `seconds`,
+`from`, `to`, `caption`, `reused`, `encodeSeconds`) mirror share.
+`pnpm library` serves `POST /cut/<no>` (JSON body `{ from, to }`,
+numbers only, `planCut` against the clip's probed length before the
+child runs: 400 otherwise, 404 for no clip; answer `{ file, bytes,
+seconds, from, to, reused }`; keyed in flight by clip and times) and
+`POST /reveal/<no>/cut/<name>` (a name `isCutName` accepts for that
+clip). Measured 2026-11-10 (1920x1080p60, preset slow): 7.5 s of a
+14.8 s highlight in 8 s (19.0 MB), a reuse in about 1 s. The deep-link
+parser (`src/library/hash.ts`) is tested in `test/deeplink.test.ts`,
+on the very text `page.ts` inlines.
 
 **Stars and filters** (`src/library/stars.ts`, `src/library/facets.ts`,
 `src/cli/star.ts`; PLAN.md §7 has the rules). `pnpm fav <no>...` /
@@ -372,7 +395,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 
 | Path | What |
 |---|---|
-| `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds`; `ingest.keepOriginals` (default false: the file a demo arrived in is deleted once the store holds it); `montage` for `pnpm week`: `top` (8), `musicDir` (empty: no music unless `--music`; else its first audio file by name), `musicGainDb` (-14, music under the game audio); `post.audio` (`raw` default, `even`) and `share.audio` (`even` default, `raw`), the even-sound chain's `audio` parameters (`thresholdDb`, `ratio`, `attackMs`, `releaseMs`, `makeupDb`, `limitDb`; Even sound above) |
+| `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds`; `ingest.keepOriginals` (default false: the file a demo arrived in is deleted once the store holds it); `montage` for `pnpm week`: `top` (8), `musicDir` (empty: no music unless `--music`; else its first audio file by name), `musicGainDb` (-14, music under the game audio); `post.audio` (`raw` default, `even`) and `share.audio` (`even` default, `raw`); `vertical` (`width`, `height`, `crf`) for `pnpm vertical`; `cut.crf` (18) for `pnpm cut`; the even-sound chain's `audio` parameters (`thresholdDb`, `ratio`, `attackMs`, `releaseMs`, `makeupDb`, `limitDb`; Even sound above) |
 | `.env` | identities and tool paths (`.env.example`; `pnpm prep` fills it; M0.2 setup in `docs/spikes.md`) |
 | `src/cli/setup.ts` | `pnpm prep` / `pnpm check`: tool pins with their sha256, Steam and CS2 lookup, the requirement report |
 | `docs/m6-mm-fetch.md` | the execution plan for M6 (matchmaking demos fetched through a CS2 launch, no login): phases, agents, gate, tests |
@@ -682,7 +705,12 @@ re-made. Only a guard refusal gives
   sorts by date added; the playing clip is marked by a tint and a bold
   number. `src/library/page.ts` rewrites it (temp, then rename) after every
   clip a job publishes and at the end of `pnpm go`; inside a run it says
-  "Run in progress: N clips so far".
+  "Run in progress: N clips so far". Under the player: the action row
+  (star, the joined Share / Vertical / Trim group, delete), the trim
+  bar when open, and one output line for what Share, Vertical and Save
+  cut made (from disk: their commands); the player's width leaves room
+  for both (`--below`, set by `fit()`). `#clip=<no>[&t=<s>]` selects a
+  clip (PLAN.md §7); "Death map" shows when the data has `hasDeathMap`.
 - **Stretched aspect** is wired end to end (`captureSize` sets the game
   window, post scales); it has been checked in post only, no game capture
   at 1440x1080 yet.

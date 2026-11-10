@@ -1,16 +1,21 @@
 // pnpm library [--port <n>]: serve library/ at http://127.0.0.1:<port>/ (default 8765) so the
-// page can delete, share and star clips while watching. No dependencies; bound to 127.0.0.1 only.
+// page can delete, share, cut and star clips while watching. No dependencies; bound to 127.0.0.1 only.
 //   GET  /...          files under library/ (Range requests, so videos can seek)
 //   POST /delete/<no>  as pnpm drop <no>; then the page is rewritten
 //   POST /share/<no>   as pnpm share <no>, in a child process so the server keeps serving;
 //                      answers { file, bytes, caption }. One encode per clip at a time: a second
 //                      request while one runs waits for the same result.
-//   POST /reveal/<no>  opens Explorer with that clip's share file selected
+//   POST /vertical/<no>  as pnpm vertical <no>, the same way; answers { file, bytes, seconds, caption }
+//   POST /cut/<no>     body {"from": <s>, "to": <s>}: two numbers, checked as pnpm cut checks them
+//                      (400 otherwise); as pnpm cut <no> <from> <to>, the same way, one encode per
+//                      cut at a time; answers { file, bytes, seconds, from, to, reused }
+//   POST /reveal/<no>[/vertical | /cut/<name>]  opens Explorer with that clip's share file, its
+//                      vertical file, or its cut of that name (a name pnpm cut gives it) selected
 //   POST /star/<no>, /unstar/<no>  as pnpm fav / unfav <no>; answers { stars }, then the page is rewritten
 //   GET  /stars        { stars }: the current starred clip numbers
 // Requests whose Host is not this server, or a POST whose Origin is another site, are refused,
-// so no other web page (or DNS rebinding) can delete, share or star clips through it. The POST routes
-// take a clip number only, never a path.
+// so no other web page (or DNS rebinding) can delete, share, cut or star clips through it. The POST
+// routes take a clip number (a cut also two numbers, a reveal a kind and a checked name), never a path.
 import { spawn } from "node:child_process";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import http from "node:http";
@@ -19,7 +24,9 @@ import { LIBRARY_DIR } from "../config.ts";
 import { deleteClip, readIndex } from "../library/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
 import { changeStars, readStars } from "../library/stars.ts";
+import { CUT_DIR, cutSource, CutRefusal, isCutName, planCut, type CutResult } from "../share/cut.ts";
 import { findClip, sharePath, type ShareResult } from "../share/index.ts";
+import { verticalPath, type VerticalResult } from "../share/vertical.ts";
 
 const args = process.argv.slice(2);
 const portArg = args.indexOf("--port");
@@ -46,16 +53,44 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     if (origin && !hosts.has(origin.replace(/^http:\/\//, ""))) return send(403, "wrong origin");
     // An encode outlives a closed tab: answer only a response that is still there.
     const json = (status: number, body: unknown) => { if (res.destroyed || res.writableEnded) return; res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
-    const sh = /^\/(share|reveal)\/(\d+)$/.exec(url.pathname);
-    if (sh?.[1] === "share") {
-      if (!findClip(Number(sh[2]))) return send(404, `no clip ${sh[2]}`);
-      share(Number(sh[2])).then((r) => json(200, { file: r.file, bytes: r.bytes, caption: r.caption }), (err: ShareError) => json(err.status ?? 500, { error: err.message }));
+    const fail = (err: ChildError) => json(err.status ?? 500, { error: err.message });
+    const sh = /^\/(share|vertical)\/(\d+)$/.exec(url.pathname);
+    if (sh) {
+      const no = Number(sh[2]);
+      if (!findClip(no)) return send(404, `no clip ${no}`);
+      if (sh[1] === "share") runChild<ShareResult>(`share ${no}`, "share.ts", [String(no)]).then((r) => json(200, { file: r.file, bytes: r.bytes, caption: r.caption }), fail);
+      else runChild<VerticalResult>(`vertical ${no}`, "vertical.ts", [String(no)]).then((r) => json(200, { file: r.file, bytes: r.bytes, seconds: r.seconds, caption: r.caption }), fail);
       return;
     }
-    if (sh?.[1] === "reveal") {
-      const e = findClip(Number(sh[2]));
-      const file = e && sharePath(e);
-      if (!file || !existsSync(file)) return send(404, `no share file for clip ${sh[2]}`);
+    const ct = /^\/cut\/(\d+)$/.exec(url.pathname);
+    if (ct) {
+      const no = Number(ct[1]);
+      readBody(req, 1024).then((text) => {
+        let body: unknown;
+        try { body = JSON.parse(text); } catch { return json(400, { error: 'the body must be JSON: {"from": <s>, "to": <s>}' }); }
+        const { from, to } = (body ?? {}) as { from?: unknown; to?: unknown };
+        if (typeof from !== "number" || typeof to !== "number") return json(400, { error: "from and to must be numbers of seconds" });
+        // The same checks as pnpm cut, against the clip's own length, before anything is spawned.
+        let c;
+        try { c = planCut(from, to, cutSource(no).seconds); } catch (err) {
+          const m = (err as Error).message;
+          return json(err instanceof CutRefusal ? (/^no clip/.test(m) ? 404 : 400) : 500, { error: m });
+        }
+        runChild<CutResult>(`cut ${no} ${c.from} ${c.to}`, "cut.ts", [String(no), String(c.from), String(c.to)])
+          .then((r) => json(200, { file: r.file, bytes: r.bytes, seconds: r.seconds, from: r.from, to: r.to, reused: r.reused }), fail);
+      }, (err: Error) => json(400, { error: err.message }));
+      return;
+    }
+    const rv = /^\/reveal\/(\d+)(?:\/(vertical)|\/cut\/([^/]+))?$/.exec(url.pathname);
+    if (rv) {
+      const e = findClip(Number(rv[1]));
+      let name: string | undefined;
+      try { name = rv[3] === undefined ? undefined : decodeURIComponent(rv[3]); } catch { return send(400, "bad name"); }
+      // A cut is named, never pathed: only a name pnpm cut could have given this clip, inside library/cuts/.
+      if (name !== undefined && (!e || !isCutName(e, name))) return send(400, "not a cut of this clip");
+      const kind = name !== undefined ? "cut" : rv[2] ?? "share";
+      const file = e && (kind === "cut" ? path.join(CUT_DIR, name!) : kind === "vertical" ? verticalPath(e) : sharePath(e));
+      if (!file || !existsSync(file)) return send(404, `no ${kind} file for clip ${rv[1]}`);
       // explorer.exe wants /select,"<path>" as one verbatim argument; it exits 1 even when it worked.
       spawn("explorer.exe", [`/select,"${file}"`], { detached: true, stdio: "ignore", windowsVerbatimArguments: true }).on("error", () => {}).unref();
       return json(200, { revealed: path.relative(LIBRARY_DIR, file).replaceAll("\\", "/") });
@@ -114,30 +149,43 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
 const knownNos = () => new Set(Object.values(readIndex().clips).map((c) => c.no).filter((n): n is number => n !== undefined));
 
-// Share encodes run as `pnpm share <no> --json` in a child process (the same tsx loader as this
-// one): the encode is synchronous FFmpeg work for up to minutes. In flight, keyed by clip number.
-type ShareError = Error & { status?: number };
-const sharing = new Map<number, Promise<ShareResult>>();
-function share(no: number): Promise<ShareResult> {
-  const running = sharing.get(no);
-  if (running) return running;
-  const p = new Promise<ShareResult>((resolve, reject) => {
-    console.log(`sharing clip ${no}...`);
-    const child = spawn(process.execPath, [...process.execArgv, path.join(import.meta.dirname, "share.ts"), String(no), "--json"], { stdio: ["ignore", "pipe", "pipe"] });
+// Share, vertical and cut encodes run as `pnpm <share|vertical|cut> <no> [...] --json` in a child
+// process (the same tsx loader as this one): the encode is synchronous FFmpeg work for up to
+// minutes. In flight, keyed by what is made ("share 12", "cut 12 4.5 12"): a second identical
+// request joins the running one.
+type ChildError = Error & { status?: number };
+const running = new Map<string, Promise<unknown>>();
+function runChild<T>(what: string, script: string, args: string[]): Promise<T> {
+  const inFlight = running.get(what);
+  if (inFlight) return inFlight as Promise<T>;
+  const p = new Promise<T>((resolve, reject) => {
+    console.log(`${what}...`);
+    const child = spawn(process.execPath, [...process.execArgv, path.join(import.meta.dirname, script), ...args, "--json"], { stdio: ["ignore", "pipe", "pipe"] });
     let out = "", err = "";
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (err += d));
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) {
-        try { const r = JSON.parse(out.trim().split(/\r?\n/).pop()!) as ShareResult; console.log(`shared clip ${no}: ${r.file}`); return resolve(r); } catch {}
+        try { const r = JSON.parse(out.trim().split(/\r?\n/).pop()!) as T & { file: string }; console.log(`${what}: ${r.file}`); return resolve(r); } catch {}
       }
-      // Exit 2: refused (too long for the limit, no such clip); the message is for the page.
-      reject(Object.assign(new Error(err.trim() || `pnpm share ${no} exited ${code}`), { status: code === 2 ? 422 : 500 }));
+      // Exit 2: refused (too long for the limit, no such clip, a cut outside the clip); the message is for the page.
+      reject(Object.assign(new Error(err.trim() || `pnpm ${what} exited ${code}`), { status: code === 2 ? 422 : 500 }));
     });
-  }).finally(() => sharing.delete(no));
-  sharing.set(no, p);
+  }).finally(() => running.delete(what));
+  running.set(what, p);
   return p;
+}
+
+/** A request body of at most max characters; a longer one is refused. */
+function readBody(req: http.IncomingMessage, max: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let text = "";
+    req.setEncoding("utf8");
+    req.on("data", (d: string) => { text += d; if (text.length > max) { reject(new Error("body too large")); req.destroy(); } });
+    req.on("end", () => resolve(text));
+    req.on("error", reject);
+  });
 }
 
 // A file can vanish between the check and the read (a delete): end that response, keep serving.

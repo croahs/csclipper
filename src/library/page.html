@@ -90,6 +90,35 @@
   .act button { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 10px; cursor: pointer; color: var(--text); font-size: 12px; }
   .act button.danger:hover { border-color: #b4483c; color: #f0b3a8; }
   .act code { font-size: 12px; color: var(--muted); }
+  /* Share, Vertical and Trim: one joined group, so the row stays short */
+  .act .seg { display: inline-flex; }
+  .act .seg button { border-radius: 0; margin-left: -1px; }
+  .act .seg button:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
+  .act .seg button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+  .act button[aria-pressed="true"]:not(.star) { background: var(--accent-tint); border-color: rgba(240, 166, 58, 0.45); position: relative; }
+  /* What Share, Vertical and Save cut made (or, from disk, their commands): one line under the title */
+  .out { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 16px; }
+  .out:empty { display: none; }
+  .out .act { margin-left: 0; }
+  .out .what { font-size: 12px; color: var(--muted); }
+  .facet a.dmap { display: block; padding: 5px 8px; border-radius: var(--radius); color: var(--text); text-decoration: none; font-weight: 600; }
+  .facet a.dmap:hover { background: var(--surface-2); }
+  .facet a.dmap[hidden] { display: none; }
+
+  /* Trim: the clip's timeline under the player, two handles, the selection in the accent tint */
+  .trim[hidden] { display: none; }
+  .trim { display: grid; gap: 6px; user-select: none; }
+  .track { position: relative; height: 26px; cursor: pointer; touch-action: none; }
+  .track::before { content: ""; position: absolute; left: 0; right: 0; top: 11px; height: 4px; border-radius: 2px; background: var(--line); }
+  .track .sel { position: absolute; top: 5px; height: 16px; background: var(--accent-tint); border-top: 2px solid var(--accent); border-bottom: 2px solid var(--accent); }
+  .track .head { position: absolute; top: 3px; width: 2px; height: 20px; margin-left: -1px; background: var(--text); opacity: 0.6; pointer-events: none; }
+  .track .hd { position: absolute; top: 1px; width: 12px; height: 24px; margin-left: -6px; border-radius: 3px; background: var(--accent); border: 2px solid var(--bg); cursor: ew-resize; }
+  .track .hd:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
+  .trow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+  .trow .tlen { font-size: 12px; color: var(--muted); }
+  .trow .tlen b { color: var(--text); font-weight: 600; }
+  .trow .act { gap: 8px; }
+  .trow button:disabled { opacity: 0.5; cursor: default; }
 
   /* Player */
   .stage { flex: 1; min-height: 0; display: flex; align-items: flex-start; justify-content: center; }
@@ -99,7 +128,8 @@
   .frame video { display: block; width: 100%; height: 100%; background: #08090a; }
   @supports (width: 1cqw) {
     .stage { container-type: size; }
-    .col { width: min(100cqw, calc((100cqh - 56px) * 16 / 9)); }
+    /* --below: the trim bar and the output line when shown (set by fit()) */
+    .col { width: min(100cqw, calc((100cqh - 56px - var(--below, 0px)) * 16 / 9)); }
   }
   @media (max-width: 720px) { main.main { height: auto; } .stage { display: block; container-type: normal; } .col { width: 100%; } }
   .now { display: flex; align-items: baseline; gap: 12px; min-height: 44px; }
@@ -144,7 +174,7 @@
 <div class="app">
   <aside class="side" aria-label="Filters">
     <h1>Clips</h1>
-    <div class="facet top"><button type="button" id="newest">Newest clips</button></div>
+    <div class="facet top"><button type="button" id="newest">Newest clips</button><a class="dmap" id="deathmap" href="deaths.html" hidden>Death map</a></div>
     <p class="run" id="run" hidden></p>
     <p class="stamp" id="stamp"></p>
     <label class="field">Find
@@ -170,7 +200,17 @@
     <div class="stage">
       <div class="col">
         <div class="frame"><video id="player" controls playsinline preload="metadata"></video></div>
+        <div class="trim" id="trim" hidden>
+          <div class="track" id="track">
+            <div class="sel" id="tsel"></div>
+            <div class="head" id="thead"></div>
+            <div class="hd" id="tin" role="slider" tabindex="0" aria-label="Cut starts at"></div>
+            <div class="hd" id="tout" role="slider" tabindex="0" aria-label="Cut ends at"></div>
+          </div>
+          <div class="trow"><span class="tlen num" id="tlen"></span><span class="act" id="tact"></span></div>
+        </div>
         <div class="now" id="now"></div>
+        <div class="out" id="out"></div>
       </div>
     </div>
   </main>
@@ -254,11 +294,13 @@
   }
 
   function play(c, autoplay) {
+    // The trim bar belongs to one clip: another clip closes it.
+    if (trim.open && (!c || c.id !== trim.id)) closeTrim();
     state.current = c ? c.id : null;
     const v = $("player");
     const now = $("now");
     now.replaceChildren();
-    if (!c) { v.removeAttribute("src"); v.load(); return; }
+    if (!c) { v.removeAttribute("src"); v.load(); drawOut(); return; }
     if (v.getAttribute("src") !== c.file) { v.src = c.file; }
     // Sound on. Browsers allow that only after a click or key press, so the first clip on load waits.
     if (autoplay) v.play().catch(() => {});
@@ -270,8 +312,7 @@
     text.append(el("div", "facts num", facts.join("  /  ")));
     const act = el("span", "act");
     act.id = "act";
-    act.append(starControl(c));
-    shareControls(c, act);
+    act.append(starControl(c), exportGroup(c));
     if (served) {
       const del = el("button", "danger", "Delete clip " + c.no);
       del.type = "button";
@@ -285,6 +326,7 @@
       act.append(grp);
     }
     now.append(text, act);
+    drawOut();
     for (const b of document.querySelectorAll("#rows button.pick")) b.setAttribute("aria-current", String(b.dataset.id === c.id));
     const cur = document.querySelector('#rows button.pick[aria-current="true"]');
     if (cur) {
@@ -402,48 +444,212 @@
     return b;
   }
 
-  // Share: served, a button makes library/share/<no>-<title>.mp4 (H.264, under the upload limit)
-  // and then offers the caption and the file in Explorer; from disk, the pnpm share command.
-  // shares: clip no -> { since } while it runs, { result } or { error } after, for this page view.
-  const shares = new Map();
+  // Share, Vertical and Trim: one joined group in the action row. Served, Share and Vertical ask
+  // the server to make library/share/ and library/vertical/ copies, Trim opens the trim bar whose
+  // Save cut makes library/cuts/<no>-<title>_<from>-<to>.mp4; what they made, or are making, shows
+  // on one line under the title (#out). From disk, Share and Vertical show their pnpm commands on
+  // that line, and the trim bar shows the pnpm cut command.
+  // jobs: "share:<no>", "vertical:<no>", "cut:<no>" -> { since } while it runs, { result } or { error }
+  // after, for this page view. shown: from disk, the commands opened ("share:<no>", "vertical:<no>").
+  const jobs = new Map();
+  const opened = new Set();
   const mb = (bytes) => (bytes / 1048576).toFixed(1) + " MB";
-  function shareControls(c, act) {
-    const s = shares.get(c.no);
-    if (!served) {
-      const cmd = "pnpm share " + c.no;
-      const grp = el("span", "grp");
-      grp.append(el("code", "", cmd), copyButton("Copy", cmd));
-      if (c.caption) grp.append(copyButton("Copy caption", c.caption));
-      act.append(grp);
-      return;
+  const KIND_LABEL = { share: "Share", vertical: "Vertical", cut: "Cut" };
+  function exportGroup(c) {
+    const seg = el("span", "seg");
+    for (const kind of ["share", "vertical", "trim"]) {
+      const b = el("button", "", kind === "trim" ? "Trim" : KIND_LABEL[kind]);
+      b.type = "button";
+      b.dataset.kind = kind;
+      if (kind === "trim") {
+        b.title = "Cut a shorter copy (i / o set in and out)";
+        b.setAttribute("aria-pressed", String(trim.open && trim.id === c.id));
+        b.addEventListener("click", () => { if (trim.open) closeTrim(); else openTrim(c); });
+      } else if (served) {
+        b.title = kind === "share" ? "An H.264 copy under the upload limit" : "A 9:16 copy for Reels, TikTok and Shorts";
+        b.addEventListener("click", () => make(c, kind));
+      } else {
+        b.setAttribute("aria-pressed", String(opened.has(kind + ":" + c.no)));
+        b.addEventListener("click", () => { const k = kind + ":" + c.no; if (opened.has(k)) opened.delete(k); else opened.add(k); b.setAttribute("aria-pressed", String(opened.has(k))); drawOut(); });
+      }
+      seg.append(b);
     }
-    if (s && s.result) {
-      const r = s.result;
-      act.append(el("span", "note", r.file.split("/").pop() + "  " + mb(r.bytes)), copyButton("Copy caption", r.caption));
-      const show = el("button", "", "Show in folder");
-      show.type = "button";
-      show.addEventListener("click", () => fetch("/reveal/" + c.no, { method: "POST" }).catch(() => {}));
-      act.append(show);
-      return;
-    }
-    if (s && s.since) { act.append(el("span", "note busy", "Making the share file... " + Math.round((Date.now() - s.since) / 1000) + " s")); return; }
-    if (s && s.error) act.append(el("span", "note err", s.error));
-    const b = el("button", "", s && s.error ? "Share again" : "Share");
+    return seg;
+  }
+  function revealButton(path) {
+    const b = el("button", "", "Show in folder");
     b.type = "button";
-    b.addEventListener("click", () => share(c));
-    act.append(b);
+    b.addEventListener("click", () => fetch(path, { method: "POST" }).catch(() => {}));
+    return b;
   }
-  // Redraws the controls of the clip on screen (the clip may have changed while an encode ran).
-  function redrawShare() {
+  function commandLine(cmd, caption) {
+    const grp = el("span", "act");
+    grp.append(el("code", "", cmd), copyButton("Copy", cmd));
+    if (caption) grp.append(copyButton("Copy caption", caption));
+    return grp;
+  }
+  // The output line of the clip on screen (the clip may have changed while an encode ran).
+  function drawOut() {
+    const out = $("out");
+    out.replaceChildren();
     const c = clips.find((x) => x.id === state.current);
-    const act = $("act");
-    if (!c || !act) return;
-    for (const n of [...act.childNodes]) if (!(n instanceof HTMLElement && (n.classList.contains("danger") || n.classList.contains("star")))) n.remove();
-    const tmp = el("span");
-    shareControls(c, tmp);
-    const star = act.querySelector(".star");
-    if (star) star.after(...tmp.childNodes); else act.prepend(...tmp.childNodes);
+    if (c) {
+      if (!served) {
+        if (opened.has("share:" + c.no)) out.append(commandLine("pnpm share " + c.no, c.caption));
+        if (opened.has("vertical:" + c.no)) out.append(commandLine("pnpm vertical " + c.no, c.caption));
+      } else for (const kind of ["share", "vertical", "cut"]) {
+        const s = jobs.get(kind + ":" + c.no);
+        if (!s) continue;
+        const line = el("span", "act");
+        line.append(el("span", "what", KIND_LABEL[kind]));
+        if (s.since) line.append(el("span", "note busy", (kind === "cut" ? "Making the cut " + s.from + "-" + s.to + " s... " : "Making the " + kind + " file... ") + Math.round((Date.now() - s.since) / 1000) + " s"));
+        else if (s.error) {
+          line.append(el("span", "note err", s.error));
+          if (kind !== "cut") { const again = el("button", "", "Try again"); again.type = "button"; again.addEventListener("click", () => make(c, kind)); line.append(again); }
+        } else {
+          const r = s.result;
+          const name = r.file.split("/").pop();
+          line.append(el("span", "note", name + "  " + mb(r.bytes) + (r.seconds ? "  " + r.seconds.toFixed(1) + " s" : "") + (r.reused ? "  (already made)" : "")));
+          if (kind === "share") line.append(copyButton("Copy caption", r.caption));
+          line.append(revealButton("/reveal/" + c.no + (kind === "share" ? "" : kind === "vertical" ? "/vertical" : "/cut/" + encodeURIComponent(name))));
+        }
+        out.append(line);
+      }
+    }
+    fit();
   }
+  // The player leaves room for the trim bar and the output line, so nothing is pushed off screen.
+  function fit() {
+    const below = (trim.open ? $("trim").offsetHeight + 10 : 0) + ($("out").childElementCount ? $("out").offsetHeight + 10 : 0);
+    document.querySelector(".col").style.setProperty("--below", below + "px");
+  }
+  // Served: POST /share/<no>, /vertical/<no>, or /cut/<no> with { from, to }; the server runs the
+  // pnpm command in a child process, and a second identical request joins the running one.
+  async function make(c, kind, body) {
+    const key = kind + ":" + c.no;
+    if (jobs.get(key)?.since) return;
+    jobs.set(key, Object.assign({ since: Date.now() }, body || {}));
+    drawOut();
+    let next;
+    try {
+      const r = await fetch("/" + kind + "/" + c.no, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : { method: "POST" });
+      const res = await r.json().catch(() => ({}));
+      next = r.ok ? { result: res } : { error: res.error || r.statusText || String(r.status) };
+    } catch (e) { next = { error: String(e) }; }
+    jobs.set(key, next);
+    drawOut();
+    if (kind === "cut") drawTrim();
+  }
+
+  // Trim: the clip's timeline under the player with an in and an out handle, dragged or nudged
+  // (arrows: a frame, shift: 1 s; i / o: in / out at the playing position). Playback loops inside
+  // the selection while the bar is open. The library clip is never changed: Save cut makes a copy.
+  const FRAME = 1 / 60; // library clips are rendered at config.json render.fps, 60
+  const MIN_CUT = 1, WHOLE = 0.1; // as pnpm cut refuses: under 1 s, or within 0.1 s of both ends
+  const trim = { open: false, id: null, from: 0, to: 0, drag: null };
+  const snap = (t) => Math.round(t / FRAME) * FRAME;
+  const secs = (t) => String(+t.toFixed(3)); // as the command takes them
+  function clipLength(c) { const d = $("player").duration; return Number.isFinite(d) && d > 0 ? d : c.seconds; }
+  function trimClip() { return clips.find((x) => x.id === trim.id); }
+  function openTrim(c) {
+    trim.open = true; trim.id = c.id;
+    const d = clipLength(c);
+    trim.from = 0; trim.to = d;
+    $("trim").hidden = false;
+    drawTrim();
+    syncTrimButton();
+    $("tin").focus({ preventScroll: true });
+    requestAnimationFrame(loop);
+  }
+  function closeTrim() {
+    trim.open = false; trim.drag = null;
+    $("trim").hidden = true;
+    syncTrimButton();
+    fit();
+  }
+  function syncTrimButton() { const b = document.querySelector('#act [data-kind="trim"]'); if (b) b.setAttribute("aria-pressed", String(trim.open)); }
+  // Moves one end, keeping the cut at least MIN_CUT long and inside the clip.
+  function setEnd(which, t) {
+    const c = trimClip();
+    if (!c) return;
+    const d = clipLength(c);
+    if (which === "from") trim.from = Math.max(0, Math.min(snap(t), trim.to - MIN_CUT));
+    else trim.to = Math.min(d, Math.max(snap(t), trim.from + MIN_CUT));
+    drawTrim();
+  }
+  function drawTrim() {
+    const c = trimClip();
+    if (!trim.open || !c) return;
+    const d = clipLength(c);
+    trim.to = Math.min(trim.to, d);
+    const pct = (t) => (100 * t / d) + "%";
+    $("tsel").style.left = pct(trim.from); $("tsel").style.width = (100 * (trim.to - trim.from) / d) + "%";
+    $("tin").style.left = pct(trim.from); $("tout").style.left = pct(trim.to);
+    for (const [h, t, label] of [[$("tin"), trim.from, "In"], [$("tout"), trim.to, "Out"]]) {
+      h.setAttribute("aria-valuemin", "0"); h.setAttribute("aria-valuemax", d.toFixed(2)); h.setAttribute("aria-valuenow", t.toFixed(2));
+      h.setAttribute("aria-valuetext", label + " " + t.toFixed(2) + " s"); h.title = label + " " + t.toFixed(2) + " s (arrows: a frame, shift: 1 s)";
+    }
+    const whole = trim.from <= WHOLE && trim.to >= d - WHOLE;
+    const len = $("tlen");
+    len.replaceChildren("In ", el("b", "", trim.from.toFixed(2) + " s"), "  ·  Out ", el("b", "", trim.to.toFixed(2) + " s"), "  ·  Length ", el("b", "", (trim.to - trim.from).toFixed(2) + " s"),
+      whole ? "  ·  drag a handle (the whole clip is nothing to cut)" : "");
+    const act = $("tact");
+    act.replaceChildren();
+    const cmd = "pnpm cut " + c.no + " " + secs(trim.from) + " " + secs(trim.to);
+    if (served) {
+      const busy = jobs.get("cut:" + c.no)?.since;
+      const save = el("button", "", busy ? "Saving..." : "Save cut");
+      save.type = "button"; save.id = "tsave";
+      save.disabled = whole || !!busy;
+      save.addEventListener("click", () => make(c, "cut", { from: +secs(trim.from), to: +secs(trim.to) }));
+      act.append(save);
+    } else if (!whole) act.append(el("code", "", cmd), copyButton("Copy", cmd));
+    const cancel = el("button", "", "Cancel");
+    cancel.type = "button";
+    cancel.addEventListener("click", closeTrim);
+    act.append(cancel);
+    fit();
+  }
+  // The playhead and the loop: back to in at the out point (or when played from outside the cut).
+  function loop() {
+    if (!trim.open) return;
+    const v = $("player"), c = trimClip();
+    if (c) {
+      $("thead").style.left = (100 * v.currentTime / clipLength(c)) + "%";
+      if (!v.paused && !trim.drag && (v.currentTime >= trim.to - 0.01 || v.currentTime < trim.from - 0.05)) v.currentTime = trim.from;
+    }
+    requestAnimationFrame(loop);
+  }
+  $("player").addEventListener("ended", () => { if (trim.open) { const v = $("player"); v.currentTime = trim.from; v.play().catch(() => {}); } });
+  $("player").addEventListener("loadedmetadata", () => { if (trim.open) drawTrim(); });
+  // Dragging: a handle, or the track (the nearer handle jumps there); the picture follows the handle.
+  function timeAt(x) { const r = $("track").getBoundingClientRect(); return Math.max(0, Math.min(1, (x - r.left) / r.width)) * clipLength(trimClip()); }
+  $("track").addEventListener("pointerdown", (e) => {
+    if (!trim.open || e.button !== 0) return;
+    const t = timeAt(e.clientX);
+    const which = e.target === $("tin") ? "from" : e.target === $("tout") ? "to" : Math.abs(t - trim.from) <= Math.abs(t - trim.to) ? "from" : "to";
+    trim.drag = which;
+    $("track").setPointerCapture(e.pointerId);
+    $("player").pause();
+    setEnd(which, t);
+    $(which === "from" ? "tin" : "tout").focus({ preventScroll: true });
+    $("player").currentTime = trim[which];
+    e.preventDefault();
+  });
+  $("track").addEventListener("pointermove", (e) => {
+    if (!trim.drag) return;
+    setEnd(trim.drag, timeAt(e.clientX));
+    $("player").currentTime = trim[trim.drag];
+  });
+  const endDrag = () => { trim.drag = null; };
+  $("track").addEventListener("pointerup", endDrag);
+  $("track").addEventListener("pointercancel", endDrag);
+  for (const [id, which] of [["tin", "from"], ["tout", "to"]]) $(id).addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault(); e.stopPropagation();
+    setEnd(which, trim[which] + (e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 1 : FRAME));
+    $("player").currentTime = trim[which];
+  });
 
   // Star: served, a toggle (and the s key) through POST /star/<no> or /unstar/<no>; the server
   // writes library/stars.json and rewrites index.html. From disk, the pnpm fav / unfav command.
@@ -479,20 +685,7 @@
     const again = fromRow ? document.querySelector('#rows button.rstar[data-id="' + c.id + '"]') : document.querySelector("#act .star");
     if (again) again.focus({ preventScroll: true });
   }
-  async function share(c) {
-    if (shares.get(c.no)?.since) return;
-    shares.set(c.no, { since: Date.now() });
-    redrawShare();
-    let next;
-    try {
-      const r = await fetch("/share/" + c.no, { method: "POST" });
-      const body = await r.json().catch(() => ({}));
-      next = r.ok ? { result: body } : { error: body.error || r.statusText || String(r.status) };
-    } catch (e) { next = { error: String(e) }; }
-    shares.set(c.no, next);
-    redrawShare();
-  }
-  setInterval(() => { if (document.querySelector("#act .busy")) redrawShare(); }, 1000);
+  setInterval(() => { if (document.querySelector("#out .busy")) drawOut(); }, 1000);
 
   function step(d) {
     const list = shown();
@@ -502,6 +695,13 @@
   }
   document.addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (trim.open) {
+      // While the trim bar is open: i / o set in and out at the playing position, Escape closes it,
+      // and the page's own keys stay off while the bar has focus or a handle is dragged.
+      if (e.key === "i" || e.key === "o") { e.preventDefault(); setEnd(e.key === "i" ? "from" : "to", $("player").currentTime); return; }
+      if (e.key === "Escape") { e.preventDefault(); closeTrim(); return; }
+      if (trim.drag || $("trim").contains(e.target)) return;
+    }
     // On the focused player the arrows seek, as players do; j / k still step.
     const arrows = !(e.target instanceof HTMLVideoElement);
     if (e.key === "Delete" && served) { e.preventDefault(); remove(clips.find((c) => c.id === state.current)); return; }
@@ -519,7 +719,26 @@
   $("sort").addEventListener("input", render);
   // Keep pages restored from the back/forward cache consistent with the reset controls.
   window.addEventListener("pageshow", (e) => { if (e.persisted) { clearFilters(); $("sort").value = "score"; render(); } });
+  // Deep link (the death map links here): #clip=<no>[&t=<seconds>] clears the filters, selects that
+  // clip and seeks to t once its metadata is in, clamped to its length. It never starts playback,
+  // so sound still waits for a click or key. An unknown number changes nothing.
+  const parseClipHash = /*__HASH__*/null;
+  function followHash() {
+    const h = parseClipHash && parseClipHash(location.hash);
+    const c = h && clips.find((x) => x.no === h.no);
+    if (!c) return;
+    clearFilters();
+    state.current = c.id;
+    render();
+    if (h.t === undefined) return;
+    const v = $("player");
+    const seek = () => { v.currentTime = Math.min(h.t, Number.isFinite(v.duration) ? v.duration : h.t); };
+    if (v.readyState >= 1) seek(); else v.addEventListener("loadedmetadata", seek, { once: true });
+  }
+  window.addEventListener("hashchange", followHash);
+  $("deathmap").hidden = !data.hasDeathMap;
   render();
+  followHash();
   // Served, the server's stars win over the inlined ones (a pnpm fav may have run since the page was written).
   if (served) fetch("/stars", { cache: "no-store" }).then((r) => r.ok ? r.json() : null).then((b) => {
     if (!b || !Array.isArray(b.stars) || starChanges) return; // a toggle already brought newer stars

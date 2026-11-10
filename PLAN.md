@@ -391,6 +391,31 @@ FFmpeg only:
   the same name: one vertical file per clip, the last crop asked for
   wins. Never written to `index.json`; the source only read. Prints
   share's caption.
+- cuts (decided 2026-11-10): a clip often runs longer than the moment
+  worth sending. `pnpm cut <no> <from> <to>` (seconds as the clip
+  plays, `4.5` or `0:04.5`) writes
+  `library/cuts/<no>-<slug>_<from>-<to>.mp4`, the times in tenths
+  without a dot (4.5 s to 18.2 s is `_0045-0182`), so several cuts of
+  one clip sit side by side; two that differ by less than a tenth
+  share the name and the later replaces the earlier. The library clip
+  is never changed: a cut is derived output like a share file, never
+  written to `index.json`, the source only read. Refused (exit 2):
+  from below 0, to more than 0.05 s past the end (inside that, clamped
+  to the end: a player's last frame), a cut under 1 s, and the whole
+  clip (within 0.1 s at both ends: nothing to cut). Frame-accurate, so
+  decoded and re-encoded, never a keyframe-snapped stream copy: an
+  input seek (`-ss` before `-i`, which decodes from the keyframe
+  before and drops what precedes `from`) and `-t`; H.264 (libx264)
+  `-preset slow`, CRF `config.json` → `cut.crf` (18), yuv420p, the
+  source size and rate, AAC 192 kbps, `+faststart`, with the library
+  clips' fade in and out (`render.fadeSeconds`, at most a quarter of
+  the cut) on picture and sound. The sound stays raw, as the master
+  has it; `pnpm share` evens it. Same contract as share: temp path,
+  validate (decodes, h264, the source size and rate, audio when the
+  source has it, duration within 0.1 s of to − from), rename; the key
+  (clip id, source size and time, from and to to the millisecond, the
+  fade, CRF, recipe) sits in the file's comment tag, so the same cut
+  is reused. Prints the path, size, length and share's caption.
 - even sound (decided 2026-11-10): an AWP crack sits 30-40 dB over the
   footsteps between shots, so a clip turned up to hear the footsteps
   blasts at the shot. One pure function (`src/post/audio.ts`) builds
@@ -427,11 +452,11 @@ instead (pnpm's own `rm` removes a dependency). Delete moves the file to `librar
 entry, and marks the moment as deleted in the ledger so no run renders
 it again; `pnpm trash --empty` frees the disk. No framework.
 Sharing follows the same two modes (decided 2026-11-10): served, a
-Share button next to Delete asks the server to make the share file
+Share button (in the Share / Vertical / Trim group, below) asks the server to make the share file
 (§6) in a child process, so the server keeps serving while it
 encodes and a second click joins the running encode; the page then
 shows the file name and size, "Copy caption" and "Show in folder"
-(Explorer with the file selected). Opened from disk it shows the
+(Explorer with the file selected). Opened from disk the button shows the
 `pnpm share <no>` command and the caption to copy (with a fallback
 where the async clipboard API is unavailable). The share and reveal
 routes sit behind the same Host and Origin checks as delete and take
@@ -486,6 +511,33 @@ would skip their clips. A cache without positions is re-parsed once
 when its demo is still there, else counted and left as it is; the
 page says per map how many matches have positions. One floor plane:
 multi-level maps (Nuke, Vertigo) overlap.
+Trim, vertical, the death map and deep links (decided 2026-11-10):
+Share, Vertical and Trim sit in one joined group in the action row, so
+the row stays one line served at 1366x768; what they make shows on
+one line under the title (file name, size, length, "Show in folder").
+Served, Vertical runs `pnpm vertical <no>` through `POST
+/vertical/<no>` as Share does. Trim opens a bar under the player: the
+clip's timeline with an in and an out handle (drag, or the track
+moves the nearer one; arrow keys nudge the focused handle a frame,
+shift a second; `i` and `o` set them at the playing position), kept at
+least 1 s apart, the length shown, playback looping inside the
+selection while the bar is open, and the picture following a dragged
+handle. Save cut sends `POST /cut/<no>` with `{ from, to }` (two
+numbers, checked as the CLI checks them before anything runs; one
+encode per cut at a time, a second identical request joins it).
+Reveal takes which file by kind (`/reveal/<no>`, `/vertical`, or
+`/cut/<name>` with a name `pnpm cut` would give that clip), never a
+path. Opened from disk, Share and Vertical show their commands and
+the bar shows `pnpm cut <no> <from> <to>` with Copy. While the bar
+has focus or a handle is dragged, the page's keys (next/previous,
+`s`, Delete) stay off; Escape closes it, and so does another clip.
+The sidebar links "Death map" (`deaths.html`) when the page data says
+there is one (`hasDeathMap`). `#clip=<no>[&t=<seconds>]` on load and on
+`hashchange` clears the filters, selects that clip and seeks to `t`
+once its metadata is in (clamped to its length), never starting
+playback, so sound still waits for a gesture; an unknown number
+changes nothing. The parser is `src/library/hash.ts`, whose source
+`page.ts` inlines.
 
 ## Stack
 

@@ -24,6 +24,7 @@
     "trash": "tsx src/cli/drop.ts trash",
     "share": "tsx src/cli/share.ts",
     "vertical": "tsx src/cli/vertical.ts",
+    "cut": "tsx src/cli/cut.ts",
     "fav": "tsx src/cli/star.ts star",
     "unfav": "tsx src/cli/star.ts unstar",
     "week": "tsx src/cli/week.ts",

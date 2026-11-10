@@ -88,6 +88,14 @@ export function loadEncoder(file = path.join(ROOT, "config.json")): Encoder {
   return e;
 }
 
+/** pnpm cut's encode (PLAN.md §6): the x264 CRF (default 18). */
+export type CutSettings = { crf: number };
+export function loadCut(file = path.join(ROOT, "config.json")): CutSettings {
+  const v = { crf: 18, ...JSON.parse(readFileSync(file, "utf8")).cut };
+  if (typeof v.crf !== "number" || !(v.crf >= 0 && v.crf <= 51)) throw new Error("config.json cut.crf must be a number from 0 to 51");
+  return { crf: v.crf };
+}
+
 /** pnpm vertical's output (PLAN.md §6): width x height (even, default 1080x1920) and the x264 CRF (default 18). */
 export type VerticalSettings = { width: number; height: number; crf: number };
 export function loadVertical(file = path.join(ROOT, "config.json")): VerticalSettings {
