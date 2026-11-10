@@ -72,7 +72,12 @@ double-click (`pnpm grab`, then `pnpm go`; the window stays open).
 `pnpm go` again later renders only what is new. `pnpm drop <clip number>`
 removes a clip. `pnpm share <clip number>` makes a copy that plays in
 Discord, browsers and phones and fits a 20 MB upload, with a caption to
-paste. More commands and every setting (`config.json`) are in
+paste. `pnpm vertical <clip number>` makes a 9:16 copy for Reels, TikTok
+and Shorts, `pnpm cut <clip number> <from> <to>` a shorter copy,
+`pnpm week` joins the week's best clips into one video, and
+`pnpm deathmap` draws where you die on each map. Run `pnpm library` to
+star, trim and share clips from the page itself. More commands and every
+setting (`config.json`) are in
 [docs/modules.md](docs/modules.md).
 
 ## Why a second Steam account

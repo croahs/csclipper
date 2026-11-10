@@ -567,11 +567,14 @@ croclipper/
   src/score/    round context, clusters, scoring.json
   src/clip/     clip spec generation
   src/render/   controller/ (state machine, cfg generation), capture/hlae (the OBS fallback is not built)
-  src/post/     ffmpeg trim, overlay, montage
-  src/library/  index writer, static page template
+  src/post/     ffmpeg trim, fades, reel overlays, the even-sound chain
+  src/library/  index writer, static page template, stars, filters, the match-date rule
+  src/share/    derived copies of a clip: share, vertical, cut
+  src/week/     best of the week (the montage)
+  src/deathmap/ the death map page
   demos/inbox/  you drop demos here
   state/        per-demo parse + moments (gitignored)
-  library/      output mp4s + index (gitignored)
+  library/      output mp4s + index, and the derived folders share/, vertical/, cuts/, montage/ (gitignored)
   docs/spikes.md  results of M0, with the exact commands that worked
   AGENTS.md     operating rules; CLAUDE.md one-line adapter
 ```

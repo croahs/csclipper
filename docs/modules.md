@@ -1,4 +1,4 @@
-# Modules (M1-M4a)
+# Modules
 
 `PLAN.md` is the design; this page is what the code does not say by itself.
 
@@ -406,6 +406,9 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `test/` | `pnpm test`: FACEIT source against recorded fixtures (`test/fixtures/faceit/`), the Valve source against a fake Web API and fetcher, and the folders source on temp folders; no network, no game launch |
 | `src/queue/` | the batch and its job ledger (`index.ts`); one clip job, shared by `pnpm clip` and the batch (`job.ts`) |
 | `src/library/page.html`, `page.ts` | the library page template and its writer |
+| `src/library/stars.ts`, `facets.ts`, `hash.ts`, `match-date.ts` | the stars file; the feat and weapon filters' derivation; the `#clip=<no>&t=<s>` parser (its source is inlined into the page); the one rule that dates a clip's match (page, `pnpm week`, death map) |
+| `src/share/` | derived copies of a library clip, none of them in `index.json`: `index.ts` share, `vertical.ts`, `cut.ts`, `caption.ts` |
+| `src/week/index.ts` | `pnpm week`: ISO weeks, selection, the montage's filter graph and encode |
 | `src/deathmap/` | `pnpm deathmap`: `index.ts` data and writer, `view.ts` filter/clusters/summary shared with the page, `page.html` template → `library/deaths.html` |
 | `demos/` | `inbox/` (drop here), `store/<sha256>.dem` (ingested demos, the only copy by default), `ingested/` (the archives demos arrived in, only with `config.json` → `ingest.keepOriginals`), `rejected/` (with `.reason.txt`) |
 | `state/demos.json`, `state/queue.json`, `state/sources/<name>.json` | demo registry (paths relative to the repo, State paths below); job ledger; each source's progress |
@@ -415,7 +418,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `src/clip/` | clip specs (`index.ts`: boundaries, merge, action windows, id, title); `moments.ts` writes `moments.json` / `moments.txt` |
 | `src/render/controller/` | `index.ts` state machine, `guards.ts`, `processes.ts`, `launch.ts` (cleanup, emergency hooks, console.log reader; shared with the fetch launch), `hlae-dialog.ts` (HLAE's hidden error dialog read on a launch timeout), `cfg.ts` |
 | `src/render/capture/hlae.ts` | HLAE launch arguments and `mirv_streams` lines |
-| `src/post/` | trim and fade (`index.ts`), FFmpeg probes (`ffmpeg.ts`) |
+| `src/post/` | trim and fade (`index.ts`, its graph in `postGraph`), FFmpeg probes (`ffmpeg.ts`), the even-sound chain (`audio.ts`) |
 | `src/library/index.ts` | clip id, atomic publish, index and failures |
 | `state/render/<id>/<attempt>/` | per-attempt work dir: generated cfgs, `capture.json`, `console.log`, `render.json`; the raw capture itself only until the clip is published (Deleting, above) |
 
