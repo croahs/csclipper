@@ -85,8 +85,11 @@ export const tenths = (s: number) => String(Math.round(s * 10)).padStart(4, "0")
 export const cutName = (e: Pick<ClipEntry, "no" | "title">, from: number, to: number) => `${e.no}-${slug(e.title)}_${tenths(from)}-${tenths(to)}.mp4`;
 export const cutPath = (e: Pick<ClipEntry, "no" | "title">, from: number, to: number) => path.join(CUT_DIR, cutName(e, from, to));
 /** A name cutName could have given clip e: the reveal route takes only these. */
-export const isCutName = (e: Pick<ClipEntry, "no" | "title">, name: string) =>
-  name.startsWith(`${e.no}-${slug(e.title)}_`) && /_\d{4,}-\d{4,}\.mp4$/.test(name) && !/[\\/]/.test(name);
+export const isCutName = (e: Pick<ClipEntry, "no" | "title">, name: string) => {
+  const prefix = `${e.no}-${slug(e.title)}_`;
+  // Exactly the prefix and the two times: nothing between them, so no other file in cuts/ can match.
+  return name.startsWith(prefix) && /^\d{4,}-\d{4,}\.mp4$/.test(name.slice(prefix.length));
+};
 
 export type CutKeyParts = { id: string; bytes: number; mtimeMs: number; from: number; to: number; fadeSeconds: number; settings: CutSettings; recipe?: number };
 /**

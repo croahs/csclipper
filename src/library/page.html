@@ -732,7 +732,8 @@
     render();
     if (h.t === undefined) return;
     const v = $("player");
-    const seek = () => { v.currentTime = Math.min(h.t, Number.isFinite(v.duration) ? v.duration : h.t); };
+    // Only while that clip is still the selected one: a clip picked before the metadata came in keeps its own start.
+    const seek = () => { if (state.current === c.id) v.currentTime = Math.min(h.t, Number.isFinite(v.duration) ? v.duration : h.t); };
     if (v.readyState >= 1) seek(); else v.addEventListener("loadedmetadata", seek, { once: true });
   }
   window.addEventListener("hashchange", followHash);
