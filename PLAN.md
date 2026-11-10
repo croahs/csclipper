@@ -458,6 +458,34 @@ highlight's index entry already carries (`moment.kills`, `.clutch`,
 `.weapons`), so the pipeline writes nothing new; reels and entries
 without a moment match no feat or weapon. Every filter combines with
 the others, Find and the sort; "Newest clips" clears them all.
+Death map (decided 2026-11-10): `pnpm deathmap` writes
+`library/deaths.html`, a second static page in the same visual
+language with its data inlined (every `<` escaped), opened from disk,
+showing per map where and how the POV player dies: each death at its
+place, a line to where the killer stood, side by shape (CT circle, T
+triangle) and weapon class by colour (rifle, sniper, SMG, pistol,
+shotgun, other); filters for side, weapon class, from behind (the
+scoring's facing rule and `facingMaxDegrees`), headshot, opening death
+(first of his team that round) and match; a summary recomputed per
+filter (deaths, per round played, shares from behind and headshot,
+average distance, top weapons, and killer and death positions
+clustered into spots); a death links to its take in the demo's deaths
+reel as `index.html#clip=<no>&t=<seconds>`. Knife rounds are out and
+warmup is never a match round, as in scoring; overtime counts (a death
+there is still a death). Suicide, world and team deaths are counted
+apart and left off the killer analysis. There is no radar art: Valve's
+overview images are game assets this repo neither ships nor downloads
+(no network at build or view time), and each needs its own per-map
+scale and origin; the map's shape is drawn instead from the parse's
+footprint (every 32-unit cell a live player stood in, sampled every
+half second, plus every death's two positions). Those fields are
+optional within parse schema 8, not a schema bump: on 2026-11-10 only
+21 of the 80 registered demos were still in `demos/store/`, and a bump
+would have made the other 59 caches stale for good, so `pnpm rescore`
+would skip their clips. A cache without positions is re-parsed once
+when its demo is still there, else counted and left as it is; the
+page says per map how many matches have positions. One floor plane:
+multi-level maps (Nuke, Vertigo) overlap.
 
 ## Stack
 

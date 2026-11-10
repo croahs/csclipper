@@ -21,6 +21,7 @@ pnpm clip --rerender <no|id> [--lead <s>] [--timeout <s>] [--dry-run]
 pnpm deaths "<demo.dem>" [--timeout <s>] [--dry-run]
 pnpm victims "<demo.dem>" [--timeout <s>] [--dry-run]
 pnpm library [--port <n>]
+pnpm deathmap
 pnpm drop <no>...
 pnpm share <no> [--max-mb <n>] [--raw-audio]
 pnpm vertical <no> [--shift <percent>]
@@ -191,6 +192,35 @@ gentler compressor and overshot 0 dBTP (+0.7) through the same limiter;
 ratio 4-6 with 100-200 ms release closed the gap 1-3 dB more but pumps
 more, so ratio 3 with 400 ms release. Nobody has listened to it yet.
 
+**Death map** (`src/deathmap/`, `src/cli/deathmap.ts`; PLAN.md §7 has
+the rules). `pnpm deathmap` writes `library/deaths.html` (temp, then
+rename) from the registry and the parse caches, per demo: a current
+cache with positions is used; one without them is re-parsed once when
+the demo is still in the store (`reparseDemo`: same key, temp then
+rename; about 9 s a demo, measured 2026-11-10), else it is counted as
+"no positions" and left untouched; with no current cache the demo is
+parsed through `parseDemo` if it is there, else counted as not read. No
+cache is deleted or invalidated. It launches nothing, writes nothing
+else, and is not part of `pnpm go`; the page says per map and overall
+how many matches have positions. Every parse (the blocks marked "death
+map" in `src/parse/demo.ts`, optional fields within schema 8: a bump
+would have made 59 of the 80 caches stale for good on 2026-11-10,
+their demos gone from the store, and `pnpm rescore` skips stale ones) adds
+victim and attacker X/Y/Z at every `player_death` (from the event's own
+player props), the POV's facing angle at each of his deaths (the
+scoring's angle, the tick before) and the match footprint (32-unit cells
+of live players every 32 ticks; a cache grows by about 30 KB).
+`index.ts` builds the data (pure: rows, rounds per side, reel offsets,
+backdrop); `view.ts` holds the filter, the spot clustering (densest
+point seeds a spot of everything within 300 units, repeat) and the
+summary, and is inlined into `page.html` with its types stripped
+(`node:module` `stripTypeScriptTypes`), so the page and
+`test/deathmap.test.ts` run the same code. A death's reel link is
+`index.html#clip=<no>&t=<s>`, `t` the take's start inside the reel (the
+sum of the earlier takes' `render.windows`), left out when the windows
+do not add up to the reel's `seconds` within 0.5 s; the library page
+does not read that hash yet. Opened from disk; drawn on one canvas.
+
 `pnpm prep` (PLAN.md M5; pnpm's own `setup` and `doctor` commands take the
 obvious names, so `pnpm check` is the report-only form) makes a PC ready:
 Steam and CS2 from the registry and `libraryfolders.vdf`, the pinned HLAE
@@ -353,6 +383,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `test/` | `pnpm test`: FACEIT source against recorded fixtures (`test/fixtures/faceit/`), the Valve source against a fake Web API and fetcher, and the folders source on temp folders; no network, no game launch |
 | `src/queue/` | the batch and its job ledger (`index.ts`); one clip job, shared by `pnpm clip` and the batch (`job.ts`) |
 | `src/library/page.html`, `page.ts` | the library page template and its writer |
+| `src/deathmap/` | `pnpm deathmap`: `index.ts` data and writer, `view.ts` filter/clusters/summary shared with the page, `page.html` template → `library/deaths.html` |
 | `demos/` | `inbox/` (drop here), `store/<sha256>.dem` (ingested demos, the only copy by default), `ingested/` (the archives demos arrived in, only with `config.json` → `ingest.keepOriginals`), `rejected/` (with `.reason.txt`) |
 | `state/demos.json`, `state/queue.json`, `state/sources/<name>.json` | demo registry (paths relative to the repo, State paths below); job ledger; each source's progress |
 | `src/parse/demo.ts` | per-demo extraction, cached in `state/<demo sha256>/parse.json` |

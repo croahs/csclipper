@@ -2,7 +2,7 @@
 // inlined, so it works opened straight from disk (a fetch of index.json over
 // file:// does not). Written to a temp file, then renamed; rewritten after
 // every clip a run adds, with a "run in progress" flag while pnpm go runs.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { LIBRARY_DIR } from "../config.ts";
 import { readRegistry } from "../ingest/index.ts";
@@ -33,8 +33,9 @@ export function writeLibraryPage(o: { running?: boolean } = {}): string {
   // Stars of clips no longer in the index are left out (the file drops them at its next write).
   const nos = new Set(clips.map((c) => c.no));
   const stars = readStars().filter((n) => nos.has(n));
+  const hasDeathMap = existsSync(path.join(LIBRARY_DIR, "deaths.html")); // pnpm deathmap has written it: the sidebar links to it
   // Every "<" escaped, so no title can end or reinterpret the script element.
-  const json = JSON.stringify({ generatedAt: new Date().toISOString(), running: !!o.running, clips, stars, featLabels: FEATS }).replaceAll("<", "\\u003c");
+  const json = JSON.stringify({ generatedAt: new Date().toISOString(), running: !!o.running, hasDeathMap, clips, stars, featLabels: FEATS }).replaceAll("<", "\u003c");
   const html = readFileSync(TEMPLATE, "utf8").replace("/*__CLIPS__*/[]", () => json);
   mkdirSync(LIBRARY_DIR, { recursive: true });
   const tmp = `${PAGE}.${process.pid}.${Date.now()}.tmp`;

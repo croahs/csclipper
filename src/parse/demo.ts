@@ -17,7 +17,7 @@ import { readFileInfo } from "./fileinfo.ts";
 const require = createRequire(import.meta.url);
 const dp = require("@laihoe/demoparser2");
 
-const SCHEMA = 8; // 8: the POV's yaw at each kill; 3: airborne on deaths, POV flicks; 4: flicks from gunshots only; 5: names on deaths; 6: equipment per team; 7: victim facing
+const SCHEMA = 8; // 8: the POV's yaw at each kill (a schema 8 cache comes with or without the death map's optional fields: not bumped for them, see that block); 3: airborne on deaths, POV flicks; 4: flicks from gunshots only; 5: names on deaths; 6: equipment per team; 7: victim facing
 const REGULATION_ROUNDS = 24; // MR12; later match rounds are overtime
 
 export type Team = "T" | "CT";
@@ -31,7 +31,12 @@ export type Death = {
   // the tick before the kill; undefined when the parser has no position or angle for either.
   victimFacingDeg?: number;
   povYaw?: number; // POV kills only: the POV's view yaw the tick before the kill (direction spread)
+  // --- death map (optional fields, no schema bump) ---
+  victimPos?: Vec3; attackerPos?: Vec3; // where each stood at the death event (game units, rounded); absent when the parser has none
+  povFacingDeg?: number; // POV deaths only: facingDeg with the POV as the victim (his view vs the line to his killer), the tick before
+  // --- end death map ---
 };
+export type Vec3 = [number, number, number]; // death map (optional fields, no schema bump)
 // The POV's view turn before each gun kill: the largest yaw change from 100-200 ms
 // before the kill shot (the POV's last gunshot at or before the kill, within 1 s) to the shot itself.
 export type Flick = { killTick: number; shotTick: number; yawDegrees: number };
@@ -63,6 +68,7 @@ export type ParsedDemo = {
   // post-round events (after endTick) are kept, and scoring cuts at endTick.
   deaths: Death[]; hurts: Hurt[]; fires: Fire[]; bombs: BombEvent[]; blinds: Blind[];
   flicks: Flick[];
+  footprint?: number[]; // death map (optional fields, no schema bump): every FOOTPRINT_CELL cell a live player stood in, sampled every FOOTPRINT_EVERY ticks, flat [cx, cy, ...]
 };
 
 const sid = (v: unknown) => (typeof v === "string" && /^\d{17}$/.test(v) ? v : null);
@@ -71,6 +77,16 @@ const winnerOf = (w: unknown): Team | null => (w === "T" || w === "CT" ? w : nul
 const isKnife = (w: string) => w.startsWith("knife") || w === "bayonet";
 /** Weapons whose weapon_fire or kill is not a gunshot: knives, grenades and their fire, the bomb. */
 export const NOT_A_GUN = /^(knife|bayonet|hegrenade|flashbang|smokegrenade|molotov|incgrenade|inferno|decoy|c4|planted_c4|world)/;
+
+// --- death map (optional fields, no schema bump) ---
+export const FOOTPRINT_CELL = 32; // game units per footprint cell (a player is 32 wide)
+export const FOOTPRINT_EVERY = 32; // ticks between footprint samples (0.5 s at 64)
+/** The scoring's facing angle: degrees between the victim's view (yaw) and the line from the victim to the attacker. */
+export function facingDeg(v: { X: number; Y: number; yaw: number }, a: { X: number; Y: number }): number {
+  const toAttacker = (Math.atan2(a.Y - v.Y, a.X - v.X) * 180) / Math.PI;
+  return Math.round(Math.abs(((v.yaw - toAttacker) % 360 + 540) % 360 - 180) * 10) / 10;
+}
+// --- end death map ---
 
 export function parseDir(sha256: string) {
   return path.join(STATE_DIR, sha256);
@@ -187,6 +203,50 @@ function extract(demo: string, sha256: string, pov: string, key: string): Parsed
     }
   }
 
+  // --- death map (optional fields, no schema bump) ---
+  // Positions at every death (victim and attacker, from the event itself), the POV's facing at each of
+  // his deaths (the scoring's facing angle the tick before, the POV as the victim), and the match's
+  // footprint: where live players stood, so the death map draws the map's shape from data.
+  // Additive: a failure here leaves the fields out and never fails the parse the pipeline runs on.
+  let footprint: number[] | undefined;
+  try {
+  const deathPos = new Map<string, any>();
+  for (const e of dp.parseEvent(demo, "player_death", ["X", "Y", "Z"], []) as any[]) deathPos.set(`${e.tick}:${e.user_steamid}:${e.user_name}`, e);
+  const vec = (x: unknown, y: unknown, z: unknown): Vec3 | undefined =>
+    [x, y, z].every((n) => typeof n === "number" && Number.isFinite(n)) ? [Math.round(x as number), Math.round(y as number), Math.round(z as number)] : undefined;
+  for (const d of deaths) {
+    const e = deathPos.get(`${d.tick}:${d.victim}:${d.victimName}`);
+    if (!e) continue;
+    const v = vec(e.user_X, e.user_Y, e.user_Z), a = d.attacker ? vec(e.attacker_X, e.attacker_Y, e.attacker_Z) : undefined;
+    if (v) d.victimPos = v;
+    if (a) d.attackerPos = a;
+  }
+  const povDeaths = deaths.filter((d) => d.victim === pov && d.attacker && d.attacker !== pov);
+  if (povDeaths.length) {
+    type Pos = { tick: number; steamid: string; X: number; Y: number; yaw: number };
+    const at = new Map<string, Pos>();
+    for (const row of dp.parseTicks(demo, ["X", "Y", "yaw"], [...new Set(povDeaths.map((d) => d.tick - 1))], [...new Set([pov, ...povDeaths.map((d) => d.attacker!)])]) as Pos[]) at.set(`${row.tick}:${row.steamid}`, row);
+    for (const d of povDeaths) {
+      const v = at.get(`${d.tick - 1}:${pov}`), a = at.get(`${d.tick - 1}:${d.attacker}`);
+      if (v && a && [v.X, v.Y, v.yaw, a.X, a.Y].every(Number.isFinite)) d.povFacingDeg = facingDeg(v, a);
+    }
+  }
+  const sampleTicks: number[] = [];
+  for (let t = matchStartTick + FOOTPRINT_EVERY; t <= (rounds.at(-1)?.endTick ?? 0); t += FOOTPRINT_EVERY) sampleTicks.push(t);
+  const cells = new Set<string>();
+  if (sampleTicks.length) {
+    for (const row of dp.parseTicks(demo, ["X", "Y", "is_alive"], sampleTicks, []) as { X: number; Y: number; is_alive: boolean }[]) {
+      if (row.is_alive && Number.isFinite(row.X) && Number.isFinite(row.Y)) cells.add(`${Math.round(row.X / FOOTPRINT_CELL)},${Math.round(row.Y / FOOTPRINT_CELL)}`);
+    }
+  }
+  footprint = [...cells].flatMap((c) => c.split(",").map(Number));
+  } catch (e) {
+    footprint = undefined;
+    for (const d of deaths) { delete d.victimPos; delete d.attackerPos; delete d.povFacingDeg; }
+    console.warn(`death map fields not extracted (the parse is otherwise complete): ${(e as Error).message}`);
+  }
+  // --- end death map ---
+
   for (const r of rounds) {
     // A knife round: shots were fired and every one was a knife swing.
     const shots = fires.filter((f) => f.round === r.n && f.tick <= r.endTick);
@@ -204,6 +264,7 @@ function extract(demo: string, sha256: string, pov: string, key: string): Parsed
     schema: SCHEMA, key,
     demo: { path: demo, sha256, map: String(header.map_name), patch: String(header.patch_version), tickrate: TICKRATE, playbackTicks: info.playback_ticks },
     identity, matchStartTick, preMatchRounds, rounds, deaths, hurts, fires, bombs, blinds, flicks,
+    footprint, // death map (optional fields, no schema bump)
   };
 }
 
@@ -235,3 +296,22 @@ export async function parseDemo(demo: string, pov: string): Promise<ParsedDemo> 
   renameSync(tmp, file);
   return parsed;
 }
+
+// --- death map (optional fields, no schema bump) ---
+// The death map's fields are optional within schema 8: bumping the schema would make every cache
+// whose demo has left the store stale for good (2026-11-10: 59 of 80), and pnpm rescore skips stale
+// parses. So a cache made before them stays current, and pnpm deathmap re-parses a demo that is still
+// in the store once to add them: the same key (as parseDemo builds it), temp file then rename.
+export const hasPositions = (p: ParsedDemo) => p.footprint !== undefined;
+export async function reparseDemo(demo: string, pov: string): Promise<ParsedDemo> {
+  const sha256 = await sha256File(demo);
+  const key = `${sha256}:demoparser2@${DEMOPARSER_VERSION}:schema${SCHEMA}:pov${pov}`;
+  const parsed = extract(demo, sha256, pov, key);
+  const file = path.join(parseDir(sha256), "parse.json");
+  mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmp, JSON.stringify(parsed));
+  renameSync(tmp, file);
+  return parsed;
+}
+// --- end death map ---
