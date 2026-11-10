@@ -327,8 +327,8 @@ next/previous. A "newest" sort stays available at the top.
 Deleting while watching (decided 2026-10-15): `pnpm library` starts a
 minimal local server (Node, localhost only, no accounts) that serves
 the same page and accepts the page's delete action; opened straight
-from disk the page shows the equivalent `pnpm rm <no>` command
-instead. Delete moves the file to `library/trash/`, removes the index
+from disk the page shows the equivalent `pnpm drop <no>` command
+instead (pnpm's own `rm` removes a dependency). Delete moves the file to `library/trash/`, removes the index
 entry, and marks the moment as deleted in the ledger so no run renders
 it again; `pnpm trash --empty` frees the disk. No framework.
 
@@ -354,12 +354,12 @@ installed globally.
 Layout:
 
 ```
-cs-clips/
-  src/ingest/   watch folder, faceit, valve (+ valve-gc)
+croclipper/
+  src/ingest/   watch folder, sources/ (folders, faceit, valve + valve-fetch)
   src/parse/    demoparser2 wrapper, identity + time mapping, events
   src/score/    round context, clusters, scoring.json
   src/clip/     clip spec generation
-  src/render/   controller/ (state machine, cfg generation), capture/hlae, capture/obs
+  src/render/   controller/ (state machine, cfg generation), capture/hlae (the OBS fallback is not built)
   src/post/     ffmpeg trim, overlay, montage
   src/library/  index writer, static page template
   demos/inbox/  you drop demos here
