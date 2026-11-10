@@ -7,7 +7,9 @@ import path from "node:path";
 import { LIBRARY_DIR, STATE_DIR } from "../config.ts";
 import { readRegistry } from "../ingest/index.ts";
 import { shareCaption } from "../share/caption.ts";
+import { FEATS, featsOf, weaponsOf } from "./facets.ts";
 import { readIndex } from "./index.ts";
+import { readStars } from "./stars.ts";
 
 const TEMPLATE = path.join(import.meta.dirname, "page.html");
 export const PAGE = path.join(LIBRARY_DIR, "index.html");
@@ -19,7 +21,7 @@ export function writeLibraryPage(o: { running?: boolean } = {}): string {
   const registry = readRegistry();
   const dates: Record<string, number> = existsSync(MATCHES) ? JSON.parse(readFileSync(MATCHES, "utf8")) : {};
   const clips = Object.values(readIndex().clips).map((c) => {
-    const m = (c.moment ?? {}) as { rank?: number; score?: number; kills?: number; flags?: string[]; clutch?: { vs: number; won: boolean } };
+    const m = (c.moment ?? {}) as { rank?: number; score?: number; kills?: number; flags?: string[]; clutch?: { vs: number; won: boolean }; weapons?: string[] };
     // The match: its demo; dated by FACEIT when the demo's file name carries the match id and
     // pnpm grab has seen it (needs FACEIT_API_KEY), else by when the demo was added here, which
     // the page labels as such (a demo carries no match time of its own).
@@ -31,11 +33,14 @@ export function writeLibraryPage(o: { running?: boolean } = {}): string {
       no: c.no, id: c.id, file: c.file, title: c.title, map: c.map, round: c.round, seconds: c.seconds, createdAt: c.createdAt,
       kind: c.kind ?? "highlight", match: c.demoSha256, matchDate, dateFrom: finished ? "faceit" : matchDate ? "added" : null,
       rank: m.rank, score: m.score, kills: m.kills, flags: m.flags, clutch: m.clutch,
-      caption: shareCaption(c),
+      caption: shareCaption(c), feats: featsOf(m), weapons: weaponsOf(m),
     };
   });
+  // Stars of clips no longer in the index are left out (the file drops them at its next write).
+  const nos = new Set(clips.map((c) => c.no));
+  const stars = readStars().filter((n) => nos.has(n));
   // Every "<" escaped, so no title can end or reinterpret the script element.
-  const json = JSON.stringify({ generatedAt: new Date().toISOString(), running: !!o.running, clips }).replaceAll("<", "\\u003c");
+  const json = JSON.stringify({ generatedAt: new Date().toISOString(), running: !!o.running, clips, stars, featLabels: FEATS }).replaceAll("<", "\\u003c");
   const html = readFileSync(TEMPLATE, "utf8").replace("/*__CLIPS__*/[]", () => json);
   mkdirSync(LIBRARY_DIR, { recursive: true });
   const tmp = `${PAGE}.${process.pid}.${Date.now()}.tmp`;

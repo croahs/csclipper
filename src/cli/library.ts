@@ -1,21 +1,24 @@
 // pnpm library [--port <n>]: serve library/ at http://127.0.0.1:<port>/ (default 8765) so the
-// page can delete and share clips while watching. No dependencies; bound to 127.0.0.1 only.
+// page can delete, share and star clips while watching. No dependencies; bound to 127.0.0.1 only.
 //   GET  /...          files under library/ (Range requests, so videos can seek)
 //   POST /delete/<no>  as pnpm drop <no>; then the page is rewritten
 //   POST /share/<no>   as pnpm share <no>, in a child process so the server keeps serving;
 //                      answers { file, bytes, caption }. One encode per clip at a time: a second
 //                      request while one runs waits for the same result.
 //   POST /reveal/<no>  opens Explorer with that clip's share file selected
+//   POST /star/<no>, /unstar/<no>  as pnpm fav / unfav <no>; answers { stars }, then the page is rewritten
+//   GET  /stars        { stars }: the current starred clip numbers
 // Requests whose Host is not this server, or a POST whose Origin is another site, are refused,
-// so no other web page (or DNS rebinding) can delete or share clips through it. The POST routes
+// so no other web page (or DNS rebinding) can delete, share or star clips through it. The POST routes
 // take a clip number only, never a path.
 import { spawn } from "node:child_process";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { LIBRARY_DIR } from "../config.ts";
-import { deleteClip } from "../library/index.ts";
+import { deleteClip, readIndex } from "../library/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
+import { changeStars, readStars } from "../library/stars.ts";
 import { findClip, sharePath, type ShareResult } from "../share/index.ts";
 
 const args = process.argv.slice(2);
@@ -57,6 +60,17 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       spawn("explorer.exe", [`/select,"${file}"`], { detached: true, stdio: "ignore", windowsVerbatimArguments: true }).on("error", () => {}).unref();
       return json(200, { revealed: path.relative(LIBRARY_DIR, file).replaceAll("\\", "/") });
     }
+    const st = /^\/(star|unstar)\/(\d+)$/.exec(url.pathname);
+    if (st) {
+      const no = Number(st[2]);
+      const r = changeStars(st[1] as "star" | "unstar", [no], knownNos());
+      if (r.unknown.length) return send(404, `no clip ${no}`);
+      console.log(`${st[1]}red clip ${no}`);
+      // The star stands even if the page cannot be rewritten; the reply says so.
+      let pageError: string | undefined;
+      try { writeLibraryPage(); } catch (err) { pageError = (err as Error).message; console.error(`library page not rewritten: ${pageError}`); }
+      return json(200, { stars: r.stars, ...(pageError ? { pageError } : {}) });
+    }
     const m = /^\/delete\/(\d+)$/.exec(url.pathname);
     if (!m) return send(404, "not found");
     let e;
@@ -70,6 +84,12 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     return res.end(JSON.stringify({ deleted: Number(m[1]), id: e.id, ...(pageError ? { pageError } : {}) }));
   }
   if (req.method !== "GET" && req.method !== "HEAD") return send(405, "method not allowed");
+  // The current stars (the page's inlined list may be older than a pnpm fav since).
+  if (url.pathname === "/stars") {
+    const nos = knownNos();
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    return res.end(req.method === "HEAD" ? undefined : JSON.stringify({ stars: readStars().filter((n) => nos.has(n)) }));
+  }
 
   // Static files under library/ only.
   let rel: string;
@@ -91,6 +111,8 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   if (req.method === "HEAD") return res.end();
   stream(file, res);
 }
+
+const knownNos = () => new Set(Object.values(readIndex().clips).map((c) => c.no).filter((n): n is number => n !== undefined));
 
 // Share encodes run as `pnpm share <no> --json` in a child process (the same tsx loader as this
 // one): the encode is synchronous FFmpeg work for up to minutes. In flight, keyed by clip number.

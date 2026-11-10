@@ -76,6 +76,12 @@
   .facet .sub { color: var(--muted); font-size: 12px; }
   .facet.top { margin: 0 0 12px; }
   .facet.top button { font-weight: 600; }
+  .group[hidden] { display: none; }
+  .facet button.more { color: var(--muted); font-size: 12px; }
+  .sg { color: var(--accent); }
+  /* Star: a quiet control under the player and at the end of each list row */
+  .act button.star[aria-pressed="true"] { color: var(--accent); border-color: rgba(240, 166, 58, 0.45); }
+  .act .grp .sg { font-size: 13px; }
   /* Share and Delete / the commands for them, under the player */
   .act { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin-left: auto; white-space: nowrap; }
   .act .grp { display: inline-flex; align-items: center; gap: 8px; }
@@ -107,23 +113,30 @@
   .list-head { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 10px 6px; color: var(--muted); font-size: 12px; }
   ol.rows { list-style: none; margin: 0; padding: 0 4px 12px; overflow-y: auto; flex: 1; min-height: 0; }
   /* One line per clip: number, title (truncated), score and length. */
-  ol.rows li button {
+  ol.rows li.row { display: grid; grid-template-columns: minmax(0, 1fr) 22px; align-items: center; }
+  ol.rows li button.pick {
     display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 8px; align-items: baseline;
     width: 100%; text-align: left; background: none; border: 0; border-radius: var(--radius); padding: 3px 6px; cursor: pointer; color: var(--text);
     font-size: 13px; line-height: 1.35;
   }
-  ol.rows li button:hover { background: var(--surface-2); }
-  ol.rows li button[aria-current="true"] { background: var(--accent-tint); }
+  ol.rows li button.pick:hover { background: var(--surface-2); }
+  ol.rows li button.pick[aria-current="true"] { background: var(--accent-tint); }
   ol.rows .n { color: var(--muted); font-size: 12px; text-align: right; }
-  ol.rows li button[aria-current="true"] .n { color: var(--accent); font-weight: 700; }
-  ol.rows li button[aria-current="true"] .t { font-weight: 600; }
+  ol.rows li button.pick[aria-current="true"] .n { color: var(--accent); font-weight: 700; }
+  ol.rows li button.pick[aria-current="true"] .t { font-weight: 600; }
+  /* Starred rows show a filled star; an unstarred row's star shows on hover or focus (served only). */
+  ol.rows .rstar { display: grid; place-items: center; width: 22px; height: 22px; font-size: 13px; line-height: 1; color: var(--accent); background: none; border: 0; border-radius: var(--radius); padding: 0; }
+  ol.rows button.rstar { cursor: pointer; }
+  ol.rows button.rstar[aria-pressed="false"] { color: var(--muted); opacity: 0; }
+  ol.rows li.row:hover button.rstar, ol.rows button.rstar:focus-visible { opacity: 1; }
+  ol.rows button.rstar:hover { background: var(--surface-2); }
   ol.rows .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   ol.rows .m { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }
   .empty { padding: 28px 16px; color: var(--muted); }
   .empty code { color: var(--text); }
   .empty button { margin-top: 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 12px; cursor: pointer; }
   @media (prefers-reduced-motion: no-preference) {
-    .facet button, ol.rows li button { transition: background-color .15s ease; }
+    .facet button, ol.rows li button { transition: background-color .15s ease, opacity .15s ease; }
   }
 </style>
 </head>
@@ -145,7 +158,10 @@
         <option value="no">Clip number</option>
       </select>
     </label>
+    <div class="group"><div class="facet" id="starred"></div></div>
     <div class="group"><h2>Kind</h2><div class="facet" id="kinds"></div></div>
+    <div class="group" id="feats-g"><h2>Feats</h2><div class="facet" id="feats"></div></div>
+    <div class="group" id="weapons-g"><h2>Weapon</h2><div class="facet" id="weapons"></div></div>
     <div class="group"><h2>Map</h2><div class="facet" id="maps"></div></div>
     <div class="group"><h2>Match</h2><div class="facet" id="matches"></div></div>
   </aside>
@@ -187,8 +203,15 @@
 
   // State. Controls are reset on every load: a browser restoring an old filter
   // must not leave the page looking empty.
-  const state = { kind: null, map: null, match: null, current: null };
+  const state = { kind: null, map: null, match: null, star: null, feat: null, weapon: null, moreWeapons: false, current: null };
   $("find").value = ""; $("sort").value = "score";
+  // Every filter off and Find empty; the sort is the caller's.
+  function clearFilters() { state.kind = state.map = state.match = state.star = state.feat = state.weapon = null; state.moreWeapons = false; $("find").value = ""; }
+
+  // Stars: clip numbers. Inlined when the page was written; served, refreshed from the server on load.
+  const starred = new Set(data.stars || []);
+  const FEATS = data.featLabels || [];
+  const WEAPONS_SHOWN = 6; // the rest behind "More"
 
   if (data.running) { $("run").hidden = false; $("run").textContent = "Run in progress: " + clips.length + " clips so far"; }
   $("stamp").textContent = "Updated " + new Date(data.generatedAt).toLocaleString();
@@ -222,6 +245,7 @@
     const sort = $("sort").value;
     return clips
       .filter((c) => (!state.kind || c.kind === state.kind) && (!state.map || c.map === state.map) && (!state.match || c.match === state.match))
+      .filter((c) => (!state.star || starred.has(c.no)) && (!state.feat || (c.feats || []).includes(state.feat)) && (!state.weapon || (c.weapons || []).includes(state.weapon)))
       .filter((c) => !q || (num ? c.no === Number(num[2]) : c.title.toLowerCase().includes(q)))
       .sort((a, b) => sort === "no" ? (a.no || 0) - (b.no || 0)
         : sort === "match" ? dateOf(b).localeCompare(dateOf(a)) || (a.round || 0) - (b.round || 0)
@@ -246,6 +270,7 @@
     text.append(el("div", "facts num", facts.join("  /  ")));
     const act = el("span", "act");
     act.id = "act";
+    act.append(starControl(c));
     shareControls(c, act);
     if (served) {
       const del = el("button", "danger", "Delete clip " + c.no);
@@ -260,8 +285,8 @@
       act.append(grp);
     }
     now.append(text, act);
-    for (const b of document.querySelectorAll("#rows button")) b.setAttribute("aria-current", String(b.dataset.id === c.id));
-    const cur = document.querySelector('#rows button[aria-current="true"]');
+    for (const b of document.querySelectorAll("#rows button.pick")) b.setAttribute("aria-current", String(b.dataset.id === c.id));
+    const cur = document.querySelector('#rows button.pick[aria-current="true"]');
     if (cur) {
       cur.scrollIntoView({ block: "nearest" });
       // Focus follows the playing row when the list has it, so one row is marked, not two.
@@ -272,7 +297,24 @@
   function render() {
     const list = shown();
     const kindCount = (k) => clips.filter((c) => c.kind === k).length;
+    facet($("starred"), [[true, "★ Starred", clips.filter((c) => starred.has(c.no)).length]], "star");
     facet($("kinds"), KINDS.map(([k, label]) => [k, label, kindCount(k)]), "kind");
+    // Feats and weapons come from the highlight's moment (page.ts); a group with nothing in it is hidden.
+    const feats = FEATS.map(([k, label]) => [k, label, clips.filter((c) => (c.feats || []).includes(k)).length]).filter((f) => f[2] > 0);
+    facet($("feats"), feats, "feat");
+    $("feats-g").hidden = !feats.length;
+    const wc = new Map();
+    for (const c of clips) for (const w of c.weapons || []) wc.set(w, (wc.get(w) || 0) + 1);
+    const weapons = [...wc].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([w, n]) => [w, w, n]);
+    const hidden = weapons.length - WEAPONS_SHOWN;
+    facet($("weapons"), hidden > 0 && !state.moreWeapons ? weapons.filter((w, i) => i < WEAPONS_SHOWN || w[0] === state.weapon) : weapons, "weapon");
+    if (hidden > 0) {
+      const more = el("button", "more", state.moreWeapons ? "Fewer" : "More (" + hidden + ")");
+      more.type = "button";
+      more.addEventListener("click", () => { state.moreWeapons = !state.moreWeapons; render(); $("weapons").querySelector(".more").focus({ preventScroll: true }); });
+      $("weapons").append(more);
+    }
+    $("weapons-g").hidden = !weapons.length;
     const maps = [...new Set(clips.map((c) => c.map))].sort();
     facet($("maps"), maps.map((m) => [m, mapName(m), clips.filter((c) => c.map === m).length]), "map");
     facet($("matches"), matchList.map((m) => [m.key, m.date ? (m.dateFrom === "added" ? "added " + day(m.date) : day(m.date)) : "date unknown", m.n, mapName(m.map)]), "match");
@@ -288,19 +330,34 @@
       const e = el("li", "empty", "No clips match these filters.");
       const clear = el("button", "", "Clear filters");
       clear.type = "button";
-      clear.addEventListener("click", () => { state.kind = state.map = state.match = null; $("find").value = ""; render(); });
+      clear.addEventListener("click", () => { clearFilters(); render(); });
       e.append(el("br"), clear);
       rows.append(e);
     }
     for (const c of list) {
-      const li = el("li");
-      const b = el("button");
+      const li = el("li", "row");
+      const b = el("button", "pick");
       b.type = "button";
       b.dataset.id = c.id;
       b.append(el("span", "n num", String(c.no ?? "")), el("span", "t", c.title),
         el("span", "m num", (c.score !== undefined ? c.score.toFixed(0) + "  " : "") + c.seconds.toFixed(0) + " s"));
       b.addEventListener("click", () => play(c, true));
-      li.append(b);
+      const on = starred.has(c.no);
+      let s;
+      if (served) {
+        // Served the row's star toggles; from disk it only shows the state (the player's control has the command).
+        s = el("button", "rstar", on ? "★" : "☆");
+        s.type = "button";
+        s.dataset.id = c.id;
+        s.setAttribute("aria-pressed", String(on));
+        s.setAttribute("aria-label", (on ? "Unstar" : "Star") + " clip " + c.no);
+        s.title = on ? "Starred (s)" : "Star (s)";
+        s.addEventListener("click", () => toggleStar(c, true));
+      } else {
+        s = el("span", "rstar", on ? "★" : "");
+        if (on) s.setAttribute("aria-label", "starred");
+      }
+      li.append(b, s);
       rows.append(li);
     }
     // Keep the playing clip if it is still listed, else show the first one.
@@ -381,10 +438,46 @@
     const c = clips.find((x) => x.id === state.current);
     const act = $("act");
     if (!c || !act) return;
-    for (const n of [...act.childNodes]) if (!(n instanceof HTMLButtonElement && n.classList.contains("danger"))) n.remove();
+    for (const n of [...act.childNodes]) if (!(n instanceof HTMLElement && (n.classList.contains("danger") || n.classList.contains("star")))) n.remove();
     const tmp = el("span");
     shareControls(c, tmp);
-    act.prepend(...tmp.childNodes);
+    const star = act.querySelector(".star");
+    if (star) star.after(...tmp.childNodes); else act.prepend(...tmp.childNodes);
+  }
+
+  // Star: served, a toggle (and the s key) through POST /star/<no> or /unstar/<no>; the server
+  // writes library/stars.json and rewrites index.html. From disk, the pnpm fav / unfav command.
+  function starControl(c) {
+    const on = starred.has(c.no);
+    if (!served) {
+      const cmd = (on ? "pnpm unfav " : "pnpm fav ") + c.no;
+      const grp = el("span", "grp star");
+      grp.append(el("span", "sg", on ? "★" : "☆"), el("code", "", cmd), copyButton("Copy", cmd));
+      return grp;
+    }
+    const b = el("button", "star", on ? "★ Starred" : "☆ Star");
+    b.type = "button";
+    b.title = on ? "Unstar (s)" : "Star (s)";
+    b.setAttribute("aria-pressed", String(on));
+    b.addEventListener("click", () => toggleStar(c));
+    return b;
+  }
+  let starBusy = false, starChanges = 0; // starChanges: a toggle since load outdates the startup refresh
+  async function toggleStar(c, fromRow) {
+    if (!c || !served || starBusy) return;
+    starBusy = true; starChanges++;
+    const on = starred.has(c.no);
+    try {
+      const r = await fetch("/" + (on ? "unstar" : "star") + "/" + c.no, { method: "POST" });
+      if (!r.ok) { alert((on ? "Not unstarred: " : "Not starred: ") + ((await r.text().catch(() => "")) || r.status)); return; }
+      const body = await r.json();
+      starred.clear();
+      for (const n of body.stars || []) starred.add(n);
+    } catch (e) { alert("Not changed: " + e); return; } finally { starBusy = false; }
+    render();
+    // The rows were rebuilt: keep focus on the control just used.
+    const again = fromRow ? document.querySelector('#rows button.rstar[data-id="' + c.id + '"]') : document.querySelector("#act .star");
+    if (again) again.focus({ preventScroll: true });
   }
   async function share(c) {
     if (shares.get(c.no)?.since) return;
@@ -412,11 +505,12 @@
     // On the focused player the arrows seek, as players do; j / k still step.
     const arrows = !(e.target instanceof HTMLVideoElement);
     if (e.key === "Delete" && served) { e.preventDefault(); remove(clips.find((c) => c.id === state.current)); return; }
+    if (e.key === "s" && served) { e.preventDefault(); toggleStar(clips.find((c) => c.id === state.current)); return; }
     if ((arrows && e.key === "ArrowRight") || e.key === "j") { e.preventDefault(); step(1); }
     else if ((arrows && e.key === "ArrowLeft") || e.key === "k") { e.preventDefault(); step(-1); }
   });
   $("newest").addEventListener("click", () => {
-    state.kind = state.map = state.match = null; $("find").value = ""; $("sort").value = "added";
+    clearFilters(); $("sort").value = "added";
     render();
     const first = shown()[0];
     if (first) play(first, true);
@@ -424,8 +518,15 @@
   $("find").addEventListener("input", render);
   $("sort").addEventListener("input", render);
   // Keep pages restored from the back/forward cache consistent with the reset controls.
-  window.addEventListener("pageshow", (e) => { if (e.persisted) { $("find").value = ""; $("sort").value = "score"; state.kind = state.map = state.match = null; render(); } });
+  window.addEventListener("pageshow", (e) => { if (e.persisted) { clearFilters(); $("sort").value = "score"; render(); } });
   render();
+  // Served, the server's stars win over the inlined ones (a pnpm fav may have run since the page was written).
+  if (served) fetch("/stars", { cache: "no-store" }).then((r) => r.ok ? r.json() : null).then((b) => {
+    if (!b || !Array.isArray(b.stars) || starChanges) return; // a toggle already brought newer stars
+    starred.clear();
+    for (const n of b.stars) starred.add(n);
+    render();
+  }).catch(() => {});
 </script>
 </body>
 </html>

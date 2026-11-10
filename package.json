@@ -23,6 +23,8 @@
     "trash": "tsx src/cli/drop.ts trash",
     "share": "tsx src/cli/share.ts",
     "vertical": "tsx src/cli/vertical.ts",
+    "fav": "tsx src/cli/star.ts star",
+    "unfav": "tsx src/cli/star.ts unstar",
     "tidy": "tsx src/cli/tidy.ts",
     "unsettle": "tsx src/cli/unsettle.ts",
     "rescore": "tsx src/cli/rescore.ts"

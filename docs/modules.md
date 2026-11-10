@@ -24,6 +24,8 @@ pnpm library [--port <n>]
 pnpm drop <no>...
 pnpm share <no> [--max-mb <n>]
 pnpm vertical <no> [--shift <percent>]
+pnpm fav <no>...               (star clips; pnpm's own star / unstar star npm packages)
+pnpm unfav <no>...
 pnpm trash --empty
 pnpm tidy
 pnpm unsettle <demo sha256 prefix | clip no>...
@@ -110,6 +112,22 @@ a 7.0 s highlight in 6 s (13.2 MB), a 36.4 s highlight in 31 s
 (73.1 MB), a 162 s kills reel in 188 s (292 MB); about 15-17 Mbps, a
 reuse in about 2 s. The viewmodel, like the radar and kill feed, sits
 mostly outside the centre column.
+
+**Stars and filters** (`src/library/stars.ts`, `src/library/facets.ts`,
+`src/cli/star.ts`; PLAN.md §7 has the rules). `pnpm fav <no>...` /
+`pnpm unfav <no>...` (not `pnpm star`: pnpm's own command) change
+`library/stars.json` and rewrite the page; a number the index does not
+hold refuses the whole command (exit 1, nothing written). `changeStars`
+drops the stars of clips no longer in the index on every write, and the
+page writer leaves them out, so `pnpm drop` does not touch the file. The
+file has no lock: the server and the CLI each read-modify-write it in
+microseconds, and two stars in the same instant can lose one. `pnpm
+library` serves `POST /star/<no>`, `POST /unstar/<no>` (answer
+`{ stars }`) and `GET /stars`. `featsOf` and `weaponsOf` (the game's
+names for grenade and fire kills labelled: `hegrenade` "HE grenade",
+`inferno` "Fire") run in `page.ts`, which stores `feats` and `weapons`
+per clip in the inlined data; the page only filters and counts, live, so
+a delete in place updates the counts. Tested in `test/stars.test.ts`.
 
 `pnpm prep` (PLAN.md M5; pnpm's own `setup` and `doctor` commands take the
 obvious names, so `pnpm check` is the report-only form) makes a PC ready:

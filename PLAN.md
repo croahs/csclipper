@@ -390,6 +390,28 @@ shows the file name and size, "Copy caption" and "Show in folder"
 where the async clipboard API is unavailable). The share and reveal
 routes sit behind the same Host and Origin checks as delete and take
 a clip number only, never a path.
+Stars and filters (decided 2026-11-10): Peder stars favourite clips;
+the stars live in `library/stars.json` (`{ version: 1, stars: [<no>] }`,
+temp then rename), never in `index.json`, so starring cannot collide
+with a clip run's index write. A missing or garbled file is no stars.
+The same two modes: served, a star control on the playing clip and on
+each list row, and the `s` key, toggle through `POST /star/<no>` /
+`/unstar/<no>` (same Host and Origin checks, a clip number only); the
+page updates in place, the server rewrites `index.html`, and on load
+the served page asks the server for the current stars, since the
+inlined list may be older. Opened from disk the page shows the
+inlined stars and the `pnpm fav <no>` / `pnpm unfav <no>` command
+(pnpm's own `star` and `unstar` star npm packages and take those
+names). A deleted clip's star is ignored by the page and dropped at
+the next write; numbers are never reused, so it can never mark
+another clip. The sidebar gains "Starred", feats (Ace = 5 kills, 4k,
+3k, Clutch = a clutch won) and the weapons of the moment's kills, each
+with its count, most frequent first, six shown and the rest behind
+"More"; a group with no clip is hidden. They are derived from what the
+highlight's index entry already carries (`moment.kills`, `.clutch`,
+`.weapons`), so the pipeline writes nothing new; reels and entries
+without a moment match no feat or weapon. Every filter combines with
+the others, Find and the sort; "Newest clips" clears them all.
 
 ## Stack
 
