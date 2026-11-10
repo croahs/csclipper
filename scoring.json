@@ -15,7 +15,8 @@
     "2026-10-15 round outcome as a multiplier (Peder): the flat roundWon +8 is replaced by x1.1 for a won round and x0.9 for a lost one on the round's whole score, a light weight for impact; the clutch won bonus stays separate",
     "2026-10-15 facing per kill (Peder): the victim looking within 60 degrees of him at the kill tick multiplies that kill's share by 1.1, a kill from behind by 0.9 (few bullets in the back is easy); unknown angles count 1",
     "2026-10-15 hand-pick fixes (Peder: 63 and 29 > 90, 13 > 84/105): clutch scales with enemies and with the share killed (1v1 with one kill 10, 1v2 30, 1v3 50, ...; lost x0.3); the low-HP penalty skips a victim his own damage brought low and is capped at 8 per moment; economy multiplies only the kill points; new direction spread bonus (yaw turned between the tightest run's kills, 4 points above 60 degrees, +2 per 45 degrees, at most 10)",
-    "2026-11-02 tempo slides and collats count (Peder: \"vekte tempo høyere, samme med collats\"; \"1s er en boost, 2s en annen ... flate ut på 8\"): speed and tightness are replaced by one pace curve over the average seconds between the fastest run's kills, (1 - gap/8)^1.5, 0 from 8 s: speed speedMax 24 times it, and 35 times it per kill past the second (was a flat 15 inside a 6 s window, and speed 0 from 3 s); new collat part, 30 per extra kill on the same tick, shotgun blasts included (1 real collat in 1388 kills on the 74 stored demos). On those demos 19 more 2ks reach 40 (239 -> 258), none drop; hand-pick 86 > 42 now holds, 13 > 105 still does not (72.5 vs 75.1)"
+    "2026-11-02 tempo slides and collats count (Peder: \"vekte tempo høyere, samme med collats\"; \"1s er en boost, 2s en annen ... flate ut på 8\"): speed and tightness are replaced by one pace curve over the average seconds between the fastest run's kills, (1 - gap/8)^1.5, 0 from 8 s: speed speedMax 24 times it, and 35 times it per kill past the second (was a flat 15 inside a 6 s window, and speed 0 from 3 s); new collat part, 30 per extra kill on the same tick, shotgun blasts included (1 real collat in 1388 kills on the 74 stored demos). On those demos 19 more 2ks reach 40 (239 -> 258), none drop; hand-pick 86 > 42 now holds, 13 > 105 still does not (72.5 vs 75.1)",
+    "2026-11-10 trades and saves (PLAN.md section 3, the last deferred signals): flat points per kill, outside economy: trade 2 (window 4 s), save 3, saveLowHp 4 (teammate at 40 HP or less after the victim's last hit; hit within 2 s, teammate alive 3 s after or at round end). Started at 3/4/6; lowered so every value stays well under half a plain rifle kill (10). On the 80 cached demos (1421 POV kills) 207 are trades (14.6 %) and 73 saves (5.1 %, 23 low); 255 of 904 moments gain, at most +8.8; no demo's #1 changes; moments at 40 or more 283 -> 292 (3/4/6: 298, +13.2 max). Hand-picks: 86 > 42, 86 > 85, 13 > 84 hold; 13 > 105 still does not and widens (72.5 vs 75.1 -> 78.4: 105 is a 2k with a low save); 90 is no longer in the library, so 63/29 > 90 cannot be checked"
   ],
   "killBase": {
     "1": 10,
@@ -103,6 +104,16 @@
     "threshold": 30,
     "penaltyPerKill": 6,
     "maxPerMoment": 8
+  },
+  "teamplay": {
+    "_note": "flat points per POV kill, not scaled by economy: trade when the victim killed a teammate at most tradeWindowSeconds before; save when the victim hurt a living teammate (not him) within saveWindowSeconds before and that teammate is still alive saveSurviveSeconds after the kill or at round end, saveLowHp instead of save when the victim's last hit left the teammate at or below saveLowHpThreshold; a kill that is both counts as a save",
+    "trade": 2,
+    "tradeWindowSeconds": 4,
+    "save": 3,
+    "saveLowHp": 4,
+    "saveLowHpThreshold": 40,
+    "saveWindowSeconds": 2,
+    "saveSurviveSeconds": 3
   },
   "threshold": 30,
   "includeOvertime": false

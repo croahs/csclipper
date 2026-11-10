@@ -2,7 +2,8 @@
 // scored with the weights in scoring.json: kill count, pace (the fastest run
 // inside the round, on a sliding curve), clutch, outcome, flags and weapon as the backbone, and
 // per-kill style multipliers for one-bullet kills, flicks, no-scopes and
-// airborne kills, and collaterals (one bullet, several kills). Trades and "saved a teammate" are deferred.
+// airborne kills, collaterals (one bullet, several kills), and small flat per-kill teamplay
+// bonuses for trades and saves (a kill that saved a damaged teammate).
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { ROOT } from "../config.ts";
@@ -20,6 +21,7 @@ export type Weights = {
   weaponMultiplier: Record<WeaponClass, number>;
   roundOutcome: { won: number; lost: number };
   lowHp: { threshold: number; penaltyPerKill: number; maxPerMoment: number };
+  teamplay: { trade: number; tradeWindowSeconds: number; save: number; saveLowHp: number; saveLowHpThreshold: number; saveWindowSeconds: number; saveSurviveSeconds: number };
   threshold: number;
   includeOvertime: boolean;
 };
@@ -87,6 +89,41 @@ export function povKills(p: ParsedDemo, r: Round): Death[] {
   return p.deaths
     .filter((d) => d.round === r.n && d.tick <= r.endTick && d.attacker === p.identity.steamid && d.victim !== d.attacker && r.teams[d.victim] && r.teams[d.victim] !== team)
     .sort((a, b) => a.tick - b.tick);
+}
+
+export type Teamplay = { trades: Death[]; saves: { kill: Death; low: boolean }[] };
+
+/**
+ * Trades and saves among the POV's kills of one round (PLAN.md §3). A save: the victim hurt a
+ * teammate (not the POV) within saveWindowSeconds before the kill, and that teammate was alive at
+ * the kill and still is saveSurviveSeconds later or at round end, whichever comes first; low when
+ * the victim's last such hit left that teammate at or below saveLowHpThreshold. A trade: the victim
+ * killed a teammate at most tradeWindowSeconds before, same round. A kill that is both is a save.
+ * Neither in a round without a known POV team or with a roster change (alive state unreliable).
+ */
+export function teamplay(p: ParsedDemo, kills: Death[], w: Weights): Teamplay {
+  const out: Teamplay = { trades: [], saves: [] };
+  const tp = w.teamplay;
+  const r = kills.length ? (p.rounds ?? []).find((x) => x.n === kills[0].round) : undefined;
+  const team = r ? povTeam(p, r) : undefined;
+  if (!tp || !r || !team || r.rosterChanged) return out;
+  const t = p.demo.tickrate;
+  const me = p.identity.steamid;
+  const mate = (id: string | null) => !!id && id !== me && r.teams[id] === team;
+  const deaths = (p.deaths ?? []).filter((d) => d.round === r.n && d.tick <= r.endTick);
+  for (const k of kills) {
+    if (!r.teams[k.victim] || r.teams[k.victim] === team) continue; // enemies only (povKills already drops teamkills)
+    // A hit counts when its teammate is not dead by the survive horizon (so alive at the kill, too).
+    const until = Math.min(k.tick + tp.saveSurviveSeconds * t, r.endTick);
+    const hits = (p.hurts ?? []).filter((h) => h.round === r.n && h.attacker === k.victim && mate(h.victim) && h.tick <= k.tick && h.tick >= k.tick - tp.saveWindowSeconds * t
+      && !deaths.some((d) => d.victim === h.victim && d.tick <= until));
+    if (hits.length) {
+      const last = new Map<string, { tick: number; health: number }>();
+      for (const h of hits) { const prev = last.get(h.victim); if (!prev || h.tick >= prev.tick) last.set(h.victim, h); }
+      out.saves.push({ kill: k, low: [...last.values()].some((h) => h.health <= tp.saveLowHpThreshold) });
+    } else if (deaths.some((d) => d.attacker === k.victim && mate(d.victim) && d.tick <= k.tick && d.tick >= k.tick - tp.tradeWindowSeconds * t)) out.trades.push(k);
+  }
+  return out;
 }
 
 const ENGAGE_S = 5; // the first kill's bullets count from this long before it
@@ -174,6 +211,13 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
   };
   const low = kills.filter((k) => k.victimHpBefore <= w.lowHp.threshold && broughtLowByOthers(k)).length;
   if (low) b.lowHp = -Math.min(w.lowHp.maxPerMoment, low * w.lowHp.penaltyPerKill);
+  // Teamplay: flat points per trade and per save (more for a low teammate); not scaled by economy,
+  // scaled by the outcome like every part.
+  const tp = teamplay(p, kills, w);
+  const trade = tp.trades.length * (w.teamplay?.trade ?? 0);
+  const save = tp.saves.reduce((a, s) => a + (s.low ? w.teamplay.saveLowHp : w.teamplay.save), 0);
+  if (trade) b.trade = trade;
+  if (save) b.save = save;
   // Direction spread: the yaw the POV turned between consecutive kills of the fastest run.
   if (run.length >= 2) {
     // Between consecutive known yaws: a kill without one (a victim with no SteamID) is bridged over.

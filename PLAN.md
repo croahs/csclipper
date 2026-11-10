@@ -150,8 +150,8 @@ Score per moment from, first ranking only:
 
 | direction spread: yaw turned between consecutive kills in a run (kills in several directions within seconds) | added 2026-10-15 from clip 29; the per-kill flick window misses it |
 | facing: whether the victim was looking at you at the kill tick (victim view yaw against the vector from victim to attacker, within about 60 degrees = facing). A small per-kill multiplier: facing slightly up, from behind slightly down | decided by Peder 2026-10-15: few bullets in the back is easy, less impressive |
-
-Still deferred: trades, "saved a teammate".
+| trade: a kill of an enemy who killed one of your teammates at most 4 s earlier in the same round. A flat per-kill bonus, outside the economy factor | added 2026-11-10: a fast trade is disciplined play, not a highlight on its own, so it is worth about a fifth of a plain kill |
+| save: a kill of an enemy who hurt a living teammate (not you) within 2 s before it, the teammate still alive 3 s after the kill or at round end, whichever is first; more when that enemy's last hit left the teammate at 40 HP or less. A kill that is both a trade and a save is a save. Neither in a round with a roster change (alive state unreliable) | added 2026-11-10: like the style multipliers, it can lift a good round, never carry a weak one over a strong one (at most 4 points a kill) |
 
 Peder's hand-picks (guidance, not hard constraints) live in
 `docs/hand-picks.md`; every scoring change reports which hold.
@@ -466,8 +466,7 @@ After the victim's death the take shows what the game gives a dead
 player, normally the death camera; that is accepted.
 
 **M4. Sources and polish.** FACEIT auto-download, overlays, killfeed,
-montage builder, OBS fallback, Valve GC download, deferred scoring
-signals.
+montage builder, OBS fallback, Valve GC download.
 
 **M5. Sharing** (decided 2026-10-25). Other players run it on their
 own Windows PC from the public repo (github.com/croahs/csclipper).

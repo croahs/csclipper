@@ -38,6 +38,8 @@ the round end do not count. A moment needs at least one POV kill.
 | flags | `flags` | per kill: headshot, wallbang, through smoke, while blind |
 | collat | `collat` | a collateral: gun kills on the same tick are one shot (a shotgun blast killing two counts too); each past the first earns `perExtraKill` 30. Rare: 1 in 1388 kills on the 74 stored demos (2026-11-02) |
 | style | `style` | per-kill multipliers on that kill's share of the kill base, stacking on the kill: a one-bullet kill (POV gun `weapon_fire` count since the previous kill, or 5 s before the first, is 1) 1.5, a flick (the largest POV yaw turn from 100–200 ms before the kill gunshot to the shot, wrapped, over `flickMinDegrees` 15°) 1.5, or a big flick (`bigFlickMinDegrees` 45° or more) `bigFlick` 2.5 instead, a no-scope 1.4, an airborne kill (`attackerinair`) 1.3, and facing: the victim's view within `facingMaxDegrees` 60° of the line to him the tick before the kill 1.1, otherwise (from behind) 0.9; an unknown angle counts 1. `style` in the breakdown is what they add: the kill part times (average factor − 1). Two one-tap flicks in a 2k score about double a plain 2k; a single kill with every style stays below a strong 3k (about 41 with a normal flick, 68 with a big one, against about 74 for a quick 3k; a spread-out 3k at 55 can be passed by a big-flick 1k); a kill with none counts 1. Facing applies to almost every kill (797 of 900 face him), so a plain kill now gains about 10 % and one from behind loses 10 %; with the outcome multiplier replacing the flat +8 the calibration anchor moved (a plain won 2k from about 38 to about 36, a plain lost 2k from 30 to about 30) and is not re-tuned: Peder's call |
+| trade | `teamplay` | `trade` 2 per kill of an enemy who killed a teammate at most `tradeWindowSeconds` 4 before, same round; flag `trade` / `n trades` |
+| save | `teamplay` | `save` 3 per kill of an enemy who hurt a teammate (not him) within `saveWindowSeconds` 2 before it, that teammate alive at the kill and still `saveSurviveSeconds` 3 after it or at round end, whichever is first; `saveLowHp` 4 instead when the enemy's last such hit left the teammate at or below `saveLowHpThreshold` 40; a kill that is both counts as the save; flag `save` / `n saves`. Both are outside economy and inside outcome, and neither applies in a `rosterChanged` round |
 | outcome | `roundOutcome` | the round's whole score (after economy) times `won` 1.1 or `lost` 0.9: a light weight for the round's result; a won clutch is valued in `clutch` on its own |
 | lowHp | `lowHp` | − penaltyPerKill for each victim at or below threshold HP before the killing hit whom others (teammates, the world) damaged at least as much as he did before the kill (his own spraydown is never "low HP"), at most `maxPerMoment` 8 |
 | economy | `economy` | the kill points (kills and style) times 1 + `perLnRatio` × ln(enemy buy / his team's buy) − 1, within `min`..`max` (0.7..1.4); the buys are the teams' summed `current_equip_value` of alive players at freeze end (`rounds[].equip`). An eco won against a full buy gets ×1.4 on its kill points, a farmed eco ×0.7; pistol rounds (`pistolRounds`, 1 and 13) and unknown buys count 1. Applied to the kill points only, before `outcome` |
@@ -108,8 +110,40 @@ kills under the per-round rule rise for that reason (e.g. clip 41, a 2k
 that is a 3k round, 40 to 67). With it, 98 moments across the 29 stored
 demos clear 40.
 
+## Trades and saves (2026-11-10)
+
+Definitions and weights are in the table above (`trade`, `save`). Both read
+the existing parse (`deaths`, and `hurts` with attacker, victim and health
+after the hit, present for every player: 20602 enemy hits on his teammates
+across the 80 cached demos, all with a health value), so the parse schema did
+not change. The moments schema went 6 → 7 (flags), and the weights are in the
+moments cache key, so `pnpm moments` rebuilds; `pnpm rescore` updates score,
+breakdown and flags of library clips. Settled demos get no new work
+(`pnpm go` skips them before scoring).
+
+Weights: started at trade 3, save 4, low save 6, then lowered to 2 / 3 / 4
+so each stays well under half a plain rifle kill (10). A flat bonus, not a
+multiplier: a trade or save is about what the victim did to a teammate, not
+how hard the kill was. Outside economy (an eco round does not make a trade
+better), inside outcome (×1.1 / ×0.9 like every part).
+
+Evidence on the 80 cached parses (1421 POV kills, 904 moments): 207 kills are
+trades (14.6 %), 73 saves (5.1 %; 23 with the teammate at 40 HP or less).
+255 moments gain, at most +8.8; no demo's #1 changes; moments at 40 or more
+283 → 292 (at 3 / 4 / 6: 298, at most +13.2). On four demos run with
+`pnpm moments` (de_dust2 `0adbd29a`, de_mirage `8de223c5`, de_cache
+`a893e749`, de_anubis `b547d5c3`) every top 5 keeps its order; the largest
+gains are de_cache R7 3k with a low save 85.6 → 90.0 and de_anubis R7 2k
+with two trades 43.7 → 47.3; the only rank moves are below the top 5.
+
+Hand-picks: 86 > 42, 86 > 85 and 13 > 84 hold (84 56.8 → 58.6, a trade);
+13 > 105 still fails and widens (72.5 vs 75.1 → 78.4: 105 is a 2k whose
+save is a low one; 13 has neither), and clip 13 slips from rank 4 to 5 in
+its demo behind R4, a 3k with a trade (72.4 → 74.6). Clip 90 is no longer in
+the library, so 63 > 90 and 29 > 90 could not be checked; a 1-kill moment
+gains at most 4.4 (one low save, won), against gaps of 33 and 55.
+
 ## Not scored yet
 
-Deferred in `PLAN.md`: trades, saved-a-teammate. Not possible
-as clips: a clutch won without a POV kill (the render's timing measure needs
-POV shots).
+Not possible as clips: a clutch won without a POV kill (the render's timing
+measure needs POV shots).

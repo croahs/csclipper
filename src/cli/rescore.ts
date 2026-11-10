@@ -1,5 +1,5 @@
 // pnpm rescore [--dry-run]: the scores the library shows (each highlight's moment: rank, score,
-// breakdown) recomputed with the current scoring.json from each demo's cached parse
+// breakdown, flags) recomputed with the current scoring.json from each demo's cached parse
 // (state/<sha>/parse.json), then the library page rewritten. Display only: no clip is rendered,
 // trimmed or renumbered, no demo is unsettled, and the clip spans stay as rendered (AGENTS.md).
 import { existsSync, readFileSync } from "node:fs";
@@ -37,9 +37,9 @@ const apply = (clips: Record<string, ClipEntry>) => {
     const spec = byDemo.get(c.demoSha256)?.find((s) => s.round === c.round);
     if (!spec) { missing.push(c.no ?? 0); continue; }
     const old = c.moment as { score?: number; rank?: number };
-    if (old.score === spec.score && old.rank === spec.rank && JSON.stringify(c.moment.breakdown) === JSON.stringify(spec.breakdown)) continue;
+    if (old.score === spec.score && old.rank === spec.rank && JSON.stringify(c.moment.breakdown) === JSON.stringify(spec.breakdown) && JSON.stringify(c.moment.flags) === JSON.stringify(spec.flags)) continue;
     lines.push(`clip ${c.no}: ${old.score ?? "?"} -> ${spec.score} (rank ${old.rank ?? "?"} -> ${spec.rank})`);
-    c.moment = { ...c.moment, rank: spec.rank, score: spec.score, breakdown: spec.breakdown };
+    c.moment = { ...c.moment, rank: spec.rank, score: spec.score, breakdown: spec.breakdown, flags: spec.flags };
     changed++;
   }
   return changed;

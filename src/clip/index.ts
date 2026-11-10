@@ -4,7 +4,7 @@
 // generated title.
 import type { Death, ParsedDemo, Round } from "../parse/demo.ts";
 import { clipId } from "../library/index.ts";
-import { scoreKills, weaponClass, type Clutch, type Moment, type Weights } from "../score/index.ts";
+import { scoreKills, teamplay, weaponClass, type Clutch, type Moment, type Teamplay, type Weights } from "../score/index.ts";
 import type { ClipRules } from "../config.ts";
 
 const ENGAGE_WINDOW_S = 5; // engagement signals this far before the first kill
@@ -49,7 +49,7 @@ const WEAPON_NAMES: Record<string, string> = {
 };
 export const weaponName = (w: string) => (weaponClass(w) === "knife" ? "knife" : WEAPON_NAMES[w] ?? w);
 
-function flagsOf(kills: Death[]): string[] {
+function flagsOf(kills: Death[], tp: Teamplay): string[] {
   const f: string[] = [];
   const hs = kills.filter((k) => k.headshot).length;
   if (hs) f.push(hs === kills.length && hs > 1 ? "all HS" : `${hs} HS`);
@@ -57,6 +57,9 @@ function flagsOf(kills: Death[]): string[] {
   if (kills.some((k) => k.noscope)) f.push("no-scope");
   if (kills.some((k) => k.thrusmoke)) f.push("through smoke");
   if (kills.some((k) => k.attackerblind)) f.push("while blind");
+  const n = (count: number, word: string) => (count === 1 ? word : `${count} ${word}s`);
+  if (tp.trades.length) f.push(n(tp.trades.length, "trade"));
+  if (tp.saves.length) f.push(n(tp.saves.length, "save"));
   return f;
 }
 
@@ -170,7 +173,7 @@ export function clipSpecs(p: ParsedDemo, ms: Moment[], w: Weights, rules: ClipRu
       score: s.score, breakdown: s.breakdown,
       kills: d.kills.length, killTicks: d.kills.map((k) => k.tick),
       weapons: [...new Set(d.kills.map((k) => weaponName(k.weapon)))],
-      flags: flagsOf(d.kills),
+      flags: flagsOf(d.kills, teamplay(p, d.kills, w)),
       ...(d.clutch ? { clutch: d.clutch } : {}),
       aboveThreshold: s.score >= w.threshold,
       windows: actionWindows(p, d.round, d.start, d.end, d.outcomes, d.tails),
