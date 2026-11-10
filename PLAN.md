@@ -340,6 +340,28 @@ FFmpeg only:
   `index.json`, and the source clip is only read. A one-line caption
   comes with it (`3k Deagle clutch · Cache · round 12 #CS2`; reels:
   `Cache · all 9 deaths from the killer's view #CS2`).
+- vertical copies (decided 2026-11-10): Reels, TikTok and Shorts want
+  9:16. `pnpm vertical <no> [--shift <percent>]` writes
+  `library/vertical/<no>-<slug>.mp4` (the share file's name): the
+  centre 9:16 column of the source at full height (from the probed
+  size, even numbers: 1920x1080 → `crop=608:1080` at x=656), scaled
+  with lanczos to `config.json` → `vertical` (`width` 1080, `height`
+  1920). The crosshair is the frame's centre, so the action stays in
+  view; the radar and the kill feed fall outside, which is intended.
+  No blurred side bars, no letterboxing. `--shift` moves the column by
+  that percent of the source width (negative left), clamped to the
+  frame; the only framing control. A source already narrower than 9:16
+  is refused. Encode: H.264 (libx264) `-preset slow`, CRF
+  `vertical.crf` (18), yuv420p, the source frame rate, AAC 128 kbps,
+  `+faststart`; no size limit and no ladder, since these apps
+  re-encode on upload. Same contract as share: temp path, validate
+  (decodes, h264, exactly the configured size, audio when the source
+  has it, duration within 0.5 s), rename; the key (clip id, source size
+  and time, crop, output size, CRF, recipe) sits in the file's own
+  metadata, so a valid one is reused and any other is made again under
+  the same name: one vertical file per clip, the last crop asked for
+  wins. Never written to `index.json`; the source only read. Prints
+  share's caption.
 
 ### 7. Library
 

@@ -23,6 +23,7 @@ pnpm victims "<demo.dem>" [--timeout <s>] [--dry-run]
 pnpm library [--port <n>]
 pnpm drop <no>...
 pnpm share <no> [--max-mb <n>]
+pnpm vertical <no> [--shift <percent>]
 pnpm trash --empty
 pnpm tidy
 pnpm unsettle <demo sha256 prefix | clip no>...
@@ -92,6 +93,23 @@ clip is too long for the limit. `pnpm library` runs `pnpm share <no>
 time) and opens Explorer for `POST /reveal/<no>`. Measured 2026-11-10
 at 20 MB: a 31 s 1080p60 highlight went to 720p60 two-pass (18.7 MB,
 38 s); a 198 s kills reel to 480p30 (19.0 MB, 95 s).
+
+**Vertical copies** (`src/share/vertical.ts`, `src/cli/vertical.ts`;
+PLAN.md §6 has the rules). `pnpm vertical <no>` writes
+`library/vertical/<no>-<slug>.mp4`: the centre 9:16 column, 1080x1920
+(`config.json` → `vertical`), H.264 CRF 18, AAC, faststart, and prints
+the path, the size and share's caption. `--shift <percent>` moves the
+column by that share of the source width, clamped; a new shift remakes
+the file under the same name. `planCrop` and `verticalKey` are pure and
+tested in `test/vertical.test.ts`. Reuse, exit codes (2: no such clip
+or a source narrower than 9:16) and `--json` (`path`, `bytes`,
+`width`, `height`, `fps`, `seconds`, `caption`, `reused`, `crop`,
+`encodeSeconds`) mirror share, so the library server can run it as a
+child process. Measured 2026-11-10 (1920x1080p60 sources, preset slow):
+a 7.0 s highlight in 6 s (13.2 MB), a 36.4 s highlight in 31 s
+(73.1 MB), a 162 s kills reel in 188 s (292 MB); about 15-17 Mbps, a
+reuse in about 2 s. The viewmodel, like the radar and kill feed, sits
+mostly outside the centre column.
 
 `pnpm prep` (PLAN.md M5; pnpm's own `setup` and `doctor` commands take the
 obvious names, so `pnpm check` is the report-only form) makes a PC ready:

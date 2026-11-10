@@ -88,6 +88,15 @@ export function loadEncoder(file = path.join(ROOT, "config.json")): Encoder {
   return e;
 }
 
+/** pnpm vertical's output (PLAN.md §6): width x height (even, default 1080x1920) and the x264 CRF (default 18). */
+export type VerticalSettings = { width: number; height: number; crf: number };
+export function loadVertical(file = path.join(ROOT, "config.json")): VerticalSettings {
+  const v = { width: 1080, height: 1920, crf: 18, ...JSON.parse(readFileSync(file, "utf8")).vertical };
+  for (const k of ["width", "height"] as const) if (!Number.isInteger(v[k]) || v[k] < 2 || v[k] % 2) throw new Error(`config.json vertical.${k} must be an even whole number of pixels`);
+  if (typeof v.crf !== "number" || !(v.crf >= 0 && v.crf <= 51)) throw new Error("config.json vertical.crf must be a number from 0 to 51");
+  return { width: v.width, height: v.height, crf: v.crf };
+}
+
 /** Clip span rules (PLAN.md §4): lead-in before the engagement start, tail after the last kill. */
 export type ClipRules = { leadInSeconds: number; tailSeconds: number };
 export function loadClipRules(file = path.join(ROOT, "config.json")): ClipRules {

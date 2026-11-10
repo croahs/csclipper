@@ -16,6 +16,11 @@
   "share": {
     "maxMegabytes": 20
   },
+  "vertical": {
+    "width": 1080,
+    "height": 1920,
+    "crf": 18
+  },
   "clip": {
     "leadInSeconds": 4,
     "tailSeconds": 5.5

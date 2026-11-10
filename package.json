@@ -22,6 +22,7 @@
     "drop": "tsx src/cli/drop.ts drop",
     "trash": "tsx src/cli/drop.ts trash",
     "share": "tsx src/cli/share.ts",
+    "vertical": "tsx src/cli/vertical.ts",
     "tidy": "tsx src/cli/tidy.ts",
     "unsettle": "tsx src/cli/unsettle.ts",
     "rescore": "tsx src/cli/rescore.ts"
