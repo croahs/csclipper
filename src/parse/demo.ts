@@ -40,6 +40,8 @@ export type Death = {
 export type Vec3 = [number, number, number]; // death map (optional fields, no schema bump)
 // The POV's view turn before each gun kill: the largest yaw change from 100-200 ms
 // before the kill shot (the POV's last gunshot at or before the kill, within 1 s) to the shot itself.
+// A cache parsed before the bare-name fix may hold a knife swing or a grenade throw as that shot;
+// scoring drops such a flick (flickYaw, src/score). No schema bump for it: docs/modules.md, Death map.
 export type Flick = { killTick: number; shotTick: number; yawDegrees: number };
 export type Hurt = { tick: number; round: number; attacker: string | null; victim: string; dmg: number; health: number; weapon: string };
 export type Fire = { tick: number; round: number; player: string; weapon: string };
@@ -75,9 +77,24 @@ export type ParsedDemo = {
 const sid = (v: unknown) => (typeof v === "string" && /^\d{17}$/.test(v) ? v : null);
 const teamOf = (n: number): Team | null => (n === 2 ? "T" : n === 3 ? "CT" : null);
 const winnerOf = (w: unknown): Team | null => (w === "T" || w === "CT" ? w : null);
-const isKnife = (w: string) => w.startsWith("knife") || w === "bayonet";
-/** Weapons whose weapon_fire or kill is not a gunshot: knives, grenades and their fire, the bomb. */
-export const NOT_A_GUN = /^(knife|bayonet|hegrenade|flashbang|smokegrenade|molotov|incgrenade|inferno|decoy|c4|planted_c4|world)/;
+/** Weapons whose weapon_fire or kill is not a gunshot: knives, grenades and their fire, the bomb. Tested on bare names only. */
+const NOT_A_GUN = /^(knife|bayonet|hegrenade|flashbang|smokegrenade|molotov|incgrenade|inferno|decoy|c4|planted_c4|world)/;
+// weapon_fire names carry a "weapon_" prefix (weapon_knife_ursus, weapon_hegrenade) that deaths and hurts
+// do not (knife_ursus, hegrenade): every weapon test goes through the bare name, one rule for all three.
+export const bareWeapon = (w: string) => String(w ?? "").replace(/^weapon_/, "");
+/** A knife (any skin, the bayonets): a swing in weapon_fire, a knife kill in player_death. */
+export const isKnife = (w: string) => /^(knife|bayonet)/.test(bareWeapon(w));
+/** A gunshot or a gun kill: not a knife, a grenade or its fire, the bomb or the world. */
+export const isGunshot = (w: string) => !NOT_A_GUN.test(bareWeapon(w));
+/**
+ * A knife round: shots were fired in it and every one was a knife swing. Derived from the fires, so a
+ * cache parsed before the bare-name fix (whose rounds were never marked "knife") reads right too.
+ */
+export function isKnifeRound(p: Pick<ParsedDemo, "fires">, r: Pick<Round, "n" | "endTick" | "phase">): boolean {
+  if (r.phase === "knife") return true;
+  const shots = p.fires.filter((f) => f.round === r.n && f.tick <= r.endTick);
+  return shots.length > 0 && shots.every((f) => isKnife(f.weapon));
+}
 
 // --- death map (optional fields, no schema bump) ---
 export const FOOTPRINT_CELL = 32; // game units per footprint cell (a player is 32 wide)
@@ -180,8 +197,8 @@ function extract(demo: string, sha256: string, pov: string, key: string, main: b
   // Flicks: the POV's yaw over the 100-200 ms before each kill shot (the POV's last gunshot within 1 s
   // before a gun kill; none, no flick), one parse for all of them. Offsets stay inside the window.
   const FLICK_FROM = Math.ceil(0.1 * TICKRATE), FLICK_TO = Math.floor(0.2 * TICKRATE);
-  const shots = deaths.filter((d) => d.attacker === pov && !NOT_A_GUN.test(d.weapon)).flatMap((d) => {
-    const shot = fires.filter((f) => f.player === pov && f.round === d.round && f.tick <= d.tick && f.tick >= d.tick - TICKRATE && !NOT_A_GUN.test(f.weapon)).at(-1);
+  const shots = deaths.filter((d) => d.attacker === pov && isGunshot(d.weapon)).flatMap((d) => {
+    const shot = fires.filter((f) => f.player === pov && f.round === d.round && f.tick <= d.tick && f.tick >= d.tick - TICKRATE && isGunshot(f.weapon)).at(-1);
     return shot ? [{ killTick: d.tick, shotTick: shot.tick }] : [];
   });
   const yawTicks = [...new Set(shots.flatMap((s) => Array.from({ length: FLICK_TO + 1 }, (_, i) => s.shotTick - i)))].filter((t) => t > 0);
@@ -259,9 +276,8 @@ function extract(demo: string, sha256: string, pov: string, key: string, main: b
   // --- end death map ---
 
   for (const r of rounds) {
-    // A knife round: shots were fired and every one was a knife swing.
-    const shots = fires.filter((f) => f.round === r.n && f.tick <= r.endTick);
-    if (shots.length && shots.every((f) => isKnife(f.weapon))) r.phase = "knife";
+    // A knife round: shots were fired and every one was a knife swing (bare names, isKnifeRound).
+    if (isKnifeRound({ fires }, r)) r.phase = "knife";
     // Everyone alive at freeze end either died this round or is alive on the same team at its end.
     const atEnd = rows.filter((x) => x.tick === r.endTick);
     for (const [id, team] of Object.entries(r.teams)) {

@@ -57,8 +57,10 @@
     "fallbackBest": true
   },
   "film": {
-    "minScore": 75,
-    "settlesDemo": true,
+    "top": 20,
+    "bloopersTop": 5,
+    "masterHandleSeconds": 2,
+    "masterCaptureCrf": 8,
     "bloopers": { "minScore": 50 }
   },
   "sources": {

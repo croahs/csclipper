@@ -9,7 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { ROOT } from "../config.ts";
 import { weaponName } from "../clip/index.ts";
-import { NOT_A_GUN, facingDeg, matchEndTick, type ParsedDemo, type Round, type Team } from "../parse/demo.ts";
+import { bareWeapon as bare, facingDeg, isGunshot as isGun, isKnife, isKnifeRound, matchEndTick, type ParsedDemo, type Round, type Team } from "../parse/demo.ts";
 import { MARGIN_TICKS, SETTLE_TICKS } from "../render/controller/index.ts";
 import { CHAIN_AFTER_TICKS, FIRST_SCHEDULE } from "../render/controller/cfg.ts";
 import { hasSpotter, sampleAt, type Sample, type Track } from "./track.ts";
@@ -80,9 +80,7 @@ const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); retu
 /** Weapons whose death or damage is a thrown grenade (or its fire). */
 const GRENADE = /^(hegrenade|inferno|molotov|incgrenade|flashbang|smokegrenade|decoy)$/;
 const THROWN = /^(hegrenade|molotov|incgrenade)$/; // a damaging throw (weapon_fire) or its kill
-// weapon_fire names carry a "weapon_" prefix (weapon_ak47, weapon_knife_t) that deaths and hurts do not.
-const bare = (w: string) => w.replace(/^weapon_/, "");
-const isGun = (w: string) => !NOT_A_GUN.test(bare(w));
+// Weapon names through the shared bare-name helpers (src/parse/demo.ts): weapon_fire's carry a "weapon_" prefix.
 const NADES: Record<string, string> = { hegrenade: "HE grenade", inferno: "molotov", molotov: "molotov", incgrenade: "incendiary", flashbang: "flashbang", smokegrenade: "smoke grenade", decoy: "decoy" };
 const named = (w: string) => NADES[bare(w)] ?? weaponName(bare(w));
 
@@ -129,9 +127,8 @@ export function detectBloopers(p: ParsedDemo, track: Track, roster: string[], cf
   };
 
   for (const r of p.rounds) {
-    // A knife round: parse marks it; its fire names are checked here without the prefix as well.
-    const swings = p.fires.filter((f) => f.round === r.n && f.tick <= r.endTick);
-    if (r.phase === "knife" || (swings.length && swings.every((f) => /^(knife|bayonet)/.test(bare(f.weapon))))) continue;
+    // A knife round: parse marks it, and isKnifeRound reads it from the fires on an older cache too.
+    if (isKnifeRound(p, r)) continue;
     const inRound = (tick: number) => tick > r.startTick && tick <= r.endTick;
     const deaths = p.deaths.filter((d) => d.round === r.n && inRound(d.tick));
     const secondsIn = (tick: number) => Math.max(0, (tick - r.freezeEndTick) / t);
@@ -149,7 +146,7 @@ export function detectBloopers(p: ParsedDemo, track: Track, roster: string[], cf
 
       // 1. teamkill: this player killed a teammate.
       for (const d of deaths.filter((x) => x.attacker === id && x.victim !== id && r.teams[x.victim] === team)) {
-        const knife = /^(knife|bayonet)/.test(d.weapon), nade = GRENADE.test(d.weapon);
+        const knife = isKnife(d.weapon), nade = GRENADE.test(d.weapon);
         const how = knife ? 20 : nade ? 15 : d.distance <= 3 ? 15 : 5; // point-blank: 3 m
         const lost = r.winner !== null && r.winner !== team;
         const score = 55 + how + 10 * early(d.tick) + (d.victimHpBefore >= 100 ? 10 : 0) + (lost ? 10 : 0);

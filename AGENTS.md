@@ -25,8 +25,13 @@ A film order ("lag film", demos plus SteamIDs) means: the SteamID64s
 into `.env` → `FILM_STEAM_ID64S` (never into a tracked file, a commit
 or a report), the demos into `demos/inbox/`, then `pnpm film`, under
 the same launch rules (one render launch per demo, CS2 closed, the
-alt). Report the clips made per player, by name, with clip numbers,
-highlights and bloopers apart.
+alt): per player his top 20 highlights (`scoring.film.json`) and top 5
+bloopers across all demos on disk. A film pass never settles a demo.
+Report the clips made per player, by name, with clip numbers,
+highlights and bloopers apart. Peder then ticks "Film" on the clips he
+wants (`library/film-picks.json`); "lag masters" (or similar) means
+`pnpm film masters`, under the same launch rules: it re-captures only
+the picked clips, an explicit naming as the re-render rule below asks.
 
 ## Rules
 
@@ -58,7 +63,9 @@ highlights and bloopers apart.
   names the clips. Likewise a demo is settled once a `pnpm go` pass over
   it finishes (every selected moment rendered, held or failed for good):
   rescoring later never adds work for it; only `pnpm clip --rerender` or
-  `pnpm unsettle` does (`state/settled.json`).
+  `pnpm unsettle` does (`state/settled.json`). `pnpm film` is the
+  exception: it settles nothing and re-ranks every demo on disk each run,
+  rendering only what is newly in a player's top list.
 - Done means verified on the surface Peder judges: the parsed table,
   the rendered mp4 played back, the library page opened from disk.
 - Claude-written changes get a Sol review before they are called done.

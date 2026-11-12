@@ -34,6 +34,9 @@ async function main() {
       for (const h of mine) results.push({ status: "failed", id: h.id, title: h.id, reasons: [`player ${key} is no longer in the roster (.env STEAM_ID64 / FILM_STEAM_ID64S); not posted`] });
       continue;
     }
+    // The normal weights' moments, for pnpm film's highlights too: spans and ids do not depend on the
+    // weights (scoring.film.json keeps includeOvertime as scoring.json has it), so the film pick is found
+    // by its id and its entry carries the normal score, the one pnpm rescore keeps.
     const { specs } = await buildMoments(job.demo, pov, undefined, mainPov);
     for (const { id } of mine) {
       const spec = specs.find((s) => s.id === id);

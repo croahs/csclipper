@@ -13,6 +13,9 @@
 //                      vertical file, or its cut of that name (a name pnpm cut gives it) selected
 //   POST /star/<no>, /unstar/<no>  as pnpm fav / unfav <no>; answers { stars }, then the page is rewritten
 //   GET  /stars        { stars }: the current starred clip numbers
+//   POST /pick/<no>, /unpick/<no>  as pnpm pick / unpick <no> (the "Film" box, library/film-picks.json);
+//                      answers { picks }, then the page is rewritten
+//   GET  /picks        { picks }: the current film picks
 // Requests whose Host is not this server, or a POST whose Origin is another site, are refused,
 // so no other web page (or DNS rebinding) can delete, share, cut or star clips through it. The POST
 // routes take a clip number (a cut also two numbers, a reveal a kind and a checked name), never a path.
@@ -23,7 +26,7 @@ import path from "node:path";
 import { LIBRARY_DIR } from "../config.ts";
 import { deleteClip, readIndex } from "../library/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
-import { changeStars, readStars } from "../library/stars.ts";
+import { changePicks, changeStars, readPicks, readStars } from "../library/stars.ts";
 import { CUT_DIR, cutSource, CutRefusal, isCutName, planCut, type CutResult } from "../share/cut.ts";
 import { findClip, sharePath, type ShareResult } from "../share/index.ts";
 import { verticalPath, type VerticalResult } from "../share/vertical.ts";
@@ -106,6 +109,17 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       try { writeLibraryPage(); } catch (err) { pageError = (err as Error).message; console.error(`library page not rewritten: ${pageError}`); }
       return json(200, { stars: r.stars, ...(pageError ? { pageError } : {}) });
     }
+    const pk = /^\/(pick|unpick)\/(\d+)$/.exec(url.pathname);
+    if (pk) {
+      const no = Number(pk[2]);
+      const r = changePicks(pk[1] as "pick" | "unpick", [no], knownNos());
+      if (r.unknown.length) return send(404, `no clip ${no}`);
+      console.log(`${pk[1] === "pick" ? "picked" : "unpicked"} clip ${no} for the film`);
+      // The pick stands even if the page cannot be rewritten; the reply says so.
+      let pageError: string | undefined;
+      try { writeLibraryPage(); } catch (err) { pageError = (err as Error).message; console.error(`library page not rewritten: ${pageError}`); }
+      return json(200, { picks: r.picks, ...(pageError ? { pageError } : {}) });
+    }
     const m = /^\/delete\/(\d+)$/.exec(url.pathname);
     if (!m) return send(404, "not found");
     let e;
@@ -124,6 +138,12 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     const nos = knownNos();
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
     return res.end(req.method === "HEAD" ? undefined : JSON.stringify({ stars: readStars().filter((n) => nos.has(n)) }));
+  }
+  // The current film picks, the same way.
+  if (url.pathname === "/picks") {
+    const nos = knownNos();
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    return res.end(req.method === "HEAD" ? undefined : JSON.stringify({ picks: readPicks().filter((n) => nos.has(n)) }));
   }
 
   // Static files under library/ only.

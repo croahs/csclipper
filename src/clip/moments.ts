@@ -1,11 +1,14 @@
 // parse → score → clip specs for one demo and POV, written to state/<sha>/moments.json
 // (sorted, the ranked specs) and moments.txt (the readable table), each via a
 // temp file and a rename; a POV other than STEAM_ID64 into state/<sha>/pov-<povKey>/.
+// Film weights (scoring.film.json, pnpm film) go to moments.film.json / moments.film.txt beside them,
+// for every POV, so the two modes never rewrite each other's cache. Spans and ids do not depend on
+// the weights, so a moment has the same clip id in both.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { parseDemo, povDir, type ParsedDemo } from "../parse/demo.ts";
-import { loadWeights, moments } from "../score/index.ts";
+import { isKnifeRound, parseDemo, povDir, type ParsedDemo } from "../parse/demo.ts";
+import { loadFilmWeights, loadWeights, moments } from "../score/index.ts";
 import { loadClipRules, loadIdentities, povKeyFor, type ClipRules } from "../config.ts";
 import { clipSpecs, type ClipSpec } from "./index.ts";
 
@@ -18,7 +21,7 @@ function writeAtomic(file: string, text: string) {
 }
 
 export function table(p: ParsedDemo, specs: ClipSpec[]): string {
-  const head = `${p.demo.map} · ${path.basename(p.demo.path)} · ${p.rounds.length} match rounds (${p.preMatchRounds} pre-match skipped, ${p.rounds.filter((r) => r.phase === "knife").length} knife, ${p.rounds.filter((r) => r.phase === "overtime").length} overtime, ${p.rounds.filter((r) => r.rosterChanged).length} with roster changes)`;
+  const head = `${p.demo.map} · ${path.basename(p.demo.path)} · ${p.rounds.length} match rounds (${p.preMatchRounds} pre-match skipped, ${p.rounds.filter((r) => isKnifeRound(p, r)).length} knife, ${p.rounds.filter((r) => r.phase === "overtime").length} overtime, ${p.rounds.filter((r) => r.rosterChanged).length} with roster changes)`;
   const rows = specs.map((s) => [
     String(s.rank), `R${s.round}`, s.score.toFixed(1), String(s.kills),
     [s.clutch ? `1v${s.clutch.vs}${s.clutch.won ? " won" : " lost"}` : "", ...s.flags].filter(Boolean).join(", "),
@@ -31,18 +34,20 @@ export function table(p: ParsedDemo, specs: ClipSpec[]): string {
 }
 
 // Bump when the scoring or clip-spec code changes what it produces.
-const MOMENTS_SCHEMA = 7; // 7: trade and save flags; 2: no 30 s cap, action windows; 3: windows reach the span's ends; 4: one moment per round; 5: kept lead-in; 6: tail capped by the next round's start, not round end + 1 s
+const MOMENTS_SCHEMA = 8; // 8: weapon tests on bare names (knife swings and grenade throws no bullets), knife rounds from the fires, knife multi-kill; 7: trade and save flags; 2: no 30 s cap, action windows; 3: windows reach the span's ends; 4: one moment per round; 5: kept lead-in; 6: tail capped by the next round's start, not round end + 1 s
 
 /**
  * Cached: moments.json counts only if its key (parse key, weights, clip rules, schema) matches.
  * An empty spec list is a valid result. `override` (pnpm clip --rerender --lead) changes the clip
  * rules for this call only: the specs are built fresh and the cache is neither read nor written.
  */
-export async function buildMoments(demo: string, pov: string, override?: Partial<ClipRules>, mainPov = loadIdentities().pov): Promise<MomentsResult> {
+export type Weighting = "normal" | "film";
+export async function buildMoments(demo: string, pov: string, override?: Partial<ClipRules>, mainPov = loadIdentities().pov, weighting: Weighting = "normal"): Promise<MomentsResult> {
   // A POV other than STEAM_ID64 (pnpm go --film): its own parse and moments files (povDir), its key in clip ids and titles.
   const playerKey = povKeyFor(pov, mainPov);
   const parsed = await parseDemo(demo, pov, mainPov);
-  const w = loadWeights();
+  const w = weighting === "film" ? loadFilmWeights() : loadWeights();
+  const base = weighting === "film" ? "moments.film" : "moments";
   const rules = { ...loadClipRules(), ...override };
   if (override) {
     const specs = clipSpecs(parsed, moments(parsed, w), w, rules, playerKey);
@@ -50,14 +55,14 @@ export async function buildMoments(demo: string, pov: string, override?: Partial
   }
   const key = createHash("sha256").update(JSON.stringify({ parse: parsed.key, weights: w, rules, schema: MOMENTS_SCHEMA })).digest("hex").slice(0, 16);
   const dir = povDir(parsed.demo.sha256, playerKey);
-  const file = path.join(dir, "moments.json");
+  const file = path.join(dir, `${base}.json`);
   if (existsSync(file)) {
     try {
       const cached = JSON.parse(readFileSync(file, "utf8"));
       // The table is regenerated from the accepted specs and rewritten if it differs, so the two never disagree.
       if (cached.key === key) {
         const t = table(parsed, cached.specs);
-        const txt = path.join(dir, "moments.txt");
+        const txt = path.join(dir, `${base}.txt`);
         if (!existsSync(txt) || readFileSync(txt, "utf8") !== t) writeAtomic(txt, t);
         return { parsed, specs: cached.specs, table: t, file, cached: true };
       }
@@ -65,7 +70,7 @@ export async function buildMoments(demo: string, pov: string, override?: Partial
   }
   const specs = clipSpecs(parsed, moments(parsed, w), w, rules, playerKey);
   const t = table(parsed, specs);
-  writeAtomic(path.join(dir, "moments.txt"), t);
+  writeAtomic(path.join(dir, `${base}.txt`), t);
   writeAtomic(file, JSON.stringify({ key, demo: parsed.demo, pov: parsed.identity, generatedAt: new Date().toISOString(), weights: w, specs }, null, 2));
   return { parsed, specs, table: t, file, cached: false };
 }

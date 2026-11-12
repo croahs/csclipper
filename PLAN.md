@@ -166,25 +166,40 @@ second opinion in that comparison, not used as the ranking.
 
 #### Film mode and bloopers
 
-`pnpm film` runs the same pipeline for a roster: your account plus the
-friends in `.env` → `FILM_STEAM_ID64S`. Per demo and player present:
-the highlights scoring `film.minScore` (75) or more from that player's
-first person (the same scoring, no fallback), no reels, and his
-bloopers, all in the demo's one launch with your look. A friend is
-named outside `.env` only by a hash of his SteamID64. Each pair of demo
-and player is settled on its own (`state/film.json`), and the film
-pass settles the demo for `pnpm go` as well.
+`pnpm film` makes a fragmovie's raw material for a roster: your account
+plus the friends in `.env` → `FILM_STEAM_ID64S`. It ranks every
+player's moments over every demo still on disk with its own weights
+(`scoring.film.json`: shown to an audience, so tempo is worth far more
+and a clutch counts only when exceptional; trades and saves, invisible
+on screen, count nothing) and renders per player the 20 best
+(`film.top`) and his 5 best bloopers (`film.bloopersTop`) from his own
+first person, no reels, one launch per demo with your look. Two or more
+knife kills in a round that is not the knife round are a highlight in
+their own right, in both weight files. A clip the library holds counts
+toward a player's 20 and is never made again; a deleted one leaves room
+for the next best. A film pass never settles a demo and keeps no record
+of its own: the library is the record, so more demos later only add
+what newly enters a top list. A friend is named outside `.env` only by
+a hash of his SteamID64.
+
+You tick "Film" on the clips you want in the edit (the library page,
+§7); `pnpm film masters` then makes an edit-grade file of each for
+DaVinci Resolve: a new capture of the whole moment at real speed with 2
+s handles, near-lossless (capture CRF 8), the capture's own video
+stream and its sound as PCM in a `.mov`, one folder per player. The
+library clip is not touched.
 
 Bloopers are the funny mistakes, a separate score 0-100: a teamkill,
 a death by your own grenade or a fall, a magazine sprayed at an enemy
 right in front without a kill, and standing behind several enemies who
 face away without killing any. Without map geometry, the last two need
 a sign of sight (damage, the game's spotted flag, or dying to that
-enemy). A blooper scoring `film.bloopers.minScore` (50) or more is
-rendered whole at normal speed; of one player's that overlap, the
-higher. Its identity is the event (demo, kind, tick, player), never its
-span, so no threshold change re-makes one the library holds. Details
-and thresholds: `docs/modules.md`, Film and Bloopers.
+enemy). A blooper scoring `film.bloopers.minScore` (50) or more can be
+selected (few or none in 50 demos is fine) and is rendered whole at
+normal speed; of one player's that overlap, the higher. Its identity is
+the event (demo, kind, tick, player), never its span, so no threshold
+change re-makes one the library holds. Details and thresholds:
+`docs/modules.md`, Film, Masters and Bloopers.
 
 ### 4. Clip specs
 
@@ -619,7 +634,11 @@ which show and sort by their own score, and the blooper kinds are
 feats (Teamkill, Own grenade / fall, Spray, no kill, Behind, no kill).
 When any clip is a friend's, a "Player" category lists "Me" and each
 friend under the name on his newest clip. A library without film
-entries looks as it did.
+entries looks as it did. Every clip has a "Film" checkbox in its action
+row (served; from disk the `pnpm pick <no>` command to copy), saved in
+`library/film-picks.json` the way stars are saved, and a "Film picks"
+row under Starred counts and filters them; `pnpm film masters` makes
+the ticked clips. A knife multi-kill is the feat "Knife 2k+".
 Death map (decided 2026-11-10): `pnpm deathmap` writes
 `library/deaths.html`, a second static page in the same visual
 language with its data inlined (every `<` escaped), opened from disk,

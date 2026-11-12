@@ -82,6 +82,10 @@
   /* Star: a quiet control under the player and at the end of each list row */
   .act button.star[aria-pressed="true"] { color: var(--accent); border-color: rgba(240, 166, 58, 0.45); }
   .act .grp .sg { font-size: 13px; }
+  /* Film: a checkbox in the same row (pnpm film masters makes edit-grade files of the ticked clips) */
+  .act label.film { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; padding: 4px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+  .act label.film:has(input:checked) { border-color: rgba(240, 166, 58, 0.45); color: var(--accent); }
+  .act label.film input { margin: 0; accent-color: var(--accent); cursor: pointer; }
   /* Share and Delete / the commands for them, under the player */
   .act { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin-left: auto; white-space: nowrap; }
   .act .grp { display: inline-flex; align-items: center; gap: 8px; }
@@ -188,7 +192,7 @@
         <option value="no">Clip number</option>
       </select>
     </label>
-    <div class="group"><div class="facet" id="starred"></div></div>
+    <div class="group"><div class="facet" id="starred"></div><div class="facet" id="picked"></div></div>
     <div class="group"><h2>Kind</h2><div class="facet" id="kinds"></div></div>
     <div class="group" id="players-g" hidden><h2>Player</h2><div class="facet" id="players"></div></div>
     <div class="group" id="feats-g"><h2>Feats</h2><div class="facet" id="feats"></div></div>
@@ -249,13 +253,15 @@
 
   // State. Controls are reset on every load: a browser restoring an old filter
   // must not leave the page looking empty.
-  const state = { kind: null, player: null, map: null, match: null, star: null, feat: null, weapon: null, moreWeapons: false, current: null };
+  const state = { kind: null, player: null, map: null, match: null, star: null, pick: null, feat: null, weapon: null, moreWeapons: false, current: null };
   $("find").value = ""; $("sort").value = "score";
   // Every filter off and Find empty; the sort is the caller's.
-  function clearFilters() { state.kind = state.player = state.map = state.match = state.star = state.feat = state.weapon = null; state.moreWeapons = false; $("find").value = ""; }
+  function clearFilters() { state.kind = state.player = state.map = state.match = state.star = state.pick = state.feat = state.weapon = null; state.moreWeapons = false; $("find").value = ""; }
 
   // Stars: clip numbers. Inlined when the page was written; served, refreshed from the server on load.
   const starred = new Set(data.stars || []);
+  // Film picks (the "Film" box): clip numbers, the same way (absent from the data when none is picked).
+  const picked = new Set(data.picks || []);
   const FEATS = data.featLabels || [];
   const WEAPONS_SHOWN = 6; // the rest behind "More"
 
@@ -291,7 +297,7 @@
     const sort = $("sort").value;
     return clips
       .filter((c) => (!state.kind || c.kind === state.kind) && (!state.player || playerOf(c) === state.player) && (!state.map || c.map === state.map) && (!state.match || c.match === state.match))
-      .filter((c) => (!state.star || starred.has(c.no)) && (!state.feat || (c.feats || []).includes(state.feat)) && (!state.weapon || (c.weapons || []).includes(state.weapon)))
+      .filter((c) => (!state.star || starred.has(c.no)) && (!state.pick || picked.has(c.no)) && (!state.feat || (c.feats || []).includes(state.feat)) && (!state.weapon || (c.weapons || []).includes(state.weapon)))
       .filter((c) => !q || (num ? c.no === Number(num[2]) : c.title.toLowerCase().includes(q)))
       .sort((a, b) => sort === "no" ? (a.no || 0) - (b.no || 0)
         : sort === "match" ? dateOf(b).localeCompare(dateOf(a)) || (a.round || 0) - (b.round || 0)
@@ -318,7 +324,7 @@
     text.append(el("div", "facts num", facts.join("  /  ")));
     const act = el("span", "act");
     act.id = "act";
-    act.append(starControl(c), exportGroup(c));
+    act.append(starControl(c), filmControl(c), exportGroup(c));
     if (served) {
       const del = el("button", "danger", "Delete clip " + c.no);
       del.type = "button";
@@ -346,6 +352,7 @@
     const list = shown();
     const kindCount = (k) => clips.filter((c) => c.kind === k).length;
     facet($("starred"), [[true, "★ Starred", clips.filter((c) => starred.has(c.no)).length]], "star");
+    facet($("picked"), [[true, "Film picks", clips.filter((c) => picked.has(c.no)).length]], "pick");
     facet($("kinds"), KINDS.filter(([k]) => k !== "blooper" || kindCount(k)).map(([k, label]) => [k, label, kindCount(k)]), "kind");
     facet($("players"), PLAYERS.map((p) => [p.key, p.name, clips.filter((c) => playerOf(c) === p.key).length]).filter((p) => p[2] > 0 || state.player === p[0]), "player");
     $("players-g").hidden = !PLAYERS.length;
@@ -693,6 +700,41 @@
     const again = fromRow ? document.querySelector('#rows button.rstar[data-id="' + c.id + '"]') : document.querySelector("#act .star");
     if (again) again.focus({ preventScroll: true });
   }
+  // Film: served, a checkbox through POST /pick/<no> or /unpick/<no> (library/film-picks.json, the page
+  // rewritten); from disk, the pnpm pick / unpick command to copy. pnpm film masters makes the ticked ones.
+  function filmControl(c) {
+    const on = picked.has(c.no);
+    if (!served) {
+      const cmd = (on ? "pnpm unpick " : "pnpm pick ") + c.no;
+      const grp = el("span", "grp film");
+      grp.append(el("span", "sg", on ? "Film ✓" : "Film"), el("code", "", cmd), copyButton("Copy", cmd));
+      return grp;
+    }
+    const label = el("label", "film");
+    const box = el("input");
+    box.type = "checkbox";
+    box.checked = on;
+    box.addEventListener("change", () => togglePick(c, box));
+    label.title = "Film: pnpm film masters makes an edit-grade file of every ticked clip";
+    label.append(box, "Film");
+    return label;
+  }
+  let pickBusy = false, pickChanges = 0;
+  async function togglePick(c, box) {
+    if (!served || pickBusy) { box.checked = picked.has(c.no); return; }
+    pickBusy = true; pickChanges++;
+    const on = picked.has(c.no);
+    try {
+      const r = await fetch("/" + (on ? "unpick" : "pick") + "/" + c.no, { method: "POST" });
+      if (!r.ok) { alert((on ? "Not unpicked: " : "Not picked: ") + ((await r.text().catch(() => "")) || r.status)); box.checked = on; return; }
+      const body = await r.json();
+      picked.clear();
+      for (const n of body.picks || []) picked.add(n);
+    } catch (e) { alert("Not changed: " + e); box.checked = on; return; } finally { pickBusy = false; }
+    render();
+    const again = document.querySelector("#act label.film input");
+    if (again) again.focus({ preventScroll: true });
+  }
   setInterval(() => { if (document.querySelector("#out .busy")) drawOut(); }, 1000);
 
   function step(d) {
@@ -753,6 +795,12 @@
     if (!b || !Array.isArray(b.stars) || starChanges) return; // a toggle already brought newer stars
     starred.clear();
     for (const n of b.stars) starred.add(n);
+    render();
+  }).catch(() => {});
+  if (served) fetch("/picks", { cache: "no-store" }).then((r) => r.ok ? r.json() : null).then((b) => {
+    if (!b || !Array.isArray(b.picks) || pickChanges) return;
+    picked.clear();
+    for (const n of b.picks) picked.add(n);
     render();
   }).catch(() => {});
 </script>

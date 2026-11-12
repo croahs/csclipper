@@ -4,14 +4,14 @@
 // delete in place updates the counts). Reels and entries without a moment have no feats and no weapons.
 
 /** Filter order and labels, as the sidebar shows them. */
-export const FEATS = [["ace", "Ace"], ["4k", "4k"], ["3k", "3k"], ["clutch", "Clutch"]] as const;
+export const FEATS = [["ace", "Ace"], ["4k", "4k"], ["3k", "3k"], ["clutch", "Clutch"], ["knife2k", "Knife 2k+"]] as const;
 /** A blooper's feat is its type (src/film/bloopers.ts), listed after the highlight feats. */
 export const BLOOPER_FEATS = [["teamkill", "Teamkill"], ["selfkill", "Own grenade / fall"], ["spray", "Spray, no kill"], ["behind", "Behind, no kill"]] as const;
 export type Feat = (typeof FEATS)[number][0];
 
-type Moment = { kills?: unknown; clutch?: unknown; weapons?: unknown } | undefined;
+type Moment = { kills?: unknown; clutch?: unknown; weapons?: unknown; flags?: unknown } | undefined;
 
-/** ace: 5 kills; 4k / 3k: exactly 4 / 3; clutch: a 1vX the POV player won. */
+/** ace: 5 kills; 4k / 3k: exactly 4 / 3; clutch: a 1vX the POV player won; knife2k: the moment's "<n> knife kills" flag (2 or more). */
 export function featsOf(m: Moment): Feat[] {
   if (!m) return [];
   const out: Feat[] = [];
@@ -21,6 +21,7 @@ export function featsOf(m: Moment): Feat[] {
   else if (k === 3) out.push("3k");
   const c = m.clutch as { won?: unknown } | undefined;
   if (c && c.won === true) out.push("clutch");
+  if (Array.isArray(m.flags) && m.flags.some((f) => typeof f === "string" && /^\d+ knife kills$/.test(f))) out.push("knife2k");
   return out;
 }
 

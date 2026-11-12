@@ -1,17 +1,17 @@
 // pnpm go --film: the roster, povKey, the per-POV caches, clip ids and held moments per player, the
-// film pick and the film settle bookkeeping. Fake SteamID64s only; no demo, no launch.
+// rule that a film pass never settles. Fake SteamID64s only; no demo, no launch.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Refusal, STATE_DIR, loadRoster, parseRoster, pickFilm, povKey, povKeyFor } from "../src/config.ts";
+import { Refusal, STATE_DIR, loadRoster, parseRoster, povKey, povKeyFor } from "../src/config.ts";
 import { DEMOPARSER_VERSION } from "../src/parse/clip-facts.ts";
 import { parseKey, povDir, type Death, type ParsedDemo } from "../src/parse/demo.ts";
 import { clipId, type ClipEntry } from "../src/library/index.ts";
 import { heldEntry } from "../src/queue/job.ts";
-import { filmPair, filmSettles, settleFilm, type BatchOptions } from "../src/queue/index.ts";
+import { settlesDemos } from "../src/queue/index.ts";
 import { clipSpecs, type ClipSpec } from "../src/clip/index.ts";
 import { loadWeights, moments } from "../src/score/index.ts";
 
@@ -83,32 +83,10 @@ test("held: a shared kill tick holds a moment only for the same player", () => {
   assert.equal(heldEntry({ a: clips.a }, "new", SHA, 3, spec), undefined, "A's clip never holds the main POV's moment");
 });
 
-test("film pick: every moment at minScore or more, no fallback", () => {
-  const specs = [{ score: 92 }, { score: 75 }, { score: 74.9 }, { score: 40 }];
-  assert.deepEqual(pickFilm(specs, { minScore: 75 }), [{ score: 92 }, { score: 75 }]);
-  assert.deepEqual(pickFilm([{ score: 74.9 }, { score: 30 }], { minScore: 75 }), [], "nothing reaches it: nothing, never the best");
-});
-
-test("film settle: the pairs looked at, and the demo when settlesDemo; never on a dry run or a repost", () => {
-  const now = "2026-11-12T10:00:00.000Z";
-  const keys = [povKey(MAIN), povKey(A), povKey(A)];
-  const s = settleFilm({}, {}, SHA, keys, true, now);
-  assert.deepEqual(s.pairs, [filmPair(SHA, povKey(MAIN)), filmPair(SHA, povKey(A))]);
-  assert.deepEqual(s.film, { [`${SHA}:${povKey(MAIN)}`]: now, [`${SHA}:${povKey(A)}`]: now });
-  assert.deepEqual(s.settled, { [SHA]: now });
-  // A pair already done keeps its time; a demo already settled is not rewritten.
-  const again = settleFilm({ [filmPair(SHA, povKey(MAIN))]: "earlier" }, { [SHA]: "earlier" }, SHA, keys, true, now);
-  assert.deepEqual(again.pairs, [filmPair(SHA, povKey(A))]);
-  assert.equal(again.film![filmPair(SHA, povKey(MAIN))], "earlier");
-  assert.equal(again.settled, undefined);
-  // settlesDemo false: film pairs only. Nothing new: nothing to write.
-  assert.equal(settleFilm({}, {}, SHA, keys, false, now).settled, undefined);
-  const none = settleFilm(s.film!, { [SHA]: now }, SHA, keys, true, now);
-  assert.deepEqual([none.pairs, none.film, none.settled], [[], undefined, undefined]);
-  assert.equal(filmSettles({}), true);
-  assert.equal(filmSettles({ dryRun: true }), false);
-  assert.equal(filmSettles({ repostOnly: true }), false);
-  assert.equal(filmSettles({ noReels: true } as BatchOptions), true, "a film pass owes no reels");
+test("a film pass never settles a demo, whatever else the pass is", () => {
+  assert.equal(settlesDemos({ film: true }), false);
+  assert.equal(settlesDemos({ film: true, noReels: true }), false);
+  assert.equal(settlesDemos({}), true, "a normal pass still does");
 });
 
 test("clip specs: another POV's ids carry its key and its titles lead with the player's name; the main POV's do not", () => {

@@ -4,7 +4,7 @@
 // generated title.
 import type { Death, ParsedDemo, Round } from "../parse/demo.ts";
 import { clipId } from "../library/index.ts";
-import { scoreKills, teamplay, weaponClass, type Clutch, type Moment, type Teamplay, type Weights } from "../score/index.ts";
+import { knifeKills, scoreKills, teamplay, weaponClass, type Clutch, type Moment, type Teamplay, type Weights } from "../score/index.ts";
 import type { ClipRules } from "../config.ts";
 
 const ENGAGE_WINDOW_S = 5; // engagement signals this far before the first kill
@@ -60,6 +60,9 @@ function flagsOf(kills: Death[], tp: Teamplay): string[] {
   const n = (count: number, word: string) => (count === 1 ? word : `${count} ${word}s`);
   if (tp.trades.length) f.push(n(tp.trades.length, "trade"));
   if (tp.saves.length) f.push(n(tp.saves.length, "save"));
+  // A knife multi-kill (the knife.multi weight): the page's "Knife 2k+" feat reads this flag.
+  const knives = knifeKills(kills);
+  if (knives >= 2) f.push(`${knives} knife kills`);
   return f;
 }
 

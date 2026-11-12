@@ -88,13 +88,24 @@ setting (`config.json`) are in
    comma-separated (`.env.example` has the line).
 2. Drop the demos you played together into `demos/inbox/` as above.
 3. Run `pnpm film` (render account, CS2 closed, as for `pnpm go`).
+   `pnpm film --dry-run` first shows each player's ranked list.
+4. Open the library (`pnpm library`), watch, and tick the **Film** box
+   on every clip you want in the edit ("Film picks" in the sidebar lists
+   them).
+5. Run `pnpm film masters` (CS2 closed again): an edit-grade `.mov` of
+   each ticked clip lands in `library/film/masters/<player>/`, ready for
+   DaVinci Resolve.
 
-Each player in each demo gets his highlights scoring 75 or more and
-his bloopers (teamkills, deaths by his own grenade or a fall, sprays
-without a kill, standing behind enemies without a kill), all from his
-own view, one CS2 launch per demo. They land in the same library: pick
-a player under "Player" and "Bloopers" under "Kind". A demo already
-filmed is skipped; `pnpm film --dry-run` lists what it would make.
+Each player gets his 20 best moments across all those demos, scored for
+an audience (fast multi-kills count most, an ordinary clutch little),
+and his 5 best bloopers (teamkills, deaths by his own grenade or a fall,
+sprays without a kill, standing behind enemies without a kill), if he
+has any that funny, all from his own view, one CS2 launch per demo. They
+land in the same library: pick a player under "Player" and "Bloopers"
+under "Kind". Clips already in the library are kept, never made again;
+more demos later only add what is newly among a player's best. A master
+is the whole moment at real speed with 2 s to spare on each side, no
+fast-forward, fades or text, captured near-lossless.
 
 ## Why a second Steam account
 

@@ -2,12 +2,15 @@
 // scored with the weights in scoring.json: kill count, pace (the fastest run
 // inside the round, on a sliding curve), clutch, outcome, flags and weapon as the backbone, and
 // per-kill style multipliers for one-bullet kills, flicks, no-scopes and
-// airborne kills, collaterals (one bullet, several kills), and small flat per-kill teamplay
-// bonuses for trades and saves (a kill that saved a damaged teammate).
+// airborne kills, collaterals (one bullet, several kills), small flat per-kill teamplay
+// bonuses for trades and saves (a kill that saved a damaged teammate), and a knife multi-kill.
+// Two weight files of one shape: scoring.json (pnpm go and the rest) and scoring.film.json (pnpm
+// film only: a fragmovie for an audience). Weapon tests go through the bare name (isGunshot,
+// isKnife): a knife swing or a grenade throw never counts as a bullet or a flick shot.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { ROOT } from "../config.ts";
-import { NOT_A_GUN, type Death, type ParsedDemo, type Round, type Team } from "../parse/demo.ts";
+import { isGunshot, isKnife, isKnifeRound, type Death, type ParsedDemo, type Round, type Team } from "../parse/demo.ts";
 
 export type Weights = {
   killBase: Record<string, number>;
@@ -22,10 +25,16 @@ export type Weights = {
   roundOutcome: { won: number; lost: number };
   lowHp: { threshold: number; penaltyPerKill: number; maxPerMoment: number };
   teamplay: { trade: number; tradeWindowSeconds: number; save: number; saveLowHp: number; saveLowHpThreshold: number; saveWindowSeconds: number; saveSurviveSeconds: number };
+  /** multi: points for the second knife kill of a round (not a knife round) and for each one after it. */
+  knife: { multi: number };
   threshold: number;
   includeOvertime: boolean;
 };
-export const loadWeights = (file = path.join(ROOT, "scoring.json")) => JSON.parse(readFileSync(file, "utf8")) as Weights;
+export const WEIGHTS_FILE = path.join(ROOT, "scoring.json");
+/** pnpm film's weights: same shape, tuned for a fragmovie (tempo far up, only exceptional clutches count). */
+export const FILM_WEIGHTS_FILE = path.join(ROOT, "scoring.film.json");
+export const loadWeights = (file = WEIGHTS_FILE) => JSON.parse(readFileSync(file, "utf8")) as Weights;
+export const loadFilmWeights = () => loadWeights(FILM_WEIGHTS_FILE);
 
 export type WeaponClass = "pistol" | "deagle" | "scout" | "smg" | "shotgun" | "rifle" | "awp" | "knife" | "other";
 const CLASSES: Record<Exclude<WeaponClass, "other">, string[]> = {
@@ -176,7 +185,7 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
   // Collateral: gun kills on the same tick are one shot; each kill past the first earns perExtraKill.
   // A shotgun blast killing two counts too (Peder, 2026-11-02).
   const gunKillsByTick = new Map<number, number>();
-  for (const k of kills) if (!NOT_A_GUN.test(k.weapon)) gunKillsByTick.set(k.tick, (gunKillsByTick.get(k.tick) ?? 0) + 1);
+  for (const k of kills) if (isGunshot(k.weapon)) gunKillsByTick.set(k.tick, (gunKillsByTick.get(k.tick) ?? 0) + 1);
   const collats = [...gunKillsByTick.values()].reduce((a, n) => a + n - 1, 0);
   if (collats) b.collat = collats * w.collat.perExtraKill;
   // Style: per-kill multipliers on that kill's share of the kill base (one-bullet, flick, no-scope,
@@ -188,10 +197,10 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
     if (k.noscope) f *= st.noscope;
     if (k.airborne) f *= st.airborne;
     const from = i > 0 ? kills[i - 1].tick : k.tick - ENGAGE_S * tickrate;
-    const bullets = p.fires.filter((x) => x.player === me && x.round === k.round && x.tick > from && x.tick <= k.tick && !NOT_A_GUN.test(x.weapon)).length;
-    if (bullets === 1 && !NOT_A_GUN.test(k.weapon)) f *= st.oneBulletKill;
+    const bullets = p.fires.filter((x) => x.player === me && x.round === k.round && x.tick > from && x.tick <= k.tick && isGunshot(x.weapon)).length;
+    if (bullets === 1 && isGunshot(k.weapon)) f *= st.oneBulletKill;
     // Two flick tiers: a big flick (bigFlickMinDegrees or more) instead of a normal one.
-    const yaw = p.flicks.find((x) => x.killTick === k.tick)?.yawDegrees ?? 0;
+    const yaw = flickYaw(p, k);
     if (yaw >= st.bigFlickMinDegrees) f *= st.bigFlick;
     else if (yaw > st.flickMinDegrees) f *= st.flick;
     // Facing: the victim looking at the POV (harder) or away (easier); unknown counts 1.
@@ -218,6 +227,10 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
   const save = tp.saves.reduce((a, s) => a + (s.low ? w.teamplay.saveLowHp : w.teamplay.save), 0);
   if (trade) b.trade = trade;
   if (save) b.save = save;
+  // Knife multi-kill: two or more knife kills in one round (a knife round has no moments at all):
+  // knife.multi for the second and each one after it, outside economy, inside outcome.
+  const knives = knifeKills(kills);
+  if (knives >= 2 && w.knife?.multi) b.knife = (knives - 1) * w.knife.multi;
   // Direction spread: the yaw the POV turned between consecutive kills of the fastest run.
   if (run.length >= 2) {
     // Between consecutive known yaws: a kill without one (a victim with no SteamID) is bridged over.
@@ -238,6 +251,21 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
   return { score: Math.round(Object.values(b).reduce((a, x) => a + x, 0) * 10) / 10, breakdown: b };
 }
 
+/** How many of these kills were made with a knife. */
+export const knifeKills = (kills: Pick<Death, "weapon">[]) => kills.filter((k) => isKnife(k.weapon)).length;
+
+/**
+ * The flick into a kill (degrees, 0 for none). A cache parsed before the bare-name fix may have taken a
+ * knife swing or a grenade throw as the kill shot: when the POV's fires at that shot tick are known and
+ * none is a gunshot, the flick is dropped.
+ */
+export function flickYaw(p: Pick<ParsedDemo, "flicks" | "fires" | "identity">, k: Pick<Death, "tick">): number {
+  const fl = p.flicks.find((x) => x.killTick === k.tick);
+  if (!fl) return 0;
+  const at = p.fires.filter((f) => f.player === p.identity.steamid && f.tick === fl.shotTick);
+  return at.length && !at.some((f) => isGunshot(f.weapon)) ? 0 : fl.yawDegrees;
+}
+
 /** 1 + perLnRatio x ln(enemy buy / own buy), within [min, max]; 1 for pistol rounds or when a buy is unknown. */
 export function economyFactor(p: ParsedDemo, round: number | undefined, w: Weights): number {
   const r = (p.rounds ?? []).find((x) => x.n === round);
@@ -251,13 +279,13 @@ export function economyFactor(p: ParsedDemo, round: number | undefined, w: Weigh
 
 /**
  * One moment per round (Peder, 2026-10-15): all of the POV's kills in it, however far
- * apart, with the round's clutch state. Knife rounds are excluded, overtime unless
- * includeOvertime (PLAN.md §3 excludes it). A moment needs a POV kill (a clutch won
- * without one is not a clip).
+ * apart, with the round's clutch state. Knife rounds are excluded (isKnifeRound, also on a cache
+ * parsed before they could be detected), overtime unless includeOvertime (PLAN.md §3 excludes it).
+ * A moment needs a POV kill (a clutch won without one is not a clip).
  */
 export function moments(p: ParsedDemo, w: Weights): Moment[] {
   const out: Moment[] = [];
-  for (const r of p.rounds.filter((x) => x.phase === "regular" || (x.phase === "overtime" && w.includeOvertime))) {
+  for (const r of p.rounds.filter((x) => (x.phase === "regular" || (x.phase === "overtime" && w.includeOvertime)) && !isKnifeRound(p, x))) {
     const team = povTeam(p, r);
     if (!team) continue;
     const kills = povKills(p, r);

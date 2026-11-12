@@ -10,37 +10,35 @@
 // state/.go.lock and the render locks behind, to be removed by hand after
 // checking no cs2.exe / HLAE.exe is left, as for every lock here.) A clip the library already holds
 // for its render key is done, whatever the ledger says. A job that failed
-// twice is not retried until --retry-failed. --film runs the same loop over every roster player per
-// demo (BatchOptions.film): each player's own caches, clip ids and render keys, its highlights and its
-// bloopers (src/film/bloopers.ts) in the demo's one launch, no reels, and its own settle record
-// (state/film.json); the normal pass is untouched by it.
+// twice is not retried until --retry-failed. --film selects across demos instead (BatchOptions.film,
+// filmQueue: each roster player's top highlights under the film weights and top bloopers, src/film/select.ts),
+// then runs the same per-demo loop: each player's own caches, clip ids and render keys, one launch per
+// demo, no reels. A film pass never settles a demo and keeps no record of its own; the normal pass is
+// untouched by it.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { constants, setPriority } from "node:os";
 import path from "node:path";
-import { Refusal, STATE_DIR, loadBatch, loadFilm, loadIdentities, loadReels, loadRoster, pickFilm, pickMoments, povKey, povKeyFor } from "../config.ts";
+import { Refusal, STATE_DIR, loadBatch, loadFilm, loadIdentities, loadReels, loadRoster, pickMoments, povKey, povKeyFor } from "../config.ts";
 import { buildMoments } from "../clip/moments.ts";
 import { PovAbsent, type ParsedDemo } from "../parse/demo.ts";
-import { blooperClip, detectBloopers, loadBlooperSettings, pickBloopers, type Blooper, type BlooperClip } from "../film/bloopers.ts";
+import { blooperClip, detectBloopers, loadBlooperSettings, pickBloopers, type BlooperClip } from "../film/bloopers.ts";
+import { selectFilm, toRender, type Candidate } from "../film/select.ts";
 import { sampleTrack } from "../film/track.ts";
 import type { ClipSpec } from "../clip/index.ts";
-import { ingest, readRegistry } from "../ingest/index.ts";
+import { ingest, readRegistry, type DemoRecord } from "../ingest/index.ts";
 import { cleanupUnverified } from "../render/controller/index.ts";
 import { imageRunning } from "../render/controller/processes.ts";
 import { faceitRefusal } from "../render/controller/guards.ts";
-import { readIndex, recordFailure, writeJsonAtomic } from "../library/index.ts";
+import { readDeleted, readIndex, recordFailure, writeJsonAtomic } from "../library/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
-import { highlightUnit, prepareJob, runJobs, unitHasCapture, type JobResult, type PreparedJob, type RenderUnit } from "./job.ts";
+import { heldEntry, highlightUnit, prepareJob, runJobs, unitHasCapture, type JobResult, type PreparedJob, type RenderUnit } from "./job.ts";
 import { prepareReel } from "../reel/index.ts";
 import { sweepUnderClipLock, type Pruned } from "./prune.ts";
 
 /** Demos marked processed by pnpm go --settle-existing: sha256 → when. pnpm go skips them. */
 const SETTLED = path.join(STATE_DIR, "settled.json");
 const readSettled = (): Record<string, string> => (existsSync(SETTLED) ? JSON.parse(readFileSync(SETTLED, "utf8")) : {});
-/** pnpm go --film's own settle record: "<demo sha256>:<povKey>" → when that player's film pass over that demo finished. */
-export const FILM = path.join(STATE_DIR, "film.json");
-export const readFilmState = (): Record<string, string> => (existsSync(FILM) ? JSON.parse(readFileSync(FILM, "utf8")) : {});
-export const filmPair = (sha256: string, key: string) => `${sha256}:${key}`;
 
 const LEDGER = path.join(STATE_DIR, "queue.json");
 const MAX_ATTEMPTS = 2; // the first try and one retry
@@ -65,9 +63,10 @@ export type BatchOptions = {
   /** --no-reels: highlights only for this run, whatever config.json reels says. */
   noReels?: boolean;
   /**
-   * --film: every roster player's (loadRoster) highlights scoring config.json film.minScore or more and
-   * bloopers scoring film.bloopers.minScore or more, from that player's first person, in every registered
-   * demo still on disk, settled ones too; no reels. Done pairs are kept in state/film.json.
+   * --film: per roster player (loadRoster), his config.json film.top best highlights under the film
+   * weights and his film.bloopersTop best bloopers scoring film.bloopers.minScore or more, ranked over
+   * every registered demo still on disk (settled or not), from his first person; no reels. Writes no
+   * settle record (state/settled.json is never touched): the library is the record.
    */
   film?: boolean;
 };
@@ -83,10 +82,10 @@ export type BatchReport = {
   /** Clips this run added to the library, with their numbers (the standing order's report); player: whose first person (--film). */
   made: { kind: string; no?: number; title: string; player?: { key: string; name: string } }[];
   /**
-   * --film: the roster (povKey and the name a parse gave it this run), demos a player is not in, demos
-   * with no roster player, pairs already done before this run, pairs this run finished, registered demos no longer on disk.
+   * --film: the settings, the roster (povKey and the name a parse gave it this run), demos a player is not
+   * in, demos with no roster player, registered demos no longer on disk, and how many selected clips the library already held.
    */
-  film?: { minScore: number; blooperMinScore: number; players: { key: string; name?: string }[]; absent: { demo: string; key: string }[]; noPlayer: string[]; alreadyDone: number; pairsDone: number; missingFiles: number };
+  film?: { top: number; bloopersTop: number; blooperMinScore: number; players: { key: string; name?: string }[]; absent: { demo: string; key: string }[]; noPlayer: string[]; missingFiles: number; held: number };
   /** Demos skipped because they are settled; --settle-existing: how many it settled now. */
   settled: number; settledNow?: number;
   /** Demos this run settled because its pass over them finished (every selected moment rendered, held or failed for good). */
@@ -99,7 +98,7 @@ export type BatchReport = {
 /** Exit code: 0 ok, 1 a job or demo failed or was given up, 2 refused, 3 cleanup not verified. */
 export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchReport; code: number }> {
   // The whole batch refuses up front: nothing is ingested or rendered.
-  if (o.film && o.settleExisting) throw new Error("--film and --settle-existing together: --settle-existing settles demos for pnpm go, not film pairs");
+  if (o.film && o.settleExisting) throw new Error("--film and --settle-existing together: --settle-existing settles demos for pnpm go; a film pass never settles anything");
   const refusal = batchRefusal(o);
   if (refusal) throw refusal;
   const report: BatchReport = { ingested: 0, demos: 0, selected: 0, rendered: [], skipped: [], failed: [], givenUp: [], deferred: [], emptyDemos: [], demoErrors: [], needsRender: [], made: [], settled: 0, autoSettled: [] };
@@ -125,85 +124,14 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
 
   const batch = loadBatch();
   const pov = loadIdentities().pov;
-  // A ranked moment (spec) or a film blooper; pov: a film roster player other than STEAM_ID64 (absent:
-  // the main POV); player: the name the parse gives (--film).
-  const queue: ({ demo: string; sha256: string; pov?: string; player?: string } & ({ spec: ClipSpec; blooper?: undefined } | { blooper: BlooperClip; spec?: undefined }))[] = [];
+  const queue: QueueItem[] = [];
   const demoFiles = new Map<string, string>(); // every demo this run handles (its reels too, even without highlights)
   const registry = Object.values(readRegistry()).sort((a, b) => a.addedAt.localeCompare(b.addedAt));
   report.demos = registry.length;
-  // --film: the roster, the pairs done before this run, and per demo the pairs this run looked at
-  // (present or not in the demo: settled together when the demo's pass finishes) or could not parse.
-  const film = o.film ? loadFilm() : undefined;
-  const bloopers = o.film ? loadBlooperSettings() : undefined;
-  const roster = o.film ? loadRoster() : [];
-  const filmDone = o.film ? readFilmState() : {};
-  const looked = new Map<string, string[]>();
-  const filmOpen = new Set<string>();
-  if (film) report.film = { minScore: film.minScore, blooperMinScore: bloopers!.minScore, players: roster.map((id) => ({ key: povKey(id) })), absent: [], noPlayer: [], alreadyDone: 0, pairsDone: 0, missingFiles: 0 };
-  const nameOf = (key: string) => report.film?.players.find((p) => p.key === key)?.name ?? `player ${key}`;
-  for (const d of registry) {
-    if (film) {
-      // Every registered demo still on disk, settled or not; per roster player, unless the pair is done.
-      if (!existsSync(d.file)) { report.film!.missingFiles++; continue; }
-      const keys: string[] = [];
-      // The roster players in this demo whose pair is open, with their picked moments; parsed: the
-      // first one's parse, the bloopers' (rounds, deaths, hurts and fires do not depend on the POV).
-      const here: { id: string; key: string; name: string; picked: ClipSpec[] }[] = [];
-      let parsed: ParsedDemo | undefined;
-      for (const id of roster) {
-        const key = povKey(id);
-        if (filmDone[filmPair(d.sha256, key)]) { report.film!.alreadyDone++; continue; }
-        try {
-          const m = await buildMoments(d.file, id, undefined, pov);
-          const picked = pickFilm(m.specs, film);
-          const seen = report.film!.players.find((p) => p.key === key)!;
-          seen.name ??= m.parsed.identity.name;
-          console.log(`${m.parsed.demo.map} ${d.originalName} · ${m.parsed.identity.name}: ${m.specs.length} moments, ${picked.length} at ${film.minScore}+${m.cached ? " (cached)" : ""}`);
-          here.push({ id, key, name: m.parsed.identity.name, picked });
-          parsed ??= m.parsed;
-          keys.push(key);
-        } catch (e) {
-          // Not in this demo: no error, and the pair is settled with the demo's pass.
-          if (e instanceof PovAbsent) {
-            console.log(`${d.originalName} · ${nameOf(key)}: not in this demo`);
-            report.film!.absent.push({ demo: d.originalName, key });
-            keys.push(key);
-            continue;
-          }
-          const reason = (e as Error).message;
-          recordFailure(`demo:${d.sha256}:${key}`, { at: new Date().toISOString(), reasons: [reason], startTick: 0, endTick: 0, demo: d.file });
-          report.demoErrors.push(`${d.originalName} (${nameOf(key)}): ${reason}`);
-          console.error(`demo failed: ${d.originalName} (${nameOf(key)}): ${reason}`);
-          filmOpen.add(d.sha256);
-        }
-      }
-      // The bloopers of those players: the demo's track (one parser pass, cached), detected, then those at
-      // film.bloopers.minScore or more, one per overlap (pickBloopers). Failing here keeps the demo open.
-      let found: Blooper[] = [];
-      if (parsed) {
-        try {
-          found = pickBloopers(detectBloopers(parsed, sampleTrack(d.file, parsed), here.map((p) => p.id), bloopers), bloopers!.minScore);
-          console.log(`${d.originalName}: ${found.length} blooper(s) at ${bloopers!.minScore}+`);
-        } catch (e) {
-          const reason = `bloopers: ${(e as Error).message}`;
-          recordFailure(`bloopers:${d.sha256}`, { at: new Date().toISOString(), reasons: [reason], startTick: 0, endTick: 0, demo: d.file });
-          report.demoErrors.push(`${d.originalName}: ${reason}`);
-          console.error(`demo failed: ${d.originalName}: ${reason}`);
-          filmOpen.add(d.sha256);
-        }
-      }
-      // Per player: the highlights, then the bloopers (the dry run's headings follow this order).
-      for (const p of here) {
-        const who = { ...(p.id !== pov ? { pov: p.id } : {}), player: p.name };
-        for (const spec of p.picked) queue.push({ demo: d.file, sha256: d.sha256, spec, ...who });
-        for (const b of found.filter((x) => x.steamid === p.id)) queue.push({ demo: d.file, sha256: d.sha256, blooper: blooperClip(b, d.sha256, povKeyFor(p.id, pov)), ...who });
-      }
-      if (!keys.length && !filmOpen.has(d.sha256)) continue; // every pair done before
-      if (!here.length && keys.length === roster.length) report.film!.noPlayer.push(d.originalName);
-      looked.set(d.sha256, keys);
-      demoFiles.set(d.sha256, d.file);
-      continue;
-    }
+  const film = !!o.film;
+  // --film: the selection across demos (filmQueue), then the same per-demo loop as a normal pass.
+  if (film) for (const q of await filmQueue(registry, pov, report, !!o.dryRun)) { queue.push(q); demoFiles.set(q.sha256, q.demo); }
+  if (!film) for (const d of registry) {
     // Settled demos are done: their moments that were never rendered stay unrendered (Peder,
     // 2026-10-15: rule changes apply from the next new demo, not retroactively).
     // A repost only posts existing captures and never adds a render, so it looks at settled demos too.
@@ -235,18 +163,10 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   const kinds = o.noReels || film ? [] : (["deaths", "kills"] as const).filter((k) => reels[k].enabled);
   // A finished pass settles its demo: later rescoring never adds work for it (only pnpm clip --rerender
   // or pnpm unsettle do). Not on a dry run, a repost or a --no-reels pass (its reels are still owed),
-  // and not while a moment still has a retry left. A film pass settles the pairs it looked at instead
-  // (state/film.json) and, with film.settlesDemo, the demo for pnpm go as well.
+  // and not while a moment still has a retry left. A film pass never settles (its selection is re-made
+  // from the caches every run, and what the library holds is its record).
   const settle = (sha: string) => {
-    if (film) {
-      if (!filmSettles(o)) return;
-      const s = settleFilm(readFilmState(), readSettled(), sha, looked.get(sha) ?? [], film.settlesDemo, new Date().toISOString());
-      writeFilmSettle(s);
-      if (s.settled) report.autoSettled.push(sha);
-      report.film!.pairsDone += s.pairs.length;
-      return;
-    }
-    if (!settlesDemos(o)) return;
+    if (film || !settlesDemos(o)) return;
     const s = readSettled();
     if (s[sha]) return;
     s[sha] = new Date().toISOString();
@@ -255,11 +175,10 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   };
   demos: for (const [sha256, file] of demoFiles) {
     const items = queue.filter((q) => q.sha256 === sha256);
-    let open = filmOpen.has(sha256); // a moment of this demo failed in a way the next run retries (--film: or a player's parse did)
+    let open = false; // a moment of this demo failed in a way the next run retries
     // pov: the highlight's povKey (the post worker resolves it through the roster); player: its name (--film report).
     type Ready = { unit: RenderUnit; kind: UnitKind; key: string; prevStatus?: "running" | "done" | "failed"; attempts: number; pov?: string; player?: string };
     const ready: Ready[] = [];
-    let lastPlayer: string | undefined;
     for (const { demo, spec, blooper, pov: itemPov, player } of items) {
       // A moment or a blooper: both carry id, title, span and score, and go through the same gates.
       const it = spec ?? blooper;
@@ -293,9 +212,8 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
         continue;
       }
       if (o.dryRun) {
-        // --film: per demo and player (the main POV's titles carry no name, so each player gets a heading line).
-        if (film && player !== lastPlayer) { console.log(`${registry.find((d) => d.sha256 === sha256)?.originalName ?? path.basename(file)} · ${player}:`); lastPlayer = player; }
-        console.log(blooper ? `would render: blooper · ${it.title} (score ${it.score})` : film ? `would render: ${it.title} (score ${it.score})` : `would render: #${spec!.rank} ${it.title} (score ${it.score})`);
+        // --film: the ranked tables (filmQueue) already say what would render.
+        if (!film) console.log(`would render: #${spec!.rank} ${it.title} (score ${it.score})`);
         continue;
       }
       ready.push({ unit: highlightUnit(prep), kind: blooper ? "blooper" : "highlight", key, prevStatus: prev?.status, attempts: (prev?.attempts ?? 0) + 1, pov: povKey(itemPov ?? pov), player });
@@ -459,51 +377,108 @@ function postWorker(demo: string, units: { id: string; title: string; kind: Unit
   });
 }
 
-/** Whether a pass of this kind may settle demos: not a dry run, a repost or a --no-reels pass (its reels are owed). */
-export const settlesDemos = (o: Pick<BatchOptions, "dryRun" | "repostOnly" | "noReels">) => !o.dryRun && !o.repostOnly && !o.noReels;
-/** Whether a film pass may settle: not a dry run or a repost (it owes no reels, so --no-reels changes nothing). */
-export const filmSettles = (o: Pick<BatchOptions, "dryRun" | "repostOnly">) => !o.dryRun && !o.repostOnly;
+/** Whether a pass of this kind may settle demos: not a dry run, a repost, a --no-reels pass (its reels are owed) or a film pass. */
+export const settlesDemos = (o: Pick<BatchOptions, "dryRun" | "repostOnly" | "noReels" | "film">) => !o.dryRun && !o.repostOnly && !o.noReels && !o.film;
 
-/**
- * A finished film pass over one demo: every pair it looked at (keys: povKeys, present or not in the
- * demo) goes into the film record, and with settlesDemo the demo into settled.json, so a later normal
- * pnpm go skips it. Returns the new records only where they changed (undefined: nothing to write).
- */
-export function settleFilm(filmState: Record<string, string>, settled: Record<string, string>, sha256: string, keys: string[], settlesDemo: boolean, now: string): { film?: Record<string, string>; settled?: Record<string, string>; pairs: string[] } {
-  const pairs = [...new Set(keys.map((k) => filmPair(sha256, k)))].filter((p) => !filmState[p]);
-  return {
-    pairs,
-    ...(pairs.length ? { film: { ...filmState, ...Object.fromEntries(pairs.map((p) => [p, now])) } } : {}),
-    ...(settlesDemo && !settled[sha256] ? { settled: { ...settled, [sha256]: now } } : {}),
-  };
-}
-/**
- * Writes a settleFilm result: settled.json first, then film.json. A process stopped between the two
- * leaves the pairs open, so the next film pass looks at the demo again (its clips are held) and
- * writes them; the other order would leave every pair done and the demo never settled for pnpm go.
- */
-export function writeFilmSettle(s: { film?: Record<string, string>; settled?: Record<string, string> }, write: (file: string, data: unknown) => void = writeJsonAtomic) {
-  if (s.settled) write(SETTLED, s.settled);
-  if (s.film) write(FILM, s.film);
-}
-
-/**
- * pnpm unsettle: the demo a reference names: a clip number (1-5 digits) by its library entry, else a
- * sha256 prefix matching exactly one of `shas` (the settled demos, or with --film the demos in state/film.json).
- */
+/** pnpm unsettle: the demo a reference names: a clip number (1-5 digits) by its library entry, else a sha256 prefix matching exactly one of `shas` (the settled demos). */
 export function demoOfRef(ref: string, shas: string[], clips: { no?: number; demoSha256: string }[]): string | undefined {
   if (/^\d{1,5}$/.test(ref)) return clips.find((c) => c.no === Number(ref))?.demoSha256;
   const hits = [...new Set(shas)].filter((k) => k.startsWith(ref.toLowerCase()));
   return hits.length === 1 ? hits[0] : undefined;
 }
-/** pnpm unsettle --film: the film record without any of this demo's pairs (every player), so the next film pass looks at it again. */
-export function unsettleFilm(filmState: Record<string, string>, sha256: string): { film: Record<string, string>; removed: number } {
-  const film = Object.fromEntries(Object.entries(filmState).filter(([k]) => !k.startsWith(`${sha256}:`)));
-  return { film, removed: Object.keys(filmState).length - Object.keys(film).length };
-}
-/** The demo hashes the film record holds pairs for. */
-export const filmDemos = (filmState: Record<string, string>) => [...new Set(Object.keys(filmState).map((k) => k.slice(0, k.indexOf(":"))))];
 
+/** A ranked moment (spec) or a film blooper; pov: a film roster player other than STEAM_ID64 (absent: the main POV); player: the name the parse gives (--film). */
+type QueueItem = { demo: string; sha256: string; pov?: string; player?: string } & ({ spec: ClipSpec; blooper?: undefined } | { blooper: BlooperClip; spec?: undefined });
+type FilmHighlight = Candidate & { d: DemoRecord; spec: ClipSpec };
+type FilmBlooper = Candidate & { d: DemoRecord; clip: BlooperClip };
+
+/**
+ * pnpm film's selection (src/film/select.ts) over every registered demo still on disk: per roster
+ * player, his moments under the film weights (moments.film.json) and his bloopers (one detection per
+ * demo, through the first present player's parse), each marked held or deleted as the library has it;
+ * the ranked tables printed; the selected clips the library does not hold returned for the per-demo loop.
+ */
+async function filmQueue(registry: DemoRecord[], pov: string, report: BatchReport, dryRun: boolean): Promise<QueueItem[]> {
+  const film = loadFilm();
+  const bloopers = loadBlooperSettings();
+  const roster = loadRoster();
+  const f: NonNullable<BatchReport["film"]> = { top: film.top, bloopersTop: film.bloopersTop, blooperMinScore: bloopers.minScore, players: roster.map((id) => ({ key: povKey(id) })), absent: [], noPlayer: [], missingFiles: 0, held: 0 };
+  report.film = f;
+  const nameOf = (id: string) => f.players.find((p) => p.key === povKey(id))?.name ?? `player ${povKey(id)}`;
+  const clips = readIndex().clips, deleted = readDeleted();
+  const per = new Map(roster.map((id) => [id, { hl: [] as FilmHighlight[], bl: [] as FilmBlooper[] }]));
+  for (const [order, d] of registry.entries()) {
+    if (!existsSync(d.file)) { f.missingFiles++; continue; }
+    // parsed: the first present player's parse, the bloopers' (rounds, deaths, hurts and fires do not depend on the POV).
+    const here: string[] = [];
+    let parsed: ParsedDemo | undefined;
+    for (const id of roster) {
+      const key = povKeyFor(id, pov);
+      try {
+        const m = await buildMoments(d.file, id, undefined, pov, "film");
+        f.players.find((p) => p.key === povKey(id))!.name ??= m.parsed.identity.name;
+        here.push(id);
+        parsed ??= m.parsed;
+        for (const spec of m.specs) {
+          // Held as prepareJob's inLibrary decides it: the same clip id, or a clip of the same round and player sharing a kill.
+          const gone = heldEntry(deleted, spec.id, d.sha256, spec.round, spec, key);
+          const held = gone ? undefined : heldEntry(clips, spec.id, d.sha256, spec.round, spec, key);
+          per.get(id)!.hl.push({ d, spec, score: spec.score, demoOrder: order, startTick: spec.startTick, ...(held ? { held: { no: held.no } } : {}), ...(gone ? { deleted: true } : {}) });
+        }
+      } catch (e) {
+        if (e instanceof PovAbsent) { f.absent.push({ demo: d.originalName, key: povKey(id) }); continue; }
+        const reason = (e as Error).message;
+        recordFailure(`demo:${d.sha256}${key ? `:${key}` : ""}`, { at: new Date().toISOString(), reasons: [reason], startTick: 0, endTick: 0, demo: d.file });
+        report.demoErrors.push(`${d.originalName} (${nameOf(id)}): ${reason}`);
+        console.error(`demo failed: ${d.originalName} (${nameOf(id)}): ${reason}`);
+      }
+    }
+    if (!here.length) {
+      if (f.absent.filter((a) => a.demo === d.originalName).length === roster.length) f.noPlayer.push(d.originalName);
+      continue;
+    }
+    try {
+      // One per overlap of a player's (pickBloopers), at the bar or more; the top per player is chosen across demos below.
+      for (const b of pickBloopers(detectBloopers(parsed!, sampleTrack(d.file, parsed!), here, bloopers), bloopers.minScore)) {
+        const clip = blooperClip(b, d.sha256, povKeyFor(b.steamid, pov));
+        const gone = !!deleted[clip.id], held = gone ? undefined : clips[clip.id];
+        per.get(b.steamid)?.bl.push({ d, clip, score: b.score, demoOrder: order, startTick: b.startTick, ...(held ? { held: { no: held.no } } : {}), ...(gone ? { deleted: true } : {}) });
+      }
+    } catch (e) {
+      const reason = `bloopers: ${(e as Error).message}`;
+      recordFailure(`bloopers:${d.sha256}`, { at: new Date().toISOString(), reasons: [reason], startTick: 0, endTick: 0, demo: d.file });
+      report.demoErrors.push(`${d.originalName}: ${reason}`);
+      console.error(`demo failed: ${d.originalName}: ${reason}`);
+    }
+  }
+  // Per player: the ranked tables, then his clips to render (highlights, then bloopers; the per-demo loop keeps this order).
+  const out: QueueItem[] = [];
+  for (const id of roster) {
+    const { hl, bl } = per.get(id)!;
+    const sel = selectFilm(hl, bl, { top: film.top, bloopersTop: film.bloopersTop, blooperMinScore: bloopers.minScore });
+    const who = { ...(id !== pov ? { pov: id } : {}), player: nameOf(id) };
+    console.log(`\n${nameOf(id)}: top ${film.top} highlights (film weights) of ${hl.length} moment(s)`);
+    console.log(filmTable(sel.highlights, (x) => x.spec.title, dryRun));
+    console.log(`${nameOf(id)}: top ${film.bloopersTop} bloopers at ${bloopers.minScore}+ of ${bl.length}`);
+    console.log(filmTable(sel.bloopers, (x) => x.clip.title, dryRun));
+    const render = [...toRender(sel.highlights), ...toRender(sel.bloopers)];
+    f.held += sel.highlights.taken.length + sel.bloopers.taken.length - render.length;
+    for (const x of toRender(sel.highlights)) out.push({ demo: x.d.file, sha256: x.d.sha256, spec: x.spec, ...who });
+    for (const x of toRender(sel.bloopers)) out.push({ demo: x.d.file, sha256: x.d.sha256, blooper: x.clip, ...who });
+  }
+  return out;
+}
+
+/** One player's ranked rows: rank, film score, demo, title, held (clip no.) or to render; the deleted ones passed over, unranked. */
+function filmTable<T extends Candidate & { d: DemoRecord }>(sel: { taken: T[]; passed: T[] }, title: (x: T) => string, dryRun: boolean): string {
+  const rows = [...sel.taken.map((x, i) => ({ x, rank: String(i + 1) })), ...sel.passed.map((x) => ({ x, rank: "-" }))]
+    .sort((a, b) => b.x.score - a.x.score)
+    // A demo named by its hash (a store file registered as is) shows its first 12 hex.
+    .map(({ x, rank }) => [rank, x.score.toFixed(1), x.d.originalName.replace(/^([0-9a-f]{12})[0-9a-f]{52}\.dem$/, "$1….dem"), title(x), x.deleted ? "deleted, passed over" : x.held ? `held (clip ${x.held.no ?? "?"})` : dryRun ? "would render" : "to render"]);
+  if (!rows.length) return "  (none)";
+  const width = [0, 1, 2, 3].map((i) => Math.max(...rows.map((r) => r[i].length)));
+  return rows.map((r) => "  " + r.map((c, i) => (i === 4 ? c : i === 1 ? c.padStart(width[i]) : c.padEnd(width[i]))).join("  ")).join("\n");
+}
 /**
  * The refusal a batch gets before it ingests anything: CS2 running, or the FACEIT client's
  * anti-cheat, which would refuse every launch (guards.ts). A repost and --settle-existing launch

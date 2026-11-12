@@ -1,6 +1,6 @@
 // pnpm go --film's bloopers in the batch and the library: the overlap pick, the blooper id, held by
 // id (deleted too), the page's blooper feats and Player list, the page data of a library without film
-// entries, pnpm unsettle --film, and the review fixes (settle write order, the spotted mask, parseAnyPov
+// entries, pnpm unsettle refs, and the review fixes (the spotted mask, parseAnyPov
 // past an absent player). Fake SteamID64s only; no demo, no launch.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -13,7 +13,7 @@ import { pageData } from "../src/library/page.ts";
 import { matchDateOf } from "../src/library/match-date.ts";
 import { shareCaption } from "../src/share/caption.ts";
 import { heldEntry } from "../src/queue/job.ts";
-import { demoOfRef, filmDemos, filmPair, settleFilm, unsettleFilm, writeFilmSettle } from "../src/queue/index.ts";
+import { demoOfRef } from "../src/queue/index.ts";
 import { hasSpotter, parseAnyPov } from "../src/film/track.ts";
 import { PovAbsent } from "../src/parse/demo.ts";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -119,28 +119,10 @@ test("page data: a library without any player or blooper gives exactly the data 
   assert.equal(JSON.stringify(pageData(entries, registry, {}, [1, 9], { running: true })), JSON.stringify(before));
 });
 
-test("unsettle --film: a demo's pairs leave state/film.json (every player's), others stay", () => {
-  const ka = povKey(MAIN), kb = povKey(A);
-  const state = { [filmPair(SHA, ka)]: "t1", [filmPair(SHA, kb)]: "t2", [filmPair(SHA2, ka)]: "t3" };
-  assert.deepEqual(filmDemos(state), [SHA, SHA2]);
-  assert.equal(demoOfRef(SHA.slice(0, 8), filmDemos(state), []), SHA);
-  assert.equal(demoOfRef("abab", filmDemos({ ...state, [filmPair("abab" + "0".repeat(60), ka)]: "t" }), []), undefined, "a prefix matching two demos names none");
+test("unsettle: a clip number names its demo, a prefix one settled demo", () => {
+  assert.equal(demoOfRef(SHA.slice(0, 8), [SHA, SHA2], []), SHA);
+  assert.equal(demoOfRef("abab", [SHA, "abab" + "0".repeat(60)], []), undefined, "a prefix matching two demos names none");
   assert.equal(demoOfRef("7", [], [{ no: 7, demoSha256: SHA2 }]), SHA2, "a clip number names its demo");
-  const r = unsettleFilm(state, SHA);
-  assert.equal(r.removed, 2);
-  assert.deepEqual(r.film, { [filmPair(SHA2, ka)]: "t3" });
-  assert.deepEqual(unsettleFilm(r.film, SHA), { film: r.film, removed: 0 });
-});
-
-test("film settle: settled.json is written before film.json, so a stop between them leaves the pairs open", () => {
-  const s = settleFilm({}, {}, SHA, [povKey(MAIN), povKey(A)], true, "now");
-  const order: string[] = [];
-  writeFilmSettle(s, (file) => order.push(path.basename(file)));
-  assert.deepEqual(order, ["settled.json", "film.json"]);
-  const noDemo = settleFilm({}, {}, SHA, [povKey(A)], false, "now");
-  order.length = 0;
-  writeFilmSettle(noDemo, (file) => order.push(path.basename(file)));
-  assert.deepEqual(order, ["film.json"], "without film.settlesDemo only the pairs");
 });
 
 test("spotted mask: an index of 31 or more never reads as spotted (1 << 32 wraps to bit 0)", () => {

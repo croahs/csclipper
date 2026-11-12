@@ -1,0 +1,109 @@
+{
+  "_about": "Weights for pnpm film only (src/score, same shape as scoring.json): a fragmovie shown to an audience. How to tune: docs/scoring-notes.md, Film weights. Every change gets a line in _changes with its reason.",
+  "_changes": [
+    "2026-11-12 first film weights (Peder: \"du må vekte annerledes siden dette skal vises fram. En clutch må være ekstra, ekstra bra for å se fin ut i fragmovie, mens tempo er ++ ekstra mye bedre\"), from scoring.json: pace flatSeconds 8 -> 6, speedMax 24 -> 60, perKillBeyondTwo 35 -> 70; clutch byEnemies 1v1 0, 1v2 5, 1v3 25, 1v4 60, 1v5 90, lostFactor 0; teamplay trade, save and saveLowHp 0 (invisible on screen); roundOutcome 1.0 both ways; economy perLnRatio 0.2 -> 0.1; style oneBulletKill 1.6, flick 1.6, bigFlick 2.8, noscope 1.6, airborne 1.4; collat 40; flags headshot 3, wallbang, thrusmoke and attackerblind 10; knife.multi 200, so a plain won two-knife-kill round scores 248 (10 s apart) to 294 (1 s) and reaches any player top 20. On the 9 demos of 2026-11-12 (main POV): fast multi-kills move up (de_dust2 R19 AWP 3k with a collat 9 -> 3, de_inferno R19 3k in 1.8 s 12 -> 6, de_dust2 R7 2k in 0.1 s 15 -> 9), ordinary clutches down (de_dust2 R5 4k 1v2 5 -> 13, de_anubis R4 3k 1v3 6 -> 15)"
+  ],
+  "killBase": {
+    "1": 10,
+    "2": 30,
+    "3": 55,
+    "4": 80,
+    "5": 110
+  },
+  "pace": {
+    "_note": "the fastest run (consecutive kills earning the most pace points): factor (1 - average seconds between its kills / flatSeconds)^curve, 0 from flatSeconds; speed = speedMax x factor for 2+ kills, tight = perKillBeyondTwo x factor per kill past the second",
+    "flatSeconds": 6,
+    "curve": 1.5,
+    "speedMax": 60,
+    "perKillBeyondTwo": 70
+  },
+  "spread": {
+    "_note": "direction spread: the yaw he turned between consecutive kills of the tightest run, summed; above minDegrees it earns points, a kill turned through several directions",
+    "minDegrees": 60,
+    "points": 4,
+    "pointsPer45Degrees": 2,
+    "max": 10
+  },
+  "clutch": {
+    "_note": "value by opponents (index = enemies alive at the clutch start, 5 for 5+), times the share of them he killed in the clutch (at least half), times lostFactor when lost",
+    "byEnemies": {
+      "1": 0,
+      "2": 5,
+      "3": 25,
+      "4": 60,
+      "5": 90
+    },
+    "lostFactor": 0
+  },
+  "flags": {
+    "headshot": 3,
+    "wallbang": 10,
+    "thrusmoke": 10,
+    "attackerblind": 10
+  },
+  "collat": {
+    "_note": "collateral: his gun kills on the same tick are one shot (a shotgun blast counts); each past the first earns perExtraKill",
+    "perExtraKill": 40
+  },
+  "style": {
+    "_note": "per-kill multipliers on that kill's share of the kill base; they stack on the kill (a one-tap flick is 1.5 x 1.5 = 2.25). A flick of bigFlickMinDegrees or more counts bigFlick instead of flick. A kill with none is 1.0, so plain rounds keep their scores",
+    "oneBulletKill": 1.6,
+    "flick": 1.6,
+    "flickMinDegrees": 15,
+    "bigFlick": 2.8,
+    "bigFlickMinDegrees": 45,
+    "noscope": 1.6,
+    "airborne": 1.4,
+    "facing": 1.1,
+    "behind": 0.9,
+    "facingMaxDegrees": 60
+  },
+  "economy": {
+    "_note": "multiplies the kill points (kills and style), not the round's other parts: 1 + perLnRatio x ln(enemy buy / own buy) at freeze end, kept within min..max; pistol rounds count as parity",
+    "perLnRatio": 0.1,
+    "min": 0.7,
+    "max": 1.4,
+    "pistolRounds": [
+      1,
+      13
+    ]
+  },
+  "roundOutcome": {
+    "_note": "the round's score times won or lost, after economy; a clutch won keeps its own clutch.wonBonus",
+    "won": 1,
+    "lost": 1
+  },
+  "weaponMultiplier": {
+    "pistol": 1.25,
+    "deagle": 1.35,
+    "scout": 1.2,
+    "smg": 1.1,
+    "shotgun": 1,
+    "rifle": 1,
+    "awp": 0.9,
+    "knife": 1.6,
+    "other": 1
+  },
+  "lowHp": {
+    "_note": "a victim at or below threshold HP before the killing hit, damaged by someone else first, costs penaltyPerKill; his own earlier damage on that victim does not count; at most maxPerMoment",
+    "threshold": 30,
+    "penaltyPerKill": 6,
+    "maxPerMoment": 8
+  },
+  "teamplay": {
+    "_note": "flat points per POV kill, not scaled by economy: trade when the victim killed a teammate at most tradeWindowSeconds before; save when the victim hurt a living teammate (not him) within saveWindowSeconds before and that teammate is still alive saveSurviveSeconds after the kill or at round end, saveLowHp instead of save when the victim's last hit left the teammate at or below saveLowHpThreshold; a kill that is both counts as a save",
+    "trade": 0,
+    "tradeWindowSeconds": 4,
+    "save": 0,
+    "saveLowHp": 0,
+    "saveLowHpThreshold": 40,
+    "saveWindowSeconds": 2,
+    "saveSurviveSeconds": 3
+  },
+  "knife": {
+    "_note": "knife multi-kill: two or more knife kills by him in one round (not a knife round); multi for the second and each further one, outside economy, inside outcome; flag <n> knife kills",
+    "multi": 200
+  },
+  "threshold": 30,
+  "includeOvertime": false
+}

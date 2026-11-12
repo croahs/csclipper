@@ -7,10 +7,12 @@
 // --settle-existing marks every registered demo processed (state/settled.json) and renders
 // nothing; later runs skip settled demos, so new rules apply from the next new demo.
 // --no-reels: highlights only for this run (config.json reels stays the default).
-// --film (pnpm film): every roster player's (.env STEAM_ID64 + FILM_STEAM_ID64S) highlights scoring
-// config.json film.minScore or more and bloopers scoring film.bloopers.minScore or more, from that
-// player's first person, in every registered demo still on disk, settled ones too; no reels. Pairs
-// done go in state/film.json.
+// --film (pnpm film): per roster player (.env STEAM_ID64 + FILM_STEAM_ID64S) the config.json film.top
+// best highlights under the film weights (scoring.film.json) and the film.bloopersTop best bloopers
+// scoring film.bloopers.minScore or more, ranked over every registered demo still on disk, from that
+// player's first person; no reels, no settling. --dry-run prints each player's ranked tables.
+// pnpm film masters [--dry-run] (--film masters): an edit-grade .mov of every clip ticked "Film" on the
+// library page, in library/film/masters/<player>/ (src/film/masters.ts).
 // Exit codes: 0 ok, 1 a job or demo failed, 2 refused (CS2 running, a guard,
 // or another pnpm go), 3 cleanup not verified (the batch stopped; check for cs2.exe by hand).
 import path from "node:path";
@@ -18,7 +20,8 @@ import { Refusal, STATE_DIR } from "../config.ts";
 import { RenderLock } from "../render/controller/guards.ts";
 import { cleanupUnverified } from "../render/controller/index.ts";
 import { exitOnSignal } from "../render/controller/launch.ts";
-import { runBatch } from "../queue/index.ts";
+import { batchRefusal, runBatch } from "../queue/index.ts";
+import { runMasters } from "../film/masters.ts";
 import { PAGE } from "../library/page.ts";
 import { prunedLine } from "../queue/prune.ts";
 import { quickEditOff } from "../quickedit.ts";
@@ -37,6 +40,7 @@ async function main(): Promise<number> {
   process.on("exit", release);
   const sig = exitOnSignal("pnpm go");
   try {
+    if (args.includes("--film") && args.includes("masters")) return await masters(timeoutS);
     const testExit = flag("--test-exit-after");
     const { report: r, code } = await runBatch({
       dryRun: args.includes("--dry-run"), retryFailed: args.includes("--retry-failed"), repostOnly: args.includes("--repost"), settleExisting: args.includes("--settle-existing"), noReels: args.includes("--no-reels"), film: args.includes("--film"), timeoutS,
@@ -56,7 +60,7 @@ async function main(): Promise<number> {
       const f = r.film;
       const label = (p: { key: string; name?: string }) => p.name ?? `player ${p.key}`;
       const clips = (ms: typeof r.made) => ms.map((m) => `clip ${m.no ?? "?"} (${m.title})`).join(", ");
-      console.log(`film (highlights >= ${f.minScore}, bloopers >= ${f.blooperMinScore}, no reels), ${f.players.length} player(s):`);
+      console.log(`film (per player the top ${f.top} highlights by film score and the top ${f.bloopersTop} bloopers at ${f.blooperMinScore}+, no reels, no settling), ${f.players.length} player(s); already in the library: ${f.held} of the selection:`);
       for (const p of f.players) {
         const hl = r.made.filter((m) => m.kind === "highlight" && m.player?.key === p.key);
         const bl = r.made.filter((m) => m.kind === "blooper" && m.player?.key === p.key);
@@ -68,8 +72,6 @@ async function main(): Promise<number> {
         if (absent.length) console.log(`  not in ${absent.length} demo(s): ${label(p)}`);
       }
       if (f.noPlayer.length) console.log(`no roster player in: ${f.noPlayer.join(", ")}`);
-      if (f.alreadyDone) console.log(`player-demo pairs done on earlier film runs: ${f.alreadyDone}`);
-      if (f.pairsDone) console.log(`player-demo pairs done now: ${f.pairsDone} (state/film.json)`);
       if (f.missingFiles) console.log(`registered demos no longer on disk, skipped: ${f.missingFiles}`);
     }
     // Made this run, by kind, with clip numbers (the page and pnpm clip --rerender take them).
@@ -96,6 +98,21 @@ async function main(): Promise<number> {
     lock.release();
     process.off("exit", release);
   }
+}
+
+/** pnpm film masters: refused like a batch unless it is a dry run (that launches nothing); the report per kind. */
+async function masters(timeoutS: number | undefined): Promise<number> {
+  const dryRun = args.includes("--dry-run");
+  if (!dryRun) { const refusal = batchRefusal({}); if (refusal) throw refusal; }
+  const { report: r, code } = await runMasters({ dryRun, timeoutS });
+  console.log("\n== film masters ==");
+  if (dryRun) console.log(`would capture: ${r.wouldCapture} master(s) (dry run: nothing written)`);
+  for (const m of r.made) console.log(`made: ${m}`);
+  console.log(`already made (same key): ${r.held.length}`);
+  for (const s of r.skipped) console.log(`skipped: ${s}`);
+  for (const f of r.failed) console.log(`FAILED: ${f}`);
+  if (r.stoppedBy) console.log("masters stopped: cleanup not verified");
+  return code;
 }
 
 main().then(

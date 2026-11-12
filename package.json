@@ -29,6 +29,8 @@
     "cut": "tsx src/cli/cut.ts",
     "fav": "tsx src/cli/star.ts star",
     "unfav": "tsx src/cli/star.ts unstar",
+    "pick": "tsx src/cli/star.ts pick",
+    "unpick": "tsx src/cli/star.ts unpick",
     "week": "tsx src/cli/week.ts",
     "music": "tsx src/cli/music.ts",
     "tidy": "tsx src/cli/tidy.ts",

@@ -219,17 +219,20 @@ export const povKey = (steamId64: string) => createHash("sha256").update(steamId
 export const povKeyFor = (pov: string, mainPov: string) => (pov === mainPov ? undefined : povKey(pov));
 
 /**
- * pnpm go --film: every roster player's highlights scoring minScore or more (no fallback, no reels); settlesDemo: a
- * finished film pass also settles the demo for pnpm go. Its bloopers' bar and thresholds (film.bloopers) are read by loadBlooperSettings.
+ * pnpm film (config.json → film): per roster player, the `top` best highlights (film weights) and the
+ * `bloopersTop` best bloopers across every registered demo still on disk; the masters' handles on each
+ * side (seconds) and their capture CRF (HLAE's x264, instead of render.captureCrf). The bloopers' bar and
+ * thresholds (film.bloopers) are read by loadBlooperSettings.
  */
-export type FilmSettings = { minScore: number; settlesDemo: boolean };
+export type FilmSettings = { top: number; bloopersTop: number; masterHandleSeconds: number; masterCaptureCrf: number };
 export function loadFilm(file = path.join(ROOT, "config.json")): FilmSettings {
   const f = JSON.parse(readFileSync(file, "utf8")).film ?? {};
-  if (typeof f.minScore !== "number" || !Number.isFinite(f.minScore) || typeof f.settlesDemo !== "boolean") throw new Error("config.json film needs minScore (number) and settlesDemo (true/false)");
-  return { minScore: f.minScore, settlesDemo: f.settlesDemo };
+  for (const k of ["top", "bloopersTop"] as const) if (!Number.isInteger(f[k]) || f[k] < 0) throw new Error(`config.json film.${k} must be a whole number >= 0`);
+  const handle = f.masterHandleSeconds ?? 2, crf = f.masterCaptureCrf ?? 8;
+  if (typeof handle !== "number" || !(handle >= 0 && handle <= 30)) throw new Error("config.json film.masterHandleSeconds must be a number of seconds from 0 to 30");
+  if (!Number.isInteger(crf) || crf < 0 || crf > 51) throw new Error("config.json film.masterCaptureCrf must be a whole number from 0 to 51");
+  return { top: f.top, bloopersTop: f.bloopersTop, masterHandleSeconds: handle, masterCaptureCrf: crf };
 }
-/** The film pick from a player's ranked specs: every one scoring minScore or more, never a fallback. */
-export const pickFilm = <T extends { score: number }>(ranked: T[], f: Pick<FilmSettings, "minScore">): T[] => ranked.filter((s) => s.score >= f.minScore);
 
 /**
  * pnpm week (PLAN.md §6, best of the week, the fragmovie): how many highlights, the cap on the

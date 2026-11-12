@@ -14,7 +14,8 @@ pnpm check
 pnpm grab [--dry-run] [--browser] [--last <n>]
 pnpm grab --login
 pnpm go [--dry-run] [--retry-failed] [--repost] [--settle-existing] [--no-reels]
-pnpm film [--dry-run] [--retry-failed] [--repost]   (pnpm go --film: the roster's highlights and bloopers, Film below)
+pnpm film [--dry-run] [--retry-failed] [--repost]   (pnpm go --film: each roster player's top highlights and bloopers, Film below)
+pnpm film masters [--dry-run]  (edit-grade .mov of every clip ticked Film; Masters below)
 pnpm moments "<demo.dem>" [--pov <steamid64>]
 pnpm bloopers "<demo.dem>" [--ids <steamid64,steamid64>] [--all]   (the demo's bloopers as a table; default players: the film roster)
 pnpm clip "<demo.dem>" --top <n> [--timeout <s>] [--dry-run]
@@ -30,12 +31,13 @@ pnpm vertical <no> [--shift <percent>]
 pnpm cut <no> <from> <to>      (seconds as the clip plays: 4.5 or 0:04.5)
 pnpm fav <no>...               (star clips; pnpm's own star / unstar star npm packages)
 pnpm unfav <no>...
+pnpm pick <no>...              (tick the Film box: pnpm film masters makes these)
+pnpm unpick <no>...
 pnpm week [<yyyy-Www>] [--top <n>] [--seconds <n>] [--music <file>] [--no-music] [--dry-run] [--json]
 pnpm music [--check]           (the default tracks of music.json into music/, sha256-checked)
 pnpm trash --empty
 pnpm tidy
 pnpm unsettle <demo sha256 prefix | clip no>...
-pnpm unsettle --film <demo sha256 prefix | clip no>...   (the demo's pairs out of state/film.json; settled.json untouched)
 pnpm rescore [--dry-run]
 ```
 
@@ -59,36 +61,83 @@ narrower one (post trims). A reel is held per demo and kind; frames are
 checked mid-take, never on a seam where the fades meet. `pnpm deaths` /
 `pnpm victims` make one for any demo, settled or not.
 
-**Film** (`src/queue/index.ts` `BatchOptions.film`, `src/config.ts`
-`loadRoster` / `loadFilm`; PLAN.md §3 has the rules). `pnpm film` (`pnpm
-go --film`) films the roster: `STEAM_ID64` plus `.env` →
-`FILM_STEAM_ID64S` (SteamID64s, comma- or space-separated; the render
-account is refused). For every registered demo still on disk, settled
-or not, and every roster player in it whose pair (demo, player) is not
-done: that player's highlights scoring `config.json` → `film.minScore`
-(75) or more, no fallback, and his bloopers (below), all from his first
-person in the demo's one launch. No reels. A player who is not in a
-demo is no error; his pair is settled with the demo's pass. Another
-player's parse and moments are cached in `state/<sha>/pov-<povKey>/`;
-`povKey` (the first 8 hex of the SteamID64's sha256) is the only handle
-on a player outside `.env`: in clip ids, render keys, job files and the
-library entry's `player: { name, key }`. The main POV's caches, ids
-and keys are what they always were. A finished pass writes its pairs to
-`state/film.json` and, with `film.settlesDemo` (true), settles the demo
-for `pnpm go` too (`settled.json` first, so a stop between the two
-writes leaves the pairs open, never a demo marked filmed but unsettled);
-`pnpm unsettle --film` reopens a demo's pairs. The look is the main
-account's: HUD, settings, look cfg and the launch identities do not
-change per player, and in a demo older than `crosshairFromDemoSincePatch`
-the crosshair is the main account's saved one, not the friend's
-(Crosshair, under M1 decisions). `pnpm moments --pov <steamid64>` shows
-another player's ranked moments (the ID from the command line only).
-`pnpm rescore` rescores a film player's highlights from his own cache
-and skips bloopers (counted); `pnpm week` takes only the main account's
-highlights. The dry run lists `would render:` lines under a heading per
-demo and player; the end report lists the clips made per player,
-bloopers apart. Tested in `test/film.test.ts` and
-`test/film-bloopers.test.ts`.
+**Film** (`src/queue/index.ts` `filmQueue`, `src/film/select.ts`,
+`src/config.ts` `loadRoster` / `loadFilm`; PLAN.md §3 has the rules).
+`pnpm film` (`pnpm go --film`) films the roster: `STEAM_ID64` plus
+`.env` → `FILM_STEAM_ID64S` (SteamID64s, comma- or space-separated; the
+render account is refused). A pass ranks every roster player's moments
+over every registered demo still on disk, settled or not, by the film
+weights (`scoring.film.json`, Film weights in `docs/scoring-notes.md`),
+and selects per player the `config.json` → `film.top` (20) best, plus
+the `film.bloopersTop` (5) best of his bloopers scoring
+`film.bloopers.minScore` (50) or more (few or none is fine). A clip the
+library already holds counts toward the player's number and is not
+rendered again (held as `prepareJob` decides it: the same clip id, or a
+clip of the same round and player sharing a kill); a deleted one
+(`state/deleted.json`) is passed over and the next best takes its place.
+Then one launch per demo with something to render, all from that
+player's first person, no reels. A film pass never settles a demo
+(`state/settled.json` is not touched) and keeps no record of its own:
+what the library holds is the record, so a later run with more demos
+re-ranks from the caches and renders only what is newly in a top N. A
+player who is not in a demo is no error. Film moments are cached apart
+from the normal ones, in `moments.film.json` / `moments.film.txt` beside
+`moments.json`, for every POV, so the two modes never rewrite each
+other's cache; spans and clip ids do not depend on the weights, so a
+moment the library holds under the normal weights is the same clip. The
+library entry carries the normal score (the post worker finds the spec
+by id among the normal moments, and `pnpm rescore` keeps it); the film
+score lives in the cache and the dry run's table. Another player's parse
+and moments are cached in `state/<sha>/pov-<povKey>/`; `povKey` (the
+first 8 hex of the SteamID64's sha256) is the only handle on a player
+outside `.env`: in clip ids, render keys, job files and the library
+entry's `player: { name, key }`. The main POV's caches, ids and keys are
+what they always were. The look is the main account's: HUD, settings,
+look cfg and the launch identities do not change per player, and in a
+demo older than `crosshairFromDemoSincePatch` the crosshair is the main
+account's saved one, not the friend's (Crosshair, under M1 decisions).
+`pnpm moments --pov <steamid64>` shows another player's ranked moments
+(the ID from the command line only). `pnpm rescore` rescores a film
+player's highlights from his own cache and skips bloopers (counted);
+`pnpm week` takes only the main account's highlights. Every pass prints
+per player a ranked table (rank, film score, demo, title, held with its
+clip number, or would render / to render; deleted ones unranked as
+passed over), then his bloopers; the end report lists the clips made
+per player, bloopers apart. Tested in `test/film.test.ts`,
+`test/film-select.test.ts` and `test/film-bloopers.test.ts`.
+
+**Masters** (`src/film/masters.ts`, through `pnpm film masters`).
+`pnpm film masters [--dry-run]` makes an edit-grade file of every clip
+ticked "Film" on the library page (`library/film-picks.json`, Stars and
+filters below) at `library/film/masters/<player>/<no>-<slug>.mov`, the
+player folder file-safe: a friend's from the name on his newest clip,
+"Me"'s from the main POV's in-demo name in the parse of his newest
+clip's demo. The raw capture of a published clip is gone by design, so
+a master is a new capture: one launch per demo for all its picked clips
+(`runJobs`, units whose `finish` muxes the master instead of posting;
+id `master-<clip id>`, a render key of its own), refused like `pnpm go`
+(CS2 running, the FACEIT client) and under `.go.lock`. The command names
+the clips (the picks), which is what AGENTS.md asks of a re-render; the
+library clip itself is never touched. A master is the whole moment at
+real speed: the clip's `[startTick, endTick]` plus
+`film.masterHandleSeconds` (2) on each side, clamped like a reel take
+(round start, the demo's playable ticks, short of the match end, the
+clip's own span always kept); no fast-forward, fades or text. It is the
+capture itself, at `film.masterCaptureCrf` (8) instead of
+`render.captureCrf` (through the unit's `RenderSettings`): the captured
+H.264 stream copied (no second encode) and the captured audio as 24-bit
+PCM, muxed into `.mov`. A stream copy cuts only at keyframes, so the
+file is the whole capture, which runs up to the controller's capture
+margin (0.5 s) past the span at each end. Idempotent: a master whose
+file exists with the same key (clip id, span, handles, capture settings)
+in its `comment` tag, as share copies keep theirs, is skipped. A picked
+reel, a clip whose demo is no longer on disk, or whose player has left
+the roster is listed and skipped. The raw capture is deleted once the
+master is written. `--dry-run` lists per demo what it would capture
+(ticks, seconds, CRF, the file) and writes nothing. The plan, the key,
+the span, the unit and the mux arguments are pure and tested in
+`test/film-select.test.ts`; no master has been produced yet (no capture
+was run when this was built, 2026-11-12).
 
 **Bloopers** (`src/film/bloopers.ts`, `src/film/track.ts`,
 `src/cli/bloopers.ts`). The funniest mistakes of a roster player, each
@@ -138,10 +187,11 @@ at 71 % of one demo's non-wallbang gun kills the tick before, at none
 of its wallbangs); the mask holds the first 31 players, a later one
 never reads as spotted. The known false positive left is an enemy
 behind a wall whose proxy fires anyway: damage through the wall either
-way counts as sight. In a film pass the demo's one parse and its track serve every open
-roster player; those scoring `film.bloopers.minScore` (50) or more are
-kept, and of one player's that overlap in ticks the higher score
-(`pickBloopers`). A blooper's id is `sha256("<demo sha>:blooper:<type>:<anchor
+way counts as sight. In a film pass the demo's one parse and its track serve every
+roster player in it; those scoring `film.bloopers.minScore` (50) or more are
+kept, of one player's that overlap in ticks the higher score
+(`pickBloopers`), and per player the `film.bloopersTop` (5) best across
+the demos are selected (Film above). A blooper's id is `sha256("<demo sha>:blooper:<type>:<anchor
 tick>:<povKey or empty>")`, 16 hex, built from the event and not the span,
 so a threshold or span change never re-makes one the library holds
 (held: the id in the index or in `state/deleted.json`); its render key
@@ -151,8 +201,7 @@ blooper's title, `player` for a friend, no `moment`. The post worker
 gets `bloopers: [{ pov: povKey, clip }]`, the clip as the batch
 captured it (id, span, title, score), and posts that without detecting
 again: under changed thresholds a re-detected span, and with it the
-render key, could miss the capture. A film pass is final for a demo
-only when its bloopers are. `pnpm clip --rerender <no>` re-renders one
+render key, could miss the capture. `pnpm clip --rerender <no>` re-renders one
 over its own span. `pnpm bloopers` prints the table for the roster,
 `--ids`, or `--all` (every player, parsed through any of them);
 parsing only. Tested in `test/bloopers.test.ts` and
@@ -251,7 +300,14 @@ page writer leaves them out, so `pnpm drop` does not touch the file. The
 file has no lock: the server and the CLI each read-modify-write it in
 microseconds, and two stars in the same instant can lose one. `pnpm
 library` serves `POST /star/<no>`, `POST /unstar/<no>` (answer
-`{ stars }`) and `GET /stars`. `featsOf` and `weaponsOf` (the game's
+`{ stars }`) and `GET /stars`. Film picks (the "Film" checkbox in each
+clip's action row, what `pnpm film masters` makes) are kept exactly the
+same way in `library/film-picks.json` (`{ version: 1, picks: [...] }`,
+`changePicks`): `pnpm pick <no>...` / `pnpm unpick <no>...`, `POST
+/pick/<no>`, `POST /unpick/<no>` (answer `{ picks }`) and `GET /picks`
+served; opened from disk the row shows the command to copy. The sidebar's
+"Film picks" row, under Starred, counts and filters them; `picks` is in
+the inlined data only when a clip in the index is picked. `featsOf` and `weaponsOf` (the game's
 names for grenade and fire kills labelled: `hegrenade` "HE grenade",
 `inferno` "Fire") run in `page.ts`, which stores `feats` and `weapons`
 per clip in the inlined data; the page only filters and counts, live, so
@@ -259,10 +315,11 @@ a delete in place updates the counts. Film entries add to it only where
 they occur (`pageData`): a blooper's kind is its feat (Teamkill, Own
 grenade / fall, Spray, no kill, Behind, no kill) and its score the
 blooper score, shown and sorted by; Kind lists Bloopers once one
-exists; `playersOf` gives the Player filter when an entry has `player`:
+exists; the "Knife 2k+" feat is a moment flagged `<n> knife kills`; `playersOf` gives the Player filter when an entry has `player`:
 "Me" for the rest, a friend by the name on his newest clip. A library
 without either gives the data it always did. Tested in
-`test/stars.test.ts` and `test/film-bloopers.test.ts`.
+`test/stars.test.ts`, `test/film-bloopers.test.ts` and
+`test/film-select.test.ts` (picks).
 
 **Best of the week** (`src/week/`, `src/cli/week.ts`, `src/cli/music.ts`;
 PLAN.md §6 has the rules). `pnpm week [<yyyy-Www>]` writes
@@ -533,21 +590,21 @@ the spectated player (docs/spikes.md, M0.2 open items).
 
 | Path | What |
 |---|---|
-| `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds`; `ingest.keepOriginals` (default false: the file a demo arrived in is deleted once the store holds it); `montage` for `pnpm week`: `top` (10), `maxSeconds` (60, the video's cap), `music` (`smash-it.mp3`, the default track, a file name in `music/`), `musicGainDb` (-7, the music up front), `shot` (`preSeconds` 0.65 and `postSeconds` 0.4 around each kill); `post.audio` (`raw` default, `even`) and `share.audio` (`even` default, `raw`); `vertical` (`width`, `height`, `crf`) for `pnpm vertical`; `cut.crf` (18) for `pnpm cut`; `film` for `pnpm film`: `minScore` (75), `settlesDemo` (true), `bloopers` (`minScore` 50 and the detector thresholds; Bloopers above); the even-sound chain's `audio` parameters (`thresholdDb`, `ratio`, `attackMs`, `releaseMs`, `makeupDb`, `limitDb`; Even sound above) |
+| `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds`; `ingest.keepOriginals` (default false: the file a demo arrived in is deleted once the store holds it); `montage` for `pnpm week`: `top` (10), `maxSeconds` (60, the video's cap), `music` (`smash-it.mp3`, the default track, a file name in `music/`), `musicGainDb` (-7, the music up front), `shot` (`preSeconds` 0.65 and `postSeconds` 0.4 around each kill); `post.audio` (`raw` default, `even`) and `share.audio` (`even` default, `raw`); `vertical` (`width`, `height`, `crf`) for `pnpm vertical`; `cut.crf` (18) for `pnpm cut`; `film` for `pnpm film`: `top` (20, highlights per player), `bloopersTop` (5), `masterHandleSeconds` (2) and `masterCaptureCrf` (8) for `pnpm film masters`, `bloopers` (`minScore` 50 and the detector thresholds; Bloopers above); the even-sound chain's `audio` parameters (`thresholdDb`, `ratio`, `attackMs`, `releaseMs`, `makeupDb`, `limitDb`; Even sound above) |
 | `.env` | identities and tool paths, and the optional film roster `FILM_STEAM_ID64S` (`.env.example`; `pnpm prep` fills it; M0.2 setup in `docs/spikes.md`) |
 | `src/cli/setup.ts` | `pnpm prep` / `pnpm check`: tool pins with their sha256, Steam and CS2 lookup, the requirement report |
 | `docs/m6-mm-fetch.md` | the execution plan for M6 (matchmaking demos fetched through a CS2 launch, no login): phases, agents, gate, tests |
 | `setup.ps1`, `GUIDE.md` | the one-line bootstrap (`irm … | iex`: winget for git and Node, corepack or pnpm's installer for pnpm, clone or fast-forward pull of a checkout of this repo, `pnpm prep`, every exit code checked, nothing installed when winget is missing) and the step-by-step guide it points to |
-| `scoring.json` | ranking weights; tuning and current picks in `docs/scoring-notes.md` |
+| `scoring.json`, `scoring.film.json` | ranking weights, and `pnpm film`'s own (same shape); tuning and current picks in `docs/scoring-notes.md` |
 | `src/cli/go.ts`, `src/cli/clip.ts`, `src/cli/moments.ts` | the entries |
 | `src/ingest/` | watch folder (`index.ts`, with the first-full-packet fix in `full-packet.ts`), the source contract (`sources.ts`), sources (`sources/folders.ts`, `sources/faceit.ts` with its browser path `sources/faceit-browser.ts`, `sources/valve.ts` with its CS2 fetch launch `sources/valve-fetch.ts`) |
 | `test/` | `pnpm test`: FACEIT source against recorded fixtures (`test/fixtures/faceit/`), the Valve source against a fake Web API and fetcher, and the folders source on temp folders; no network, no game launch |
 | `src/queue/` | the batch and its job ledger (`index.ts`); one clip job, shared by `pnpm clip` and the batch (`job.ts`) |
 | `src/library/page.html`, `page.ts` | the library page template and its writer |
-| `src/film/` | `bloopers.ts` the blooper detector, its settings, the overlap pick and the blooper id; `track.ts` the position/view track, its cache and the parse a blooper pass uses (`parseAnyPov`) |
-| `state/film.json` | `pnpm film`'s settle record: `"<demo sha256>:<povKey>"` → when that player's pass over that demo finished |
-| `state/<demo sha256>/pov-<povKey>/`, `bloopers-track.json.gz` | a film player's parse and moments caches; the demo's blooper track |
-| `src/library/stars.ts`, `facets.ts`, `hash.ts`, `match-date.ts` | the stars file; the feat, weapon and player filters' derivation (blooper kinds as feats); the `#clip=<no>&t=<s>` parser (its source is inlined into the page); the one rule that dates a clip's match (page, `pnpm week`, death map) |
+| `src/film/` | `bloopers.ts` the blooper detector, its settings, the overlap pick and the blooper id; `track.ts` the position/view track, its cache and the parse a blooper pass uses (`parseAnyPov`); `select.ts` the film selection (top N per player); `masters.ts` `pnpm film masters` (plan, key, span, unit, mux) |
+| `state/<demo sha256>/pov-<povKey>/`, `moments.film.json`, `bloopers-track.json.gz` | a film player's parse and moments caches; every POV's film-weighted moments beside its `moments.json`; the demo's blooper track |
+| `library/film-picks.json`, `library/film/masters/` | the clips ticked Film; their masters, one folder per player |
+| `src/library/stars.ts`, `facets.ts`, `hash.ts`, `match-date.ts` | the stars and film-picks files; the feat, weapon and player filters' derivation (blooper kinds as feats); the `#clip=<no>&t=<s>` parser (its source is inlined into the page); the one rule that dates a clip's match (page, `pnpm week`, death map) |
 | `src/share/` | derived copies of a library clip, none of them in `index.json`: `index.ts` share, `vertical.ts`, `cut.ts`, `caption.ts` |
 | `src/week/` | `pnpm week`, the fragmovie: `index.ts` ISO weeks, selection, plan, key and render; `edit.ts` shots and their layout on the beat grid; `beats.ts` the beat analysis; `music.ts` the manifest, downloads, track choice and the analysis cache |
 | `music.json` | the default tracks for `pnpm week` (tracked): file, url, sha256, BPM, title, artist, licence, credit |
@@ -742,7 +799,15 @@ the spectated player (docs/spikes.md, M0.2 open items).
 - **Match rounds.** A round is a `round_end` with a winner after the last
   `begin_new_match` (FACEIT's warmup and knife restarts come before it; a
   demo without it is refused). Rounds are numbered 1…n from there; above 24
-  is overtime. A knife round is one where every shot fired was a knife.
+  is overtime. A knife round is one where every shot fired was a knife,
+  read on bare weapon names (`weapon_fire` names carry a `weapon_` prefix
+  that deaths and hurts do not; `bareWeapon`, `isKnife`, `isGunshot` in
+  `src/parse/demo.ts`). Until 2026-11-12 the prefix hid every knife round
+  and counted knife swings and grenade throws as gunshots; the parse
+  schema was not bumped for the fix (Death map's reason: caches whose demo
+  is gone would go stale for good), so scoring re-derives the knife round
+  from the fires (`isKnifeRound`) and drops a cached flick whose shot was a
+  swing or a throw (`flickYaw`) on an older cache.
 - **Alive state** is every player's team and alive flag at each round's
   freeze end and round end, plus the deaths in between, instead of a full
   per-tick table: that is what 1vX needs. A round where someone alive at

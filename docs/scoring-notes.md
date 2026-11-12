@@ -12,7 +12,8 @@ pnpm moments "<demo.dem>"
 
 Parses the demo once (cached in `state/<demo sha256>/parse.json`), scores,
 builds clip specs and prints the ranked table; the same table is written to
-`state/<sha>/moments.txt` and the full specs to `moments.json`. No game
+`state/<sha>/moments.txt` and the full specs to `moments.json` (`pnpm film`'s
+film-weighted ones go to `moments.film.json` / `.txt` beside them). No game
 launch. `pnpm clip "<demo.dem>" --top <n>` renders the n-th row.
 
 ## How a score is built
@@ -37,7 +38,8 @@ the round end do not count. A moment needs at least one POV kill.
 | clutch | `clutch` | by the enemies alive at its start (`byEnemies`: 1v1 10, 1v2 30, 1v3 50, 1v4 70, 1v5 90), times the share of them he killed in it (at least half), times `lostFactor` 0.3 when lost: a 1v1 won with one kill is small (Peder, 2026-10-15) |
 | flags | `flags` | per kill: headshot, wallbang, through smoke, while blind |
 | collat | `collat` | a collateral: gun kills on the same tick are one shot (a shotgun blast killing two counts too); each past the first earns `perExtraKill` 30. Rare: 1 in 1388 kills on the 74 stored demos (2026-11-02) |
-| style | `style` | per-kill multipliers on that kill's share of the kill base, stacking on the kill: a one-bullet kill (POV gun `weapon_fire` count since the previous kill, or 5 s before the first, is 1) 1.5, a flick (the largest POV yaw turn from 100–200 ms before the kill gunshot to the shot, wrapped, over `flickMinDegrees` 15°) 1.5, or a big flick (`bigFlickMinDegrees` 45° or more) `bigFlick` 2.5 instead, a no-scope 1.4, an airborne kill (`attackerinair`) 1.3, and facing: the victim's view within `facingMaxDegrees` 60° of the line to him the tick before the kill 1.1, otherwise (from behind) 0.9; an unknown angle counts 1. `style` in the breakdown is what they add: the kill part times (average factor − 1). Two one-tap flicks in a 2k score about double a plain 2k; a single kill with every style stays below a strong 3k (about 41 with a normal flick, 68 with a big one, against about 74 for a quick 3k; a spread-out 3k at 55 can be passed by a big-flick 1k); a kill with none counts 1. Facing applies to almost every kill (797 of 900 face him), so a plain kill now gains about 10 % and one from behind loses 10 %; with the outcome multiplier replacing the flat +8 the calibration anchor moved (a plain won 2k from about 38 to about 36, a plain lost 2k from 30 to about 30) and is not re-tuned: Peder's call |
+| style | `style` | per-kill multipliers on that kill's share of the kill base, stacking on the kill: a one-bullet kill (POV gun `weapon_fire` count, on bare names so a knife swing or a grenade throw is none, since the previous kill, or 5 s before the first, is 1) 1.5, a flick (the largest POV yaw turn from 100–200 ms before the kill gunshot to the shot, wrapped, over `flickMinDegrees` 15°) 1.5, or a big flick (`bigFlickMinDegrees` 45° or more) `bigFlick` 2.5 instead, a no-scope 1.4, an airborne kill (`attackerinair`) 1.3, and facing: the victim's view within `facingMaxDegrees` 60° of the line to him the tick before the kill 1.1, otherwise (from behind) 0.9; an unknown angle counts 1. `style` in the breakdown is what they add: the kill part times (average factor − 1). Two one-tap flicks in a 2k score about double a plain 2k; a single kill with every style stays below a strong 3k (about 41 with a normal flick, 68 with a big one, against about 74 for a quick 3k; a spread-out 3k at 55 can be passed by a big-flick 1k); a kill with none counts 1. Facing applies to almost every kill (797 of 900 face him), so a plain kill now gains about 10 % and one from behind loses 10 %; with the outcome multiplier replacing the flat +8 the calibration anchor moved (a plain won 2k from about 38 to about 36, a plain lost 2k from 30 to about 30) and is not re-tuned: Peder's call |
+| knife | `knife` | a knife multi-kill: two or more knife kills by him in the round (never a knife round), `multi` 40 for the second and each one after it; outside economy, inside outcome; flag `2 knife kills` (Knife fixes below) |
 | trade | `teamplay` | `trade` 2 per kill of an enemy who killed a teammate at most `tradeWindowSeconds` 4 before, same round; flag `trade` / `n trades` |
 | save | `teamplay` | `save` 3 per kill of an enemy who hurt a teammate (not him) within `saveWindowSeconds` 2 before it, that teammate alive at the kill and still `saveSurviveSeconds` 3 after it or at round end, whichever is first; `saveLowHp` 4 instead when the enemy's last such hit left the teammate at or below `saveLowHpThreshold` 40; a kill that is both counts as the save; flag `save` / `n saves`. Both are outside economy and inside outcome, and neither applies in a `rosterChanged` round |
 | outcome | `roundOutcome` | the round's whole score (after economy) times `won` 1.1 or `lost` 0.9: a light weight for the round's result; a won clutch is valued in `clutch` on its own |
@@ -142,6 +144,74 @@ save is a low one; 13 has neither), and clip 13 slips from rank 4 to 5 in
 its demo behind R4, a 3k with a trade (72.4 → 74.6). Clip 90 is no longer in
 the library, so 63 > 90 and 29 > 90 could not be checked; a 1-kill moment
 gains at most 4.4 (one low save, won), against gaps of 33 and 55.
+
+## Knife fixes (2026-11-12)
+
+`weapon_fire` names carry a `weapon_` prefix (`weapon_knife_ursus`,
+`weapon_hegrenade`) that deaths and hurts do not, and the gunshot and knife
+tests compared the raw name, so on every cache a knife swing or a grenade
+throw counted as a bullet (a one-bullet kill with a swing before it was
+lost) and could be taken as the flick's kill shot, and no knife round was
+ever detected. Every weapon test now goes through the bare name
+(`bareWeapon`, `isGunshot`, `isKnife` in `src/parse/demo.ts`): a knife
+swing or a grenade throw touches no score. Clip spans and action windows
+are not scores and were left as they are, so a knife swing or a throw
+still counts as an engagement signal and an action (it can stretch a span
+or keep a stretch at normal speed). The parse schema stayed 8 (the death
+map's reason in `docs/modules.md`); on an older cache scoring re-derives
+the knife round from the fires (`isKnifeRound`) and drops a flick whose
+shot tick holds only a swing or a throw (`flickYaw`). Moments schema 7 → 8.
+
+Effect under the unchanged weights on the 9 cached demos of 2026-11-12
+(183 moments, every cached POV): 3 move, all up, at most +10.7, all
+one-bullet kills a swing or a throw had spoiled (de_anubis R7 2k Tec-9
+47.3 → 58.0, de_inferno R9 2k AK-47 60.4 → 68.6, de_ancient R6 2k AWP 25.4
+→ 31.0); no flick and no knife round changed there, and `pnpm go`'s picks
+(40 or more, else the best) are the same on all 9 demos.
+
+**Knife multi-kill** (`knife.multi`, both files). Two or more knife kills
+by him in one round that is not a knife round earn `multi` for the second
+and each further one (flag `<n> knife kills`, the page's "Knife 2k+"
+feat), outside economy, inside outcome: 40 in `scoring.json` (a plain won
+two-knife round scores 97 with the kills 10 s apart, 118 within a second;
+the bonus alone reaches the batch's 40), 200 in `scoring.film.json` (248
+and 294: at the top of every player's list on file, whose best is 266.6). None of the 21 stored demos has one (3 single knife kills in all,
+any player), so nothing on file moves.
+
+## Film weights (`scoring.film.json`, 2026-11-12)
+
+`pnpm film` ranks with its own weights, same shape as `scoring.json`, for a
+fragmovie shown to an audience (Peder: tempo far more, a clutch must be
+exceptional to count). Against `scoring.json`: pace `flatSeconds` 8 → 6,
+`speedMax` 24 → 60, `perKillBeyondTwo` 35 → 70; clutch `byEnemies` 1v1 0,
+1v2 5, 1v3 25, 1v4 60, 1v5 90 and `lostFactor` 0; `teamplay` trade, save
+and low save 0 (invisible on screen); `roundOutcome` 1.0 both ways;
+economy `perLnRatio` 0.2 → 0.1; style one-bullet 1.6, flick 1.6, big
+flick 2.8, no-scope 1.6, airborne 1.4; collat 40; flags headshot 3,
+wallbang, through smoke and while blind 10; `knife.multi` 200. Film
+moments are cached in `moments.film.json` beside `moments.json`.
+
+Main POV over the 9 demos, top 10, `scoring.json` → `scoring.film.json`:
+
+| # | scoring.json | scoring.film.json |
+|---|---|---|
+| 1 | de_dust2 R1 4k USP-S 218.4 | de_dust2 R1 4k USP-S 266.6 |
+| 2 | de_cache R13 4k USP-S 196.9 | de_cache R13 4k USP-S 228.7 |
+| 3 | de_mirage R17 4k, 1v2 won 183.0 | de_dust2 R19 3k AWP, collat 172.3 |
+| 4 | de_dust2 R11 4k M4A1-S 153.7 | de_mirage R17 4k, 1v2 won 170.0 |
+| 5 | de_dust2 R5 4k AK-47, 1v2 won 145.1 | de_ancient R14 3k Tec-9, 1v2 lost 161.7 |
+| 6 | de_anubis R4 3k AK-47, 1v3 won 133.5 | de_inferno R19 3k M4A1-S (1.8 s) 159.6 |
+| 7 | de_ancient R14 3k Tec-9, 1v2 lost 133.3 | de_ancient R10 3k M4A1-S 145.3 |
+| 8 | de_mirage R11 4k M4A1-S 129.7 | de_dust2 R11 4k M4A1-S 142.5 |
+| 9 | de_dust2 R19 3k AWP, collat 127.8 | de_dust2 R7 2k AK-47 (0.1 s) 125.9 |
+| 10 | de_cache R6 3k Tec-9 123.1 | de_cache R15 4k AUG 119.8 |
+
+Fast multi-kills move up (the AWP collat 9 → 3, the 1.8 s 3k 12 → 6, the
+0.1 s 2k 15 → 9), rounds carried by an ordinary clutch move down
+(de_dust2 R5 4k 1v2 5 → 13, de_anubis R4 3k 1v3 6 → 15), and a slow 4k
+still beats a slow 2k on its kills. The starting point the order gave was
+kept: on these demos it already does what Peder asked, and 9 demos are
+too few to tune finer without fitting to them.
 
 ## Not scored yet
 
