@@ -1,0 +1,119 @@
+// The bloopers' one extra parser pass: every player's position, view and alive state every
+// TRACK_EVERY ticks (0.25 s at 64) from each match round's freeze end to its end, plus who had
+// each player spotted (the game's own spotted-by mask, CCSPlayerPawn.m_bSpottedByMask through
+// demoparser2's approximate_spotted_by: a positive line-of-sight signal, set for the victim at
+// 71 % of one demo's non-wallbang gun kills the tick before and at none of its wallbangs; its
+// absence proves nothing).
+// Cached as state/<demo sha256>/bloopers-track.json.gz under the resumability contract: the key
+// covers the demo hash, the parser version and this file's schema; temp file, then rename.
+import { createRequire } from "node:module";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
+import { DEMOPARSER_VERSION, sha256File } from "../parse/clip-facts.ts";
+import { parseDemo, parseDir, parseIsCurrent, type ParsedDemo } from "../parse/demo.ts";
+
+const require = createRequire(import.meta.url);
+
+const SCHEMA = 1;
+export const TRACK_EVERY = 16; // ticks between samples
+/** Values per player per sample in Track.data: X, Y, Z, yaw, pitch, alive (0/1), spottedBy (bit i: players[i] had this player spotted). */
+export const TRACK_STRIDE = 7;
+const MAX_SPOTTERS = 31; // bitmask width; a demo has 10 (a substitute or two more)
+
+export type Track = {
+  schema: number; key: string;
+  every: number;
+  ticks: number[]; // sample ticks, ascending, multiples of `every`
+  players: string[]; // SteamID64s; index = bit in spottedBy
+  names: string[];
+  // data[player][sample * TRACK_STRIDE + k], rounded ints (a dead or absent player: zeros)
+  data: number[][];
+};
+export type Sample = { X: number; Y: number; Z: number; yaw: number; pitch: number; alive: boolean; spottedBy: number };
+
+/** A player's state at sample i (track.players index). */
+export function sampleAt(track: Track, player: number, i: number): Sample {
+  const d = track.data[player], o = i * TRACK_STRIDE;
+  return { X: d[o], Y: d[o + 1], Z: d[o + 2], yaw: d[o + 3], pitch: d[o + 4], alive: d[o + 5] === 1, spottedBy: d[o + 6] };
+}
+
+/** The sample ticks of the match rounds: every `every`-th tick from freeze end to round end. */
+export function trackTicks(p: ParsedDemo, every = TRACK_EVERY): number[] {
+  const out: number[] = [];
+  for (const r of p.rounds) for (let t = Math.ceil(r.freezeEndTick / every) * every; t <= r.endTick; t += every) out.push(t);
+  return [...new Set(out)].sort((a, b) => a - b);
+}
+
+const sid = (v: unknown) => (typeof v === "string" && /^\d{17}$/.test(v) ? v : null);
+
+function extract(demo: string, p: ParsedDemo, key: string): Track {
+  const dp = require("@laihoe/demoparser2");
+  const ticks = trackTicks(p);
+  const index = new Map(ticks.map((t, i) => [t, i]));
+  type Row = { tick: number; steamid: string; name: string; X: number; Y: number; Z: number; yaw: number; pitch: number; is_alive: boolean; approximate_spotted_by: string[] | null };
+  const rows: Row[] = ticks.length ? dp.parseTicks(demo, ["X", "Y", "Z", "yaw", "pitch", "is_alive", "approximate_spotted_by"], ticks, []) : [];
+  const players: string[] = [], names: string[] = [];
+  const slot = new Map<string, number>();
+  for (const r of rows) {
+    const id = sid(r.steamid);
+    if (!id || slot.has(id)) continue;
+    slot.set(id, players.length);
+    players.push(id);
+    names.push(String(r.name ?? ""));
+  }
+  const data = players.map(() => new Array<number>(ticks.length * TRACK_STRIDE).fill(0));
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : 0);
+  for (const r of rows) {
+    const pi = slot.get(r.steamid), i = index.get(r.tick);
+    if (pi === undefined || i === undefined || !r.is_alive) continue;
+    let mask = 0;
+    for (const s of r.approximate_spotted_by ?? []) { const b = slot.get(s); if (b !== undefined && b < MAX_SPOTTERS) mask |= 1 << b; }
+    const o = i * TRACK_STRIDE;
+    const d = data[pi];
+    d[o] = num(r.X); d[o + 1] = num(r.Y); d[o + 2] = num(r.Z); d[o + 3] = num(r.yaw); d[o + 4] = num(r.pitch); d[o + 5] = 1; d[o + 6] = mask >>> 0;
+  }
+  return { schema: SCHEMA, key, every: TRACK_EVERY, ticks, players, names, data };
+}
+
+/**
+ * The demo's parse for bloopers: rounds, deaths, hurts and fires do not depend on the POV, so the
+ * demo's current cached parse whatever its POV, else the given POV (the .env one) when he played in
+ * it, else the first player who did.
+ */
+export async function parseAnyPov(demo: string, pov: string): Promise<ParsedDemo> {
+  const file = path.join(parseDir(await sha256File(demo)), "parse.json");
+  if (existsSync(file)) {
+    try {
+      const cached = JSON.parse(readFileSync(file, "utf8")) as ParsedDemo;
+      if (parseIsCurrent(cached)) return { ...cached, demo: { ...cached.demo, path: demo } };
+    } catch {}
+  }
+  const notIn = (e: unknown) => /POV player .* not found/.test((e as Error).message);
+  try { return await parseDemo(demo, pov); } catch (e) { if (!notIn(e)) throw e; }
+  const dp = require("@laihoe/demoparser2");
+  const players = (dp.parsePlayerInfo(demo) as { steamid: unknown; team_number: number }[])
+    .filter((x) => sid(x.steamid) && (x.team_number === 2 || x.team_number === 3));
+  for (const x of players) {
+    try { return await parseDemo(demo, String(x.steamid)); } catch (e) { if (!notIn(e)) throw e; }
+  }
+  throw new Error("no player of this demo is in its match rounds");
+}
+
+/** The demo's track, from the cache when its key matches, else one parser pass (seconds), then cached. */
+export function sampleTrack(demoPath: string, p: ParsedDemo): Track {
+  const key = `${p.demo.sha256}:demoparser2@${DEMOPARSER_VERSION}:track${SCHEMA}:every${TRACK_EVERY}`;
+  const file = path.join(parseDir(p.demo.sha256), "bloopers-track.json.gz");
+  if (existsSync(file)) {
+    try {
+      const cached = JSON.parse(gunzipSync(readFileSync(file)).toString("utf8")) as Track;
+      if (cached.key === key) return cached;
+    } catch {}
+  }
+  const track = extract(demoPath, p, key);
+  mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`; // unique per writer
+  writeFileSync(tmp, gzipSync(JSON.stringify(track)));
+  renameSync(tmp, file);
+  return track;
+}

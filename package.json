@@ -13,6 +13,7 @@
     "clip": "tsx src/cli/clip.ts",
     "typecheck": "tsc -p .",
     "moments": "tsx src/cli/moments.ts",
+    "bloopers": "tsx src/cli/bloopers.ts",
     "go": "tsx src/cli/go.ts",
     "film": "tsx src/cli/go.ts --film",
     "test": "tsx --test test/*.test.ts",
