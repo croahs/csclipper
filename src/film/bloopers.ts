@@ -17,7 +17,7 @@ import { hasSpotter, sampleAt, type Sample, type Track } from "./track.ts";
 export type BlooperType = "teamkill" | "selfkill" | "spray" | "behind";
 export type Blooper = {
   type: BlooperType; steamid: string; name: string; round: number;
-  tick: number; // the anchor event: the kill, the death, the spray's last shot, the window's start (of a window over 25 s: the span's start)
+  tick: number; // the anchor event: the kill, the death, the spray's last shot, the window's start (which a span cut to 25 s no longer shows)
   startTick: number; endTick: number; // the clip span, clamped like a reel take
   score: number; // 0..100, higher = funnier; comparable across types
   title: string; // "<name> · <map> · R<round> · <what>"
@@ -119,8 +119,9 @@ export function detectBloopers(p: ParsedDemo, track: Track, roster: string[], cf
     return out;
   };
   const out: Blooper[] = [];
-  const add = (r: Round, b: Omit<Blooper, "startTick" | "endTick" | "title" | "name"> & { what: string }, from: number, to: number) => {
-    const span = clampSpan(p, r, b.tick, from, to);
+  // hold: the tick the span must contain when that is not the anchor (a behind window cut to its last 25 s).
+  const add = (r: Round, b: Omit<Blooper, "startTick" | "endTick" | "title" | "name"> & { what: string }, from: number, to: number, hold = b.tick) => {
+    const span = clampSpan(p, r, hold, from, to);
     if (!span) return;
     const name = nameOf(b.steamid);
     const { what, ...rest } = b;
@@ -284,17 +285,18 @@ export function detectBloopers(p: ParsedDemo, track: Track, roster: string[], cf
           + 5 * clamp01((run.length - need) / (2 * need));
         const score = sighted ? raw : Math.min(raw, 35);
         const end = deathSoon ? Math.min(to + S(bc.noKillAfterSeconds), deathSoon.tick + S(2)) : to + S(bc.noKillAfterSeconds);
-        // The span: 3 s before the window, at most 25 s. A longer window keeps its last 25 s, and the
-        // anchor (the window's start) moves to the span's start, or clampSpan would drop it.
+        // The span: 3 s before the window, at most 25 s. A longer window keeps its last 25 s; its anchor
+        // stays the window's start (the id is the event's, whatever the settings cut the span to), and
+        // the span only has to hold its own start.
         const spanFrom = Math.max(from - S(3), end - S(25));
         keep([r, {
-          type: "behind", steamid: id, round: r.n, tick: Math.max(from, spanFrom), score,
+          type: "behind", steamid: id, round: r.n, tick: from, score,
           what: `behind ${n}, no kill`,
           detail: {
             enemies: n, who: who.map(nameOf).join(", "), seconds: Math.round(((to - from) / t) * 10) / 10, shots: fired, dealt, units: Math.round(units),
             died: deathSoon ? (diedToThem ? "to them" : "yes") : "no", spotted: spotted ? "yes" : "no", sighted: sighted ? "yes" : "no",
           },
-        }, spanFrom, end]);
+        }, spanFrom, end, Math.max(from, spanFrom)]);
       }
       for (const a of best.values()) add(...a);
     }

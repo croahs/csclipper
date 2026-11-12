@@ -396,7 +396,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
     // Posts queue behind each other, one at a time, and the launches never wait for them: every
     // capture runs back to back, so CS2 is done early, and the posts catch up afterwards (Peder, 2026-11-02).
     if (toPost.length) {
-      const units = toPost.map((r) => ({ id: r.unit.id, title: r.unit.title, kind: r.kind, pov: r.pov }));
+      const units = toPost.map((r) => ({ id: r.unit.id, title: r.unit.title, kind: r.kind, pov: r.pov, blooper: r.unit.o.blooper }));
       posting = posting.then(() => postWorker(file, units)).then((done) => {
         let finalHere = allFinal;
         for (const r of toPost) {
@@ -435,14 +435,16 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
  * process stays free to drive the next launch. Resolves with the worker's results; a worker
  * that dies yields failures, never a stuck batch.
  */
-function postWorker(demo: string, units: { id: string; title: string; kind: UnitKind; pov?: string }[]): Promise<JobResult[]> {
+function postWorker(demo: string, units: { id: string; title: string; kind: UnitKind; pov?: string; blooper?: BlooperClip }[]): Promise<JobResult[]> {
   const dir = path.join(STATE_DIR, "post-jobs");
   mkdirSync(dir, { recursive: true });
   const stamp = `${Date.now()}-${process.pid}`;
   const jobFile = path.join(dir, `${stamp}.job.json`), resultFile = path.join(dir, `${stamp}.result.json`);
   // Each highlight and blooper names its POV by povKey, never by SteamID (the worker resolves it through the roster).
+  // A blooper goes as the clip that was captured (id, span, title, score; no SteamID in it): detected again
+  // under changed settings its span, and so its render key, could differ from the capture's.
   const byPov = (kind: UnitKind) => units.filter((u) => u.kind === kind).map((u) => ({ id: u.id, pov: u.pov }));
-  writeFileSync(jobFile, JSON.stringify({ demo, highlights: byPov("highlight"), bloopers: byPov("blooper"), reels: units.filter((u) => u.kind === "deaths" || u.kind === "kills").map((u) => u.kind) }));
+  writeFileSync(jobFile, JSON.stringify({ demo, highlights: byPov("highlight"), bloopers: units.filter((u) => u.kind === "blooper").map((u) => ({ pov: u.pov, clip: u.blooper })), reels: units.filter((u) => u.kind === "deaths" || u.kind === "kills").map((u) => u.kind) }));
   const fail = (reason: string): JobResult[] => units.map((u) => ({ status: "failed", id: u.id, title: u.title, reasons: [reason] }));
   return new Promise((resolve) => {
     const child = spawn(process.execPath, ["--import", "tsx", path.join(import.meta.dirname, "..", "cli", "post-worker.ts"), jobFile, resultFile], { stdio: "inherit", windowsHide: true });

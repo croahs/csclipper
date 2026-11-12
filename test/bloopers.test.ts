@@ -143,12 +143,12 @@ test("behind: minSeconds is a tick span (4 samples cover 0.75 s, 5 cover 1 s), a
   assert.equal(only(p, "behind", track(three, [[A1, B1]]))[0]?.title, "anna · de_test · R1 · behind 2, no kill");
 });
 
-test("behind: a window longer than the 25 s cap keeps its last 25 s, anchored at the span's start", () => {
+test("behind: a window longer than the 25 s cap keeps its last 25 s and the window's start as its anchor", () => {
   const to = 12008 + 30 * 64;
   const [b] = only(demo({ fires: fires(A1, 12050, 6, 10, "weapon_glock") }), "behind", track(backsBetween(2, 12008, to), [[A1, B1]]));
   assert.ok(b, "kept, not dropped by clampSpan");
   assert.equal(b.endTick, to + 6 * 64, "noKillAfterSeconds after the window");
   assert.equal(b.startTick, b.endTick - 25 * 64);
-  assert.equal(b.tick, b.startTick);
+  assert.ok(b.tick < b.startTick && b.tick >= 12008 && b.tick < 12008 + 16, "the anchor is the window's first sample, before the cut span");
   assert.equal(b.detail.seconds, 30);
 });

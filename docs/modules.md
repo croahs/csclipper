@@ -122,8 +122,8 @@ player, round and kind, the best; scores 0-100, comparable across kinds
   after. 25, plus 40 for 4+ enemies / 28 for 3, plus 12 when he died
   within those 6 s, plus 10 × shots / 20, plus 10 × closeness, plus up
   to 5 for a longer window. Span from 3 s before to 6 s after (2 s after
-  his death), at most 25 s: a longer window keeps its last 25 s and its
-  anchor moves to the span's start.
+  his death), at most 25 s: a longer window keeps its last 25 s, and its
+  anchor stays the window's start, so its id does not move with the cut.
 Every threshold is in `BLOOPER_DEFAULTS`, overridable in `config.json` →
 `film.bloopers` (`minScore` 50, `spray`, `behind`). Spans are clamped
 like reel takes (round start, the demo's playable ticks, short of the
@@ -148,8 +148,10 @@ so a threshold or span change never re-makes one the library holds
 carries the span, so a capture of another span is never reused. The
 entry: `kind: "blooper"`, `blooper: { type, score, detail }`, the
 blooper's title, `player` for a friend, no `moment`. The post worker
-gets `bloopers: [{ id, pov: povKey }]`, re-detects from the cached
-parse and track, and finds each by id. A film pass is final for a demo
+gets `bloopers: [{ pov: povKey, clip }]`, the clip as the batch
+captured it (id, span, title, score), and posts that without detecting
+again: under changed thresholds a re-detected span, and with it the
+render key, could miss the capture. A film pass is final for a demo
 only when its bloopers are. `pnpm clip --rerender <no>` re-renders one
 over its own span. `pnpm bloopers` prints the table for the roster,
 `--ids`, or `--all` (every player, parsed through any of them);

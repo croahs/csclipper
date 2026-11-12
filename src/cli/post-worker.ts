@@ -4,19 +4,18 @@
 // never takes the clip lock (pnpm go holds it for its launches) and never writes the ledger:
 // it writes its results to a file and pnpm go records them.
 //   tsx src/cli/post-worker.ts <job.json> <result.json>
-//   job.json: { demo, highlights: [{ id, pov: povKey }], bloopers: [{ id, pov: povKey }], reels: ["deaths" | "kills"] }
+//   job.json: { demo, highlights: [{ id, pov: povKey }], bloopers: [{ pov: povKey, clip }], reels: ["deaths" | "kills"] }
 // A highlight's or blooper's POV comes as its povKey (no SteamID in the file) and is resolved through the
-// roster (STEAM_ID64 and FILM_STEAM_ID64S); a key no longer in it fails that unit. A blooper is found
-// again by its id among the demo's bloopers, re-detected from the cached parse and track.
+// roster (STEAM_ID64 and FILM_STEAM_ID64S); a key no longer in it fails that unit. A blooper comes
+// as the clip the batch captured (its id, span, title and score), so its render key is the capture's.
 import { readFileSync, writeFileSync } from "node:fs";
-import { loadIdentities, loadRoster, povKey, povKeyFor } from "../config.ts";
+import { loadIdentities, loadRoster, povKey } from "../config.ts";
 import { buildMoments } from "../clip/moments.ts";
-import { blooperClip, detectBloopers, loadBlooperSettings } from "../film/bloopers.ts";
-import { parseAnyPov, sampleTrack } from "../film/track.ts";
+import type { BlooperClip } from "../film/bloopers.ts";
 import { highlightUnit, prepareJob, runJobs, type JobResult, type RenderUnit } from "../queue/job.ts";
 import { prepareReel, type ReelKind } from "../reel/index.ts";
 
-type PostJob = { demo: string; highlights: { id: string; pov: string }[]; bloopers?: { id: string; pov: string }[]; reels: ReelKind[] };
+type PostJob = { demo: string; highlights: { id: string; pov: string }[]; bloopers?: { pov: string; clip: BlooperClip }[]; reels: ReelKind[] };
 
 async function main() {
   const [jobFile, resultFile] = process.argv.slice(2);
@@ -42,31 +41,12 @@ async function main() {
       units.push(highlightUnit(await prepareJob({ demo: job.demo, spec, ...o, ...(pov !== mainPov ? { pov } : {}) })));
     }
   }
-  // Bloopers: their players resolved, one POV-independent parse and the cached track, detection
-  // without the score bar (an id names the blooper; the batch already applied the bar), each found by id.
-  const wanted = job.bloopers ?? [];
-  if (wanted.length) {
-    const povs = new Map<string, string>();
-    for (const b of wanted) {
-      const pov = resolve(b.pov);
-      if (pov) povs.set(b.pov, pov);
-      else results.push({ status: "failed", id: b.id, title: b.id, reasons: [`player ${b.pov} is no longer in the roster (.env STEAM_ID64 / FILM_STEAM_ID64S); not posted`] });
-    }
-    const mine = wanted.filter((b) => povs.has(b.pov));
-    try {
-      if (mine.length) {
-        const p = await parseAnyPov(job.demo, [...povs.values()], mainPov);
-        const found = detectBloopers(p, sampleTrack(job.demo, p), [...povs.values()], loadBlooperSettings()).map((b) => blooperClip(b, p.demo.sha256, povKeyFor(b.steamid, mainPov)));
-        for (const { id, pov: key } of mine) {
-          const blooper = found.find((b) => b.id === id);
-          if (!blooper) { results.push({ status: "failed", id, title: id, reasons: ["blooper no longer among the demo's bloopers"] }); continue; }
-          const pov = povs.get(key)!;
-          units.push(highlightUnit(await prepareJob({ demo: job.demo, blooper, ...o, ...(pov !== mainPov ? { pov } : {}) })));
-        }
-      }
-    } catch (e) {
-      for (const { id } of mine) if (!results.some((r) => r.id === id) && !units.some((u) => u.id === id)) results.push({ status: "failed", id, title: id, reasons: [`bloopers: ${(e as Error).message}`] });
-    }
+  // Bloopers: each player resolved, the captured clip posted as it was selected (no detection here).
+  for (const { pov: key, clip } of job.bloopers ?? []) {
+    const pov = resolve(key);
+    if (!pov) { results.push({ status: "failed", id: clip.id, title: clip.title, reasons: [`player ${key} is no longer in the roster (.env STEAM_ID64 / FILM_STEAM_ID64S); not posted`] }); continue; }
+    try { units.push(highlightUnit(await prepareJob({ demo: job.demo, blooper: clip, ...o, ...(pov !== mainPov ? { pov } : {}) }))); }
+    catch (e) { results.push({ status: "failed", id: clip.id, title: clip.title, reasons: [`blooper: ${(e as Error).message}`] }); }
   }
   for (const kind of job.reels) {
     const u = await prepareReel(job.demo, kind, o);
