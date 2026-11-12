@@ -7,7 +7,7 @@ export const SR = 22050;
 export const HOP = 64;
 const WIN = 256;
 /** Energy is kept at every ENERGY_STEP-th frame (46 ms) for the per-bar loudness. */
-const ENERGY_STEP = 16;
+export const ENERGY_STEP = 16;
 /**
  * Where an onset peaks in the envelope relative to the sound's start: the trailing window sees the
  * attack one hop late on average and the 150 Hz low-pass delays the kick by about 3 ms. Measured
@@ -286,15 +286,32 @@ export function acceptRefit(before: [number | null, number | null], after: [numb
   return Math.max(...f) < Math.max(...b) && f.every((x, i) => x <= Math.max(b[i], DRIFT_TOLERANCE_MS));
 }
 
-/** Where the video starts in the track, and the grid used for the `seconds` it needs. */
+/** Fewer whole bars than this after the first downbeat: the track is refused, not looped. */
+export const MIN_TRACK_BARS = 8;
+
+/**
+ * Whether a refitted section still fits: it must end inside the track (a refit never loops).
+ * A slower refitted tempo makes the same number of bars longer and can push the section's end
+ * past the file's.
+ */
+export const refitFits = (start: number, bars: number, bar: number, trackSeconds: number) =>
+  start >= -1e-9 && start + bars * bar <= trackSeconds + 1e-9;
+
+/**
+ * Where the video starts in the track, and the grid used for the `seconds` it needs. Throws for
+ * a track with fewer than MIN_TRACK_BARS whole bars after its first downbeat.
+ */
 export function planTrack(env: Envelope, a: Analysis, seconds: number): MusicPlan {
   const g: Grid = { bpm: a.bpm, phase: a.phase };
   const beat = 60 / g.bpm, bar = 4 * beat;
   const firstDown = wrap(g.phase + a.downbeat * beat, bar);
   const need = Math.max(1, Math.ceil(seconds / bar - 1e-9));
   const db = barEnergies(env, firstDown, bar);
+  if (db.length < MIN_TRACK_BARS)
+    throw new Error(`the track has ${db.length} whole bar${db.length === 1 ? "" : "s"} at ${(60 / g.bpm).toFixed(3)} s a beat after its first downbeat; at least ${MIN_TRACK_BARS} are needed to loop it`);
   if (db.length < need) {
-    const loop = Math.max(1, db.length) * bar;
+    // Too short even from its first bar: loop its whole bars, from the first downbeat.
+    const loop = db.length * bar;
     return { bpm: g.bpm, phase: g.phase, beatSeconds: beat, start: firstDown, bars: need, loopSeconds: loop, refit: false, refitRejected: false, driftMs: { before: [null, null], refitted: null } };
   }
   const start = firstDown + chooseStartBar(db, need) * bar;
@@ -317,6 +334,6 @@ export function planTrack(env: Envelope, a: Analysis, seconds: number): MusicPla
   while (fStart < 0) fStart += fBar;
   while (fStart + need * fBar > env.seconds && fStart - fBar >= 0) fStart -= fBar;
   const after = ends(fitted, fStart, fBar);
-  if (!acceptRefit(before, after)) return { ...keep, refitRejected: true, driftMs: { before, refitted: after } };
+  if (!refitFits(fStart, need, fBar, env.seconds) || !acceptRefit(before, after)) return { ...keep, refitRejected: true, driftMs: { before, refitted: after } };
   return { bpm: fitted.bpm, phase: fitted.phase, beatSeconds: fBeat, start: fStart, bars: need, loopSeconds: null, refit: true, refitRejected: false, driftMs: { before, refitted: after } };
 }

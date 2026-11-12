@@ -343,7 +343,8 @@ FFmpeg only:
     kills whose shots touch or overlap merge into one shot (a burst
     plays in real time) unless a fast-forward stretch lies between
     them; shots are clamped to the clip and never start or end inside
-    a segment whose speed is not 1 (moved to its edge).
+    a segment whose speed is not 1 (moved to its edge), and shots whose
+    extents overlap after those moves become one, each kill once.
   - The grid is the music's (revised 2026-11-11 after the first W46
     render: shots of about 2 s with a kill every three half-bars read
     as a steady trot, and half the kills sat on beat 3, where two-step
@@ -367,10 +368,14 @@ FFmpeg only:
     ends, into a fast-forward stretch, or into the neighbouring shot
     of the same clip. Hard cuts only.
   - Open and close: a title card (`Best of week 46`, the dates under
-    it) of exactly one bar, the music starting with it, so the first
-    shot cuts in on a bar line. After the last shot's natural end the
-    picture holds to the next bar line, then picture and music fade
-    out over one bar. Each clip's first shot carries `#257 · 4k USP-S`
+    it) of one bar, the music starting with it, so the first shot cuts
+    in on a bar line; when that clip has too little footage before its
+    first kill to reach back to the bar line, the card stays up longer
+    instead (the kill still lands on its anchor). After the last
+    shot's natural end its footage keeps playing (not frozen) to the
+    next bar line and on through the closing fade, picture and music
+    fading out over one bar; a frame is held only where the clip runs
+    out of footage. Each clip's first shot carries `#257 · 4k USP-S`
     (number and title less map and round) bottom left for 1.2 s.
   - Length: `montage.maxSeconds` (60) caps the video (`--seconds` for
     one run); over it, whole clips are dropped from the low-score end
@@ -406,18 +411,26 @@ FFmpeg only:
     the most low-band onset. Start: the bar line opening the loudest
     stretch of the needed bars (a bonus for a jump in loudness into
     it: the drop), never so late that the track ends first; a track
-    too short even from its first bar loops on a bar line. Drift: the
+    too short even from its first bar loops its whole bars from the
+    first downbeat; one with fewer than 8 whole bars after its first
+    downbeat is refused (exit 1), not looped. Drift: the
     first and last 16 beats of the used section are folded alone (peak
     looked for within ±60 ms of the grid, so a breakdown with off-beat
     hats does not read as a half-beat error); over 10 ms off at either
     end, the tempo and phase are refitted on the used section, and the
     refit is kept only when both ends show a clear peak with both
     grids, the worse end improves and neither end gets worse past
-    10 ms; otherwise the whole-file grid stays (a refit on the sparse
+    10 ms, and only when the refitted section still ends inside the
+    track (a slower refit lengthens the same bars); otherwise the
+    whole-file grid stays (a refit on the sparse
     intro of Smash It measured -41 ms against FFmpeg's low band, the
     whole-file grid -17 ms).
     Cached as `music/<file>.beats.json`, keyed by the file's size and
-    mtime, the prior and `ANALYSIS_VERSION`.
+    mtime, the prior and `ANALYSIS_VERSION`; a cache with a matching key
+    but unsound contents (a BPM outside 40–240, a non-finite phase, a
+    bar phase outside 0–3, arrays of the wrong length) is a miss and
+    analysed again. `--dry-run` analyses in memory and writes nothing,
+    not even the cache.
   - Sound: each shot's game audio at full level with 20 ms fades at
     both ends (no clicks at cuts), silent under the card and the
     closing fade; the music at `montage.musicGainDb` (-7, up front),

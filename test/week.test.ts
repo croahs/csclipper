@@ -143,6 +143,14 @@ test("buildShots: single kills, a merged burst, clamping at both ends and at a f
   // Synthetic: a kill inside the stretch plays the whole stretch, never cut inside it.
   const inside = buildShots([tickSeconds(SEGS, 2152)], 9, ff, RULES)[0];
   assert.deepEqual([inside.from, inside.to], [2, 6]);
+  // Two kills inside one stretch are both widened to it: one shot, each kill once, never two
+  // shots over the same footage.
+  const both = buildShots([3, 5], 9, [[2, 6]], RULES);
+  assert.deepEqual(both.map((s) => [s.from, s.to, s.kills]), [[2, 6, [3, 5]]]);
+  assert.ok(both[0].leadLimit === 0 && both[0].tailLimit === 9);
+  // A kill inside the stretch and one just after it: the first is widened to [2, 6], the second's
+  // lead-in starts at 6; they touch, not overlap, so they stay two shots.
+  assert.deepEqual(buildShots([4, 6.5], 9, [[2, 6]], RULES).map((s) => [s.from, s.to]), [[2, 6], [6, 7]]);
   // Two kills on either side of the stretch never merge, even when close in clip seconds.
   assert.equal(buildShots([1.9, 6.1], 9, ff, RULES).length, 2);
   // Neighbouring shots of the same clip limit each other's stretching.

@@ -290,7 +290,8 @@ export function planWeek(a: WeekArgs, cfg: MontageSettings = loadMontage()): Wee
     trackPath = pickTrack(a.music, cfg.music);
     if (!trackPath) throw new WeekRefusal("no music track: music/ is empty. pnpm music downloads the default tracks (or use --music <file>, or --no-music)");
     const entry = manifestEntry(trackPath, tracks);
-    const { analysis, env, cached } = trackAnalysis(trackPath, entry?.bpm ?? null);
+    // A dry run analyses in memory only: it writes nothing, not even the beats cache.
+    const { analysis, env, cached } = trackAnalysis(trackPath, entry?.bpm ?? null, !a.dryRun);
     const gridOf = (bpm: number) => { const beat = 60 / bpm, n = unitBeats(beat); return { grid: { unit: n * beat, bar: 4 * beat }, n }; };
     fit = fitCap(usable.map((u) => u.cut), gridOf(analysis.bpm).grid, maxSeconds);
     let mp = planTrack(env, analysis, fit.timeline.total);

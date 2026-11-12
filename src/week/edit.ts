@@ -50,7 +50,7 @@ export function buildShots(kills: number[], clipSeconds: number, fast: [number, 
     if (g && k - r.preSeconds <= last! + r.postSeconds && !fastBetween) g.push(k);
     else groups.push([k]);
   }
-  const shots = groups.map((g) => {
+  const raw = groups.map((g) => {
     const first = g[0], last = g[g.length - 1];
     let from = Math.max(0, first - r.preSeconds), to = Math.min(clipSeconds, last + r.postSeconds);
     for (const [a, b] of fast) {
@@ -61,6 +61,18 @@ export function buildShots(kills: number[], clipSeconds: number, fast: [number, 
     }
     return { from, to, kills: g, leadLimit: 0, tailLimit: clipSeconds };
   });
+  // Moving ends to a fast-forward boundary can make two shots overlap (kills on either side of,
+  // or inside, one stretch both widened to it): such shots become one, each kill kept once, so
+  // no frame is planned twice.
+  const shots: Shot[] = [];
+  for (const s of raw) {
+    const p = shots[shots.length - 1];
+    if (p && s.from < p.to - 1e-9) {
+      p.from = Math.min(p.from, s.from);
+      p.to = Math.max(p.to, s.to);
+      p.kills = [...new Set([...p.kills, ...s.kills])].sort((a, b) => a - b);
+    } else shots.push(s);
+  }
   for (const [i, s] of shots.entries()) {
     s.leadLimit = Math.max(0, i > 0 ? shots[i - 1].to : 0, ...fast.filter(([, b]) => b <= s.from).map(([, b]) => b));
     s.tailLimit = Math.min(clipSeconds, i < shots.length - 1 ? shots[i + 1].from : clipSeconds, ...fast.filter(([a]) => a >= s.to).map(([a]) => a));
@@ -102,8 +114,16 @@ const KEEP_AFTER_LAST_KILL = 0.25;
  * kill + 0.25 s. Failing all three, footage is never played twice: when the neighbouring shot of
  * the same clip is what stopped the fill, the two merge into one continuous shot (the later kills
  * off the grid, like a burst); when the clip's end or a fast-forward stretch stopped it, the
- * previous shot holds its last frame. After the last shot's natural end the video holds to the
+ * previous shot holds its last frame. After the last shot's natural end the video runs on to the
  * next bar line, then fades for a bar.
+ *
+ * Two behaviours that are intended, not bugs:
+ * - "Hold to the bar line" means the last shot's footage keeps PLAYING to that bar line and on
+ *   through the closing fade; nothing is frozen there. A frame is held only when the clip itself
+ *   runs out of footage first (hold > 0).
+ * - When the first shot's clip has too little footage before its first kill to reach back to the
+ *   bar line after the card, the title card stays up longer than one bar (card > bar); the first
+ *   kill still lands on an anchor, the cut into it just comes later than the bar line.
  */
 export function layout(clips: ClipCut[], grid: Grid): Timeline {
   const { unit, bar } = grid;
@@ -118,7 +138,8 @@ export function layout(clips: ClipCut[], grid: Grid): Timeline {
     if (i === 0) {
       const anchor = up(bar + lead);
       let from = k0 - (anchor - bar), cut = bar;
-      if (from < s.leadLimit - EPS) { from = s.leadLimit; cut = anchor - (k0 - from); } // the card holds longer
+      // Not enough footage before the kill: the card stays up longer, the kill stays on its anchor.
+      if (from < s.leadLimit - EPS) { from = s.leadLimit; cut = anchor - (k0 - from); }
       card = cut;
       placed.push({ clip, from, to: s.to, kills: [...s.kills], anchor, cut, end: 0, hold: 0, merged: 0, natTo: s.to, tailLimit: s.tailLimit });
       continue;
@@ -156,6 +177,7 @@ export function layout(clips: ClipCut[], grid: Grid): Timeline {
   const naturalEnd = last.anchor + (last.natTo - last.kills[0]);
   const closeAt = Math.ceil(naturalEnd / bar - EPS) * bar;
   const total = closeAt + bar;
+  // The last shot keeps playing footage through the hold and the fade; only past its tail limit is a frame held.
   last.to = last.kills[0] + (total - last.anchor);
   last.hold = Math.max(0, last.to - last.tailLimit);
   for (const [i, p] of placed.entries()) p.end = i + 1 < placed.length ? placed[i + 1].cut : total;

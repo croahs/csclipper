@@ -2,7 +2,11 @@
 // Run: pnpm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { acceptRefit, analyse, chooseStartBar, envelope, planTrack, SR, unitBeats, wrapSigned } from "../src/week/beats.ts";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { acceptRefit, analyse, chooseStartBar, envelope, planTrack, refitFits, SR, unitBeats, wrapSigned } from "../src/week/beats.ts";
+import { cacheContents, readCache } from "../src/week/music.ts";
 
 /** Deterministic noise, so a failing run can be repeated exactly. */
 function rng(seed: number) {
@@ -100,4 +104,44 @@ test("a track too short for the video loops on a bar line", () => {
   const bars = m.loopSeconds === null ? NaN : m.loopSeconds / (4 * m.beatSeconds);
   assert.ok(Math.abs(bars - Math.round(bars)) < 1e-6 && bars >= 8, `loop ${m.loopSeconds} s`);
   assert.ok(Math.abs(wrapSigned(m.start - 0.1, 0.5)) < 0.015);
+});
+
+test("a track with fewer than 8 whole bars after its first downbeat is refused, not looped", () => {
+  const env = envelope(clicks(grid(120, 0.1, 12), 12)); // 2 s bars: 5 whole bars
+  assert.throws(() => planTrack(env, analyse(env, 120), 60), /5 whole bars.*at least 8/);
+});
+
+test("refitFits: a refitted section must still end inside the track", () => {
+  assert.equal(refitFits(100, 30, 1.371, 141.2), true); // ends at 141.13
+  assert.equal(refitFits(100, 30, 1.38, 141.2), false, "a slower refit pushes the same 30 bars past the end");
+  assert.equal(refitFits(-0.01, 4, 1, 10), false);
+});
+
+test("readCache: a matching key with sound contents is a hit; bpm -120, short arrays or another file are misses", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "croclipper-test-"));
+  try {
+    const env = envelope(clicks(grid(175, 0.1, 20), 20));
+    const analysis = analyse(env, 175);
+    const st = { size: 1234, mtimeMs: 1_700_000_000_000 };
+    const f = path.join(dir, "t.mp3.beats.json");
+    writeFileSync(f, cacheContents(st, 175, analysis, env));
+    const hit = readCache(f, st, 175);
+    assert.ok(hit && hit.analysis.bpm === analysis.bpm && hit.env.onset.length === env.onset.length);
+    assert.equal(readCache(f, { ...st, size: 1235 }, 175), null, "another file");
+    assert.equal(readCache(f, st, null), null, "another prior");
+    writeFileSync(f, cacheContents(st, 175, { ...analysis, bpm: -120 }, env));
+    assert.equal(readCache(f, st, 175), null, "bpm -120 is never trusted");
+    writeFileSync(f, cacheContents(st, 175, { ...analysis, phase: NaN }, env));
+    assert.equal(readCache(f, st, 175), null, "phase not finite");
+    writeFileSync(f, cacheContents(st, 175, { ...analysis, downbeat: 7 }, env));
+    assert.equal(readCache(f, st, 175), null, "bar phase out of range");
+    writeFileSync(f, cacheContents(st, 175, analysis, { ...env, onset: env.onset.subarray(0, 100) }));
+    assert.equal(readCache(f, st, 175), null, "arrays of the wrong length");
+    const partial = JSON.parse(cacheContents(st, 175, analysis, env));
+    delete partial.env.low;
+    writeFileSync(f, JSON.stringify(partial));
+    assert.equal(readCache(f, st, 175), null, "something missing");
+    writeFileSync(f, "{not json");
+    assert.equal(readCache(f, st, 175), null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import path from "node:path";
 import { ROOT } from "../config.ts";
 import { postFfmpeg } from "../post/ffmpeg.ts";
-import { analyse, ANALYSIS_VERSION, envelope, SR, type Analysis, type Envelope } from "./beats.ts";
+import { analyse, ANALYSIS_VERSION, ENERGY_STEP, envelope, HOP, SR, type Analysis, type Envelope } from "./beats.ts";
 
 export const MUSIC_DIR = path.join(ROOT, "music");
 export const MANIFEST = path.join(ROOT, "music.json");
@@ -104,23 +104,50 @@ type Cached = { version: number; bytes: number; mtimeMs: number; prior: number |
 const b64 = (a: Float32Array) => Buffer.from(a.buffer, a.byteOffset, a.byteLength).toString("base64");
 const unb64 = (s: string) => { const b = Buffer.from(s, "base64"); const u = new Uint8Array(b.length); u.set(b); return new Float32Array(u.buffer); };
 
+const finite = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
+
 /**
- * The beat analysis of a track and its envelope, from music/<file>.beats.json when that was made
- * from the same file (size and mtime), the same prior and the same ANALYSIS_VERSION; else decoded,
- * analysed and written there (temp, then rename).
+ * A cache file's analysis and envelope when its key matches (file size and mtime, prior,
+ * ANALYSIS_VERSION) and its contents are sound: BPM a finite number in 40–240, phase, seconds and
+ * the estimate finite, the bar phase 0–3, the envelope at this module's rate and hop with arrays of
+ * the length its seconds imply. Anything else (missing, unparseable, stale or invalid) is null: a
+ * cache miss, analysed again, never trusted.
  */
-export function trackAnalysis(file: string, prior: number | null): { analysis: Analysis; env: Envelope; cached: boolean } {
+export function readCache(cacheFile: string, st: { size: number; mtimeMs: number }, prior: number | null): { analysis: Analysis; env: Envelope } | null {
+  let c: Cached;
+  try { c = JSON.parse(readFileSync(cacheFile, "utf8")) as Cached; } catch { return null; }
+  if (!c || c.version !== ANALYSIS_VERSION || c.bytes !== st.size || !finite(c.mtimeMs) || Math.round(c.mtimeMs) !== Math.round(st.mtimeMs) || c.prior !== prior) return null;
+  const a = c.analysis, e = c.env;
+  if (!a || !e || a.version !== ANALYSIS_VERSION || !finite(a.bpm) || a.bpm < 40 || a.bpm > 240 || !finite(a.phase) || a.phase < 0 || a.phase >= 60 / a.bpm
+    || !Number.isInteger(a.downbeat) || a.downbeat < 0 || a.downbeat > 3 || !finite(a.estimatedBpm) || !finite(a.seconds) || a.seconds <= 0 || a.prior !== prior) return null;
+  if (e.sr !== SR || e.hop !== HOP || !finite(e.seconds) || e.seconds !== a.seconds || [e.onset, e.low, e.energy].some((x) => typeof x !== "string")) return null;
+  let env: Envelope;
+  try { env = { sr: e.sr, hop: e.hop, seconds: e.seconds, onset: unb64(e.onset), low: unb64(e.low), energy: unb64(e.energy) }; } catch { return null; }
+  const frames = Math.floor((e.seconds * SR) / HOP);
+  if (Math.abs(env.onset.length - frames) > 1 || env.low.length !== env.onset.length || env.energy.length !== Math.ceil(env.onset.length / ENERGY_STEP)) return null;
+  if (!env.onset.every(Number.isFinite) || !env.low.every(Number.isFinite) || !env.energy.every(Number.isFinite)) return null;
+  return { analysis: a, env };
+}
+
+/**
+ * The beat analysis of a track and its envelope, from music/<file>.beats.json when readCache
+ * accepts it; else decoded and analysed, and (unless `write` is false: a dry run writes nothing)
+ * written there, temp then rename.
+ */
+export function trackAnalysis(file: string, prior: number | null, write = true): { analysis: Analysis; env: Envelope; cached: boolean } {
   const st = statSync(file);
   const cacheFile = `${file}.beats.json`;
-  try {
-    const c = JSON.parse(readFileSync(cacheFile, "utf8")) as Cached;
-    if (c.version === ANALYSIS_VERSION && c.bytes === st.size && Math.round(c.mtimeMs) === Math.round(st.mtimeMs) && c.prior === prior)
-      return { analysis: c.analysis, env: { sr: c.env.sr, hop: c.env.hop, seconds: c.env.seconds, onset: unb64(c.env.onset), low: unb64(c.env.low), energy: unb64(c.env.energy) }, cached: true };
-  } catch { /* none or unreadable: analyse */ }
+  const hit = readCache(cacheFile, st, prior);
+  if (hit) return { ...hit, cached: true };
   const env = envelope(decodeMono(file));
   const analysis = analyse(env, prior);
+  if (!write) return { analysis, env, cached: false };
   const c: Cached = { version: ANALYSIS_VERSION, bytes: st.size, mtimeMs: st.mtimeMs, prior, analysis, env: { sr: env.sr, hop: env.hop, seconds: env.seconds, onset: b64(env.onset), low: b64(env.low), energy: b64(env.energy) } };
   const tmp = `${cacheFile}.${process.pid}.tmp`;
   try { writeFileSync(tmp, JSON.stringify(c)); renameSync(tmp, cacheFile); } catch { /* a cache that cannot be written costs only time */ } finally { rmSync(tmp, { force: true }); }
   return { analysis, env, cached: false };
 }
+
+/** The cache's file contents for an analysis (the tests build valid and broken caches with it). */
+export const cacheContents = (st: { size: number; mtimeMs: number }, prior: number | null, analysis: Analysis, env: Envelope): string =>
+  JSON.stringify({ version: ANALYSIS_VERSION, bytes: st.size, mtimeMs: st.mtimeMs, prior, analysis, env: { sr: env.sr, hop: env.hop, seconds: env.seconds, onset: b64(env.onset), low: b64(env.low), energy: b64(env.energy) } } satisfies Cached);

@@ -170,7 +170,11 @@ page. The modules: `index.ts` (ISO weeks, selection, plan, key, render),
 layout on the grid, frames, the cap; pure), `beats.ts` (envelope, tempo,
 phase, bar phase, start, drift; pure over PCM), `music.ts` (the
 `music.json` manifest, sha256 check and download, track choice, decode
-and the `music/<file>.beats.json` cache). Tested in `test/week.test.ts`
+and the `music/<file>.beats.json` cache, validated on read: an unsound
+one is a miss; `--dry-run` writes nothing, not even the cache). A
+track with fewer than 8 whole bars is refused (exit 1); the last shot's
+footage plays on through the hold to the bar line and the fade (a frame
+is held only where a clip runs out). Tested in `test/week.test.ts`
 and `test/beats.test.ts` (click tracks at 175, 138 and 100 BPM generated
 as PCM, accents, a 1 % drift; no files). The render: the card and each
 shot to a lossless intermediate (x264 `-qp 0` + PCM in NUT, input seek
