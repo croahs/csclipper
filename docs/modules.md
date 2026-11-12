@@ -28,7 +28,8 @@ pnpm vertical <no> [--shift <percent>]
 pnpm cut <no> <from> <to>      (seconds as the clip plays: 4.5 or 0:04.5)
 pnpm fav <no>...               (star clips; pnpm's own star / unstar star npm packages)
 pnpm unfav <no>...
-pnpm week [<yyyy-Www>] [--top <n>] [--music <file>] [--no-music] [--dry-run] [--json]
+pnpm week [<yyyy-Www>] [--top <n>] [--seconds <n>] [--music <file>] [--no-music] [--dry-run] [--json]
+pnpm music [--check]           (the default tracks of music.json into music/, sha256-checked)
 pnpm trash --empty
 pnpm tidy
 pnpm unsettle <demo sha256 prefix | clip no>...
@@ -154,30 +155,54 @@ names for grenade and fire kills labelled: `hegrenade` "HE grenade",
 per clip in the inlined data; the page only filters and counts, live, so
 a delete in place updates the counts. Tested in `test/stars.test.ts`.
 
-**Best of the week** (`src/week/`, `src/cli/week.ts`; PLAN.md §6 has
-the rules). `pnpm week [<yyyy-Www>]` writes
-`library/montage/<yyyy>-W<ww>.mp4` from the week's top highlights
-(`config.json` → `montage.top`, 8; `--top` for one run), best last;
-`--dry-run` prints the pick, the skips and the planned length and
-writes nothing. A clip's week comes from `src/library/match-date.ts`,
-the same rule `page.ts` inlines into the page, so a clip sits in the
-week of the date the page shows. One FFmpeg run: every clip and the
-music go into one `filter_complex` (`-/filter_complex` from a file in
-a temp dir, with the overlay text files), `xfade`/`acrossfade` chained
-at the running length, the music input `-stream_loop -1` and cut by
-`atrim`. Selection, ISO weeks, the key, the graph's offsets and the
-planned length are pure and tested in `test/week.test.ts`. Reuse is the
-share rule: the key in the file's `comment` tag, nothing in
-`index.json`. Exit 2: fewer than 2 clips to show. Measured 2026-11-10
-on 2026-W44 (8 clips, 1920×1080@60, 248.8 s): 301 s to encode, 719.6
-MB (about 24 Mb/s: CRF 18 on 60 fps CS2 footage is large; it is a
-master to keep, not to upload, `pnpm share` limits do not apply);
-with a 60 s test track looped to length, 275 s and 720.1 MB.
-FFmpeg held about 2.1 GB while encoding. The music sits at about -40
-dB RMS where the game is silent (the track -25.9 dB RMS, -14 dB gain)
-and adds nothing measurable in a loud second (-19.11 vs -19.13 dB);
-the peak is -5.0 dB with music and -4.6 dB without. A second run
-with nothing changed reuses the file in about 6 s.
+**Best of the week** (`src/week/`, `src/cli/week.ts`, `src/cli/music.ts`;
+PLAN.md §6 has the rules). `pnpm week [<yyyy-Www>]` writes
+`library/montage/<yyyy>-W<ww>.mp4`, a fragmovie: the week's top
+highlights (`config.json` → `montage.top`, 10; `--top` for one run) cut
+to the shots around their kills, every shot's first kill on the beat of
+the track, capped at `montage.maxSeconds` (60; `--seconds`). `--dry-run`
+prints the plan (track, BPM, start offset, grid unit, and per shot the
+clip, in/out in the clip, cut in/out and anchor in the video, kills)
+and writes nothing; `--json` the same as one line. A clip's week comes
+from `src/library/match-date.ts`, the rule `page.ts` inlines into the
+page. The modules: `index.ts` (ISO weeks, selection, plan, key, render),
+`edit.ts` (tick → clip seconds through `render.segments`, shots, the
+layout on the grid, frames, the cap; pure), `beats.ts` (envelope, tempo,
+phase, bar phase, start, drift; pure over PCM), `music.ts` (the
+`music.json` manifest, sha256 check and download, track choice, decode
+and the `music/<file>.beats.json` cache). Tested in `test/week.test.ts`
+and `test/beats.test.ts` (click tracks at 175, 138 and 100 BPM generated
+as PCM, accents, a 1 % drift; no files). The render: the card and each
+shot to a lossless intermediate (x264 `-qp 0` + PCM in NUT, input seek
+to just before the in-frame) in a temp dir, joined by the concat demuxer
+with each part's `duration` stated (without it the demuxer takes the
+last frame's timestamp: one frame short per part, 0.27 s over 26
+parts, measured), then one x264 slow CRF 18 encode with the music
+(`atrim` from its bar line, `aloop` on a bar when too short), the
+ducking and the limiter. Reuse is the share rule: the key in the file's
+`comment` tag, nothing in `index.json`. Exit 2: fewer than 2 clips, or
+no track (`pnpm music` fetches the defaults; `--no-music` cuts on a
+fixed 0.6 s grid). Measured 2026-11-11 on 2026-W46 with the bar
+grid and 0.65/0.4 s shots (1920×1080@60): Smash It (the default) 174.93
+BPM from 65.86 s in the track, 52.13 s, 10 clips, 30 shots, 36 kills
+(41 a minute), one merged shot (#251), 76 s to cut and encode, 124.4
+MB; WOAH 52.12 s, 10 clips, 30 shots, 41 kills a minute; Slam (136
+BPM, 1.765 s bars) 58.23 s, 9 clips (#254 dropped for the cap), 24
+shots, 34 kills a minute, four merged shots. A second run reuses the
+file in about 6 s. Loudness of the default: -14.8 LUFS integrated,
+true peak -3.1 dBTP, LRA 2.6 LU; the music alone (the card) -19.3 dB
+RMS, the game audio alone -23.9 dB RMS over the shots, the mix -16.0
+dB RMS there. Beat grid against FFmpeg's own `lowpass=f=150` (kick
+onset = half-rise of a 10 ms RMS envelope within ±60 ms) on the bar
+lines the shots use: Slam median +7.2 ms, worst 22 ms (24 anchors, all
+with a kick); Smash It -20.9 ms over all 30, -14.7 ms on the 16 with a
+clear kick (worst 39 ms); WOAH -11.4 ms over all 30, -9.1 ms on the 9
+with a clear kick (worst 36 ms). The drum and bass grids lead the kicks
+by 10–20 ms, under a frame; left as is. Sync of the shots (the same
+plan rendered without music, the gunshot transient above 500 Hz
+nearest each anchor): 15 of 30 shots have a clear one, 14 of them
+within 70 ms, median +20 ms, worst +122 ms (#228; the clips' own
+timing is scheduled, up to about 50 ms off; Tick mapping below).
 
 **Even sound** (`src/post/audio.ts`; PLAN.md §6 has the rules).
 `audioFilter(mode, params)` is the one builder: `"raw"` gives `""` (no
@@ -395,7 +420,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 
 | Path | What |
 |---|---|
-| `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds`; `ingest.keepOriginals` (default false: the file a demo arrived in is deleted once the store holds it); `montage` for `pnpm week`: `top` (8), `musicDir` (empty: no music unless `--music`; else its first audio file by name), `musicGainDb` (-14, music under the game audio); `post.audio` (`raw` default, `even`) and `share.audio` (`even` default, `raw`); `vertical` (`width`, `height`, `crf`) for `pnpm vertical`; `cut.crf` (18) for `pnpm cut`; the even-sound chain's `audio` parameters (`thresholdDb`, `ratio`, `attackMs`, `releaseMs`, `makeupDb`, `limitDb`; Even sound above) |
+| `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds`; `ingest.keepOriginals` (default false: the file a demo arrived in is deleted once the store holds it); `montage` for `pnpm week`: `top` (10), `maxSeconds` (60, the video's cap), `music` (`smash-it.mp3`, the default track, a file name in `music/`), `musicGainDb` (-7, the music up front), `shot` (`preSeconds` 0.65 and `postSeconds` 0.4 around each kill); `post.audio` (`raw` default, `even`) and `share.audio` (`even` default, `raw`); `vertical` (`width`, `height`, `crf`) for `pnpm vertical`; `cut.crf` (18) for `pnpm cut`; the even-sound chain's `audio` parameters (`thresholdDb`, `ratio`, `attackMs`, `releaseMs`, `makeupDb`, `limitDb`; Even sound above) |
 | `.env` | identities and tool paths (`.env.example`; `pnpm prep` fills it; M0.2 setup in `docs/spikes.md`) |
 | `src/cli/setup.ts` | `pnpm prep` / `pnpm check`: tool pins with their sha256, Steam and CS2 lookup, the requirement report |
 | `docs/m6-mm-fetch.md` | the execution plan for M6 (matchmaking demos fetched through a CS2 launch, no login): phases, agents, gate, tests |
@@ -408,7 +433,9 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `src/library/page.html`, `page.ts` | the library page template and its writer |
 | `src/library/stars.ts`, `facets.ts`, `hash.ts`, `match-date.ts` | the stars file; the feat and weapon filters' derivation; the `#clip=<no>&t=<s>` parser (its source is inlined into the page); the one rule that dates a clip's match (page, `pnpm week`, death map) |
 | `src/share/` | derived copies of a library clip, none of them in `index.json`: `index.ts` share, `vertical.ts`, `cut.ts`, `caption.ts` |
-| `src/week/index.ts` | `pnpm week`: ISO weeks, selection, the montage's filter graph and encode |
+| `src/week/` | `pnpm week`, the fragmovie: `index.ts` ISO weeks, selection, plan, key and render; `edit.ts` shots and their layout on the beat grid; `beats.ts` the beat analysis; `music.ts` the manifest, downloads, track choice and the analysis cache |
+| `music.json` | the default tracks for `pnpm week` (tracked): file, url, sha256, BPM, title, artist, licence, credit |
+| `music/` | the tracks (`pnpm music` fetches the defaults; any audio file dropped here works) and their `<file>.beats.json` caches; gitignored, music is never committed |
 | `src/deathmap/` | `pnpm deathmap`: `index.ts` data and writer, `view.ts` filter/clusters/summary shared with the page, `page.html` template → `library/deaths.html` |
 | `demos/` | `inbox/` (drop here), `store/<sha256>.dem` (ingested demos, the only copy by default), `ingested/` (the archives demos arrived in, only with `config.json` → `ingest.keepOriginals`), `rejected/` (with `.reason.txt`) |
 | `state/demos.json`, `state/queue.json`, `state/sources/<name>.json` | demo registry (paths relative to the repo, State paths below); job ledger; each source's progress |

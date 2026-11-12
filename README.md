@@ -74,7 +74,9 @@ removes a clip. `pnpm share <clip number>` makes a copy that plays in
 Discord, browsers and phones and fits a 20 MB upload, with a caption to
 paste. `pnpm vertical <clip number>` makes a 9:16 copy for Reels, TikTok
 and Shorts, `pnpm cut <clip number> <from> <to>` a shorter copy,
-`pnpm week` joins the week's best clips into one video, and
+`pnpm week` cuts the week's best kills into a short fragmovie timed to
+music (`pnpm music` fetches the default tracks; they are CC BY, so post
+the credit line it prints with the video), and
 `pnpm deathmap` draws where you die on each map. Run `pnpm library` to
 star, trim and share clips from the page itself. More commands and every
 setting (`config.json`) are in

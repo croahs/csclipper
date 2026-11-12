@@ -28,6 +28,7 @@
     "fav": "tsx src/cli/star.ts star",
     "unfav": "tsx src/cli/star.ts unstar",
     "week": "tsx src/cli/week.ts",
+    "music": "tsx src/cli/music.ts",
     "tidy": "tsx src/cli/tidy.ts",
     "unsettle": "tsx src/cli/unsettle.ts",
     "rescore": "tsx src/cli/rescore.ts"

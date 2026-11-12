@@ -316,37 +316,131 @@ FFmpeg only:
 - overlay: map, round, score, title. Simple drawtext, no HTML
   compositing.
 - optional later: custom killfeed via HLAE `mirv_deathmsg`.
-- best of the week (decided 2026-11-10): `pnpm week [<yyyy-Www>]
-  [--top <n>] [--music <file>] [--no-music] [--dry-run]` writes
+- best of the week, the fragmovie (decided 2026-11-11; it replaced
+  the long version of 2026-11-10, eight whole clips with crossfades
+  and quiet music, 3 min 21 s for 2026-W46, after the owner asked for
+  "relevant royalty-free music, timed so it looks cool, shorter and
+  snappier, like a fragmovie"; one mode, no flag for the old one):
+  `pnpm week [<yyyy-Www>] [--top <n>] [--seconds <n>] [--music
+  <file>] [--no-music] [--dry-run] [--json]` writes
   `library/montage/<yyyy>-W<ww>.mp4`. No week given: the latest ISO
   week (Monday to Sunday, local time) with a highlight. A clip belongs
   to the week of the date the library page shows it under (FACEIT
   match date, else the day its demo was added, else when the clip was
   made; one rule, `src/library/match-date.ts`, so the page and the
-  montage cannot disagree). Highlights only, the top `montage.top`
-  (8) by moment score; one without a score or a file is skipped and
-  named; fewer than 2 is refused. Played in ascending score, so the
-  best comes last. Picture: a 2 s card on black (`Best of week 45 ·
-  2026` and the dates), then each clip as it is, at the first clip's
-  size and rate (letterboxed, never cropped), joined by 0.25 s
-  crossfades (the card's too), so the length is card + clips − one
-  fade per clip; for the first 3 s of each clip its number and title
-  sit bottom left, above the HUD's money and health row (the reel
-  overlay's font, text through files with `expansion=none`). Sound:
-  the game audio always; music from `--music`, else the first audio
-  file by name in `montage.musicDir`, looped or cut to length, faded
-  out over the last 3 s, `montage.musicGainDb` (-14) under the game
-  and ducked further by `sidechaincompress` keyed on it, so shots
-  stay on top; music is never copied anywhere. One FFmpeg run, one
-  `filter_complex`, x264 slow CRF 18, AAC 192k, `+faststart`. The
-  share-file contract: temp path, validate (decodes, one video and
-  one audio stream, h264, length within 1 s of the plan), rename; the
-  key (clip ids with their files' size and time, in play order, the
-  music file's size and time, the gain, the recipe) sits in the
-  file's comment tag, so an unchanged week is reused and a changed
-  one remade; never written to `index.json`. It prints the path,
-  size, length, the clip numbers in play order and a caption
-  (`Best of week 45 · 8 clips #CS2`).
+  montage cannot disagree).
+  - Selection: highlights only, the top `montage.top` (10) by moment
+    score, one clip per (demo, round); one without a score, a file,
+    `moment.killTicks` or `render.segments` (entries made before those
+    were recorded cannot be cut into shots) is skipped and named;
+    fewer than 2 is refused (exit 2). Played in ascending score, the
+    best clip's shots last; inside a clip, its shots in time order.
+  - Shots, only the kills: a kill's time in the clip is its tick
+    through `render.segments` (proportional inside a segment, so a
+    fast-forward stretch maps right). A shot runs from
+    `montage.shot.preSeconds` (0.65) before a kill to `postSeconds`
+    (0.4) after it, so a single-kill shot fits one bar at 175 BPM;
+    kills whose shots touch or overlap merge into one shot (a burst
+    plays in real time) unless a fast-forward stretch lies between
+    them; shots are clamped to the clip and never start or end inside
+    a segment whose speed is not 1 (moved to its edge).
+  - The grid is the music's (revised 2026-11-11 after the first W46
+    render: shots of about 2 s with a kill every three half-bars read
+    as a steady trot, and half the kills sat on beat 3, where two-step
+    drum and bass has no kick): the unit is one bar when a bar lasts
+    at most 1.8 s, else half a bar, counted from a bar line, so every
+    anchored kill sits on the one (175 BPM: 1.371 s per kill; 136 BPM:
+    1.765 s; 100 BPM: half bars of 1.2 s). Every shot's first kill
+    lands on an anchor to within half a frame (cuts on video frames,
+    in-points on clip frames). The cut into a shot is its lead-in
+    before its anchor; the next shot takes the first anchor late
+    enough that the current one has played to its natural end (last
+    kill + post) first, and the slack is filled by the current shot's
+    tail, else by the next one's lead-in, else the anchor moves one
+    unit earlier when the current shot still shows its last kill +
+    0.25 s. Footage never plays twice: failing all three, when the
+    neighbouring shot of the same clip is what stopped the fill, the
+    two merge into one continuous shot (its later kills off the grid,
+    like a burst); when the clip's end or a fast-forward stretch
+    stopped it, the shot holds its last frame (silent). The plan line
+    names either. A tail or lead-in never stretches past the clip's
+    ends, into a fast-forward stretch, or into the neighbouring shot
+    of the same clip. Hard cuts only.
+  - Open and close: a title card (`Best of week 46`, the dates under
+    it) of exactly one bar, the music starting with it, so the first
+    shot cuts in on a bar line. After the last shot's natural end the
+    picture holds to the next bar line, then picture and music fade
+    out over one bar. Each clip's first shot carries `#257 · 4k USP-S`
+    (number and title less map and round) bottom left for 1.2 s.
+  - Length: `montage.maxSeconds` (60) caps the video (`--seconds` for
+    one run); over it, whole clips are dropped from the low-score end
+    and named, never the best three; if those alone are longer,
+    nothing is shortened and the run says it exceeds the cap.
+  - Music is the spine. `music.json` (tracked) lists the default
+    tracks with url, sha256, BPM, licence and credit; `pnpm music`
+    downloads the missing ones into `music/` (gitignored: music is
+    never committed), each checked against its sha256 (temp, then
+    rename; a mismatch is deleted and reported); `--check` only
+    reports. The three defaults are CC BY 4.0 by Shane Ivers
+    (silvermansound.com, verified 2026-11-11): Smash It and WOAH
+    (175 BPM), Slam (136: the publisher lists 138, the file measures
+    136.0 with and without a prior; `music.json` says both). The
+    track: `--music`
+    (a path or a name in `music/`), else `montage.music`
+    (`smash-it.mp3`), else the first audio file by name in `music/`
+    (any file dropped there works without a manifest entry); none:
+    refused (exit 2), naming `pnpm music`. `--no-music`: the same cut
+    on a fixed 0.6 s grid (bar 2.4 s), game sound only. CC BY requires
+    the credit wherever the video is posted, so a manifest track's
+    `credit` is in the output, the `--json` result and the caption; a
+    track without one prints "no credit known for <file>".
+  - Beats (`src/week/beats.ts`, pure, no dependencies): FFmpeg decodes
+    the track to mono 22.05 kHz PCM; the onset envelope is log-energy
+    flux in an 11.6 ms trailing window every 2.9 ms, the low band
+    (two 150 Hz biquads, the kick) weighted 0.6 and the full band 0.4.
+    Tempo: with the manifest's BPM as prior, the best fold of the
+    envelope onto the beat period within ±1.5 % of it (so half and
+    double time cannot happen); without one, the strongest
+    autocorrelation lag in 80–190 BPM, then the same ±1.5 % fit.
+    Phase: the fold's peak. Bar phase: of the four beats, the one with
+    the most low-band onset. Start: the bar line opening the loudest
+    stretch of the needed bars (a bonus for a jump in loudness into
+    it: the drop), never so late that the track ends first; a track
+    too short even from its first bar loops on a bar line. Drift: the
+    first and last 16 beats of the used section are folded alone (peak
+    looked for within ±60 ms of the grid, so a breakdown with off-beat
+    hats does not read as a half-beat error); over 10 ms off at either
+    end, the tempo and phase are refitted on the used section, and the
+    refit is kept only when both ends show a clear peak with both
+    grids, the worse end improves and neither end gets worse past
+    10 ms; otherwise the whole-file grid stays (a refit on the sparse
+    intro of Smash It measured -41 ms against FFmpeg's low band, the
+    whole-file grid -17 ms).
+    Cached as `music/<file>.beats.json`, keyed by the file's size and
+    mtime, the prior and `ANALYSIS_VERSION`.
+  - Sound: each shot's game audio at full level with 20 ms fades at
+    both ends (no clicks at cuts), silent under the card and the
+    closing fade; the music at `montage.musicGainDb` (-7, up front),
+    ducked lightly by the game audio (`sidechaincompress`
+    threshold 0.1, ratio 2.5, 5/250 ms), then the limiter (-1 dB).
+  - Picture: each shot at the first clip's size and rate (letterboxed,
+    never cropped). Each shot is cut to a lossless intermediate (x264
+    `-qp 0`, PCM, NUT for exact time bases) in a temp dir, joined by
+    the concat demuxer with each part's duration stated, then one
+    encode: x264 slow CRF 18, AAC 192k, `+faststart`. Not one
+    `filter_complex`: 25–40 shots would be 25–40 open HEVC decoders
+    (8 held 2.1 GB in the long version), and per-shot input seeking
+    decodes seconds, not whole clips.
+  - The share-file contract: temp path, validate (decodes, one video
+    and one audio stream, h264, length within 0.25 s of the plan),
+    rename; the key (clip ids with their files' size and time, in play
+    order, the shot rules, the cap, the track's size and time, the BPM,
+    phase and start offset used, the gain, the recipe) sits in the
+    file's comment tag, so an unchanged week is reused and a changed
+    one remade; never written to `index.json`. `--dry-run` and
+    `--json` print the plan: track, BPM, start offset in the track,
+    grid unit, and per shot the clip number, in/out in the clip, cut
+    in/out in the video, its anchor and its kills.
 - outputs `library/clips/<id>.mp4` + `library/index.json`.
 - share copies (decided 2026-11-10): library clips are H.265, which
   Discord, many browsers and phones do not play inline, and often
@@ -570,7 +664,9 @@ croclipper/
   src/post/     ffmpeg trim, fades, reel overlays, the even-sound chain
   src/library/  index writer, static page template, stars, filters, the match-date rule
   src/share/    derived copies of a clip: share, vertical, cut
-  src/week/     best of the week (the montage)
+  src/week/     best of the week (the fragmovie: selection, shots, beats, music)
+  music.json    the default tracks for pnpm week (url, sha256, BPM, licence, credit)
+  music/        the downloaded tracks and their beat caches (gitignored)
   src/deathmap/ the death map page
   demos/inbox/  you drop demos here
   state/        per-demo parse + moments (gitignored)
@@ -639,7 +735,7 @@ After the victim's death the take shows what the game gives a dead
 player, normally the death camera; that is accepted.
 
 **M4. Sources and polish.** FACEIT auto-download, overlays, killfeed,
-montage builder (built 2026-11-10, `pnpm week`), OBS fallback, Valve GC download.
+montage builder (built 2026-11-10, `pnpm week`; a fragmovie cut to music since 2026-11-11), OBS fallback, Valve GC download.
 
 **M5. Sharing** (decided 2026-10-25). Other players run it on their
 own Windows PC from the public repo (github.com/croahs/csclipper).

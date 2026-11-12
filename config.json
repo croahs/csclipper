@@ -35,9 +35,11 @@
     "crf": 18
   },
   "montage": {
-    "top": 8,
-    "musicDir": "",
-    "musicGainDb": -14
+    "top": 10,
+    "maxSeconds": 60,
+    "music": "smash-it.mp3",
+    "musicGainDb": -7,
+    "shot": { "preSeconds": 0.65, "postSeconds": 0.4 }
   },
   "clip": {
     "leadInSeconds": 4,

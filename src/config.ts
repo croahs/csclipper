@@ -188,16 +188,20 @@ export function loadIdentities(envFile = path.join(ROOT, ".env")): Identities {
 export const accountId = (steamId64: string) => (BigInt(steamId64) - STEAMID64_BASE).toString();
 
 /**
- * pnpm week (PLAN.md §6, best of the week): how many highlights, the music folder (the first audio
- * file by name is used when no --music is given; empty or absent = no music) and how far under the
- * game audio the music sits.
+ * pnpm week (PLAN.md §6, best of the week, the fragmovie): how many highlights, the cap on the
+ * video's length, the default track (a file name in music/), the music's level and the shot around
+ * each kill (seconds before and after it).
  */
-export type MontageSettings = { top: number; musicDir: string | null; musicGainDb: number };
+export type MontageSettings = { top: number; maxSeconds: number; music: string | null; musicGainDb: number; shot: { preSeconds: number; postSeconds: number } };
 export function loadMontage(file = path.join(ROOT, "config.json")): MontageSettings {
   const m = JSON.parse(readFileSync(file, "utf8")).montage ?? {};
-  const top = m.top ?? 8, gain = m.musicGainDb ?? -14, dir = m.musicDir ?? "";
+  const top = m.top ?? 10, max = m.maxSeconds ?? 60, gain = m.musicGainDb ?? -7, music = m.music ?? "smash-it.mp3";
+  const pre = m.shot?.preSeconds ?? 0.65, post = m.shot?.postSeconds ?? 0.4;
   if (!Number.isInteger(top) || top < 2) throw new Error("config.json montage.top must be a whole number >= 2");
+  if (typeof max !== "number" || !(max >= 10)) throw new Error("config.json montage.maxSeconds must be a number of seconds >= 10");
   if (typeof gain !== "number" || gain > 0) throw new Error("config.json montage.musicGainDb must be a number of dB <= 0");
-  if (typeof dir !== "string") throw new Error("config.json montage.musicDir must be a folder path or empty");
-  return { top, musicDir: dir.trim() ? path.resolve(ROOT, dir.trim()) : null, musicGainDb: gain };
+  if (typeof music !== "string" || (music.trim() && music.trim() !== path.basename(music.trim()))) throw new Error("config.json montage.music must be a file name in music/ (or empty)");
+  for (const [k, v] of [["preSeconds", pre], ["postSeconds", post]] as const)
+    if (typeof v !== "number" || !(v >= 0.1 && v <= 5)) throw new Error(`config.json montage.shot.${k} must be a number of seconds in 0.1–5`);
+  return { top, maxSeconds: max, music: music.trim() || null, musicGainDb: gain, shot: { preSeconds: pre, postSeconds: post } };
 }

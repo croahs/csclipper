@@ -1,0 +1,36 @@
+{
+  "note": "Default tracks for pnpm week. pnpm music downloads the missing ones into music/ (gitignored) and checks each sha256. Licences verified on silvermansound.com on 2026-11-11. CC BY 4.0 requires the credit wherever the video is posted.",
+  "tracks": [
+    {
+      "file": "smash-it.mp3",
+      "url": "https://www.silvermansound.com/wp-content/uploads/smash-it.mp3",
+      "sha256": "6b195c7a732629b4ecd87c9b544f0d9b747d56da94bf8cb29bf0b868442b1061",
+      "bpm": 175,
+      "title": "Smash It",
+      "artist": "Shane Ivers",
+      "license": "CC BY 4.0",
+      "credit": "Music: Smash It by Shane Ivers - https://www.silvermansound.com"
+    },
+    {
+      "file": "woah.mp3",
+      "url": "https://www.silvermansound.com/wp-content/uploads/woah.mp3",
+      "sha256": "26a0ff8bed9909405ff3f965c24e38c845ab3ff69990f7893d7343a711bf1eb0",
+      "bpm": 175,
+      "title": "WOAH",
+      "artist": "Shane Ivers",
+      "license": "CC BY 4.0",
+      "credit": "Music: WOAH by Shane Ivers - https://www.silvermansound.com"
+    },
+    {
+      "file": "slam.mp3",
+      "url": "https://www.silvermansound.com/wp-content/uploads/slam.mp3",
+      "sha256": "4948eea077b95990a9de6c37689a9828184e377f932ec67365efbdbf3faf78f8",
+      "bpm": 136,
+      "note": "The publisher's page says 138 BPM; the file measures 136.0 (fitted with and without a prior, 2026-11-11).",
+      "title": "Slam",
+      "artist": "Shane Ivers",
+      "license": "CC BY 4.0",
+      "credit": "Music: Slam by Shane Ivers - https://www.silvermansound.com"
+    }
+  ]
+}
