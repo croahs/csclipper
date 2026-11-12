@@ -21,7 +21,7 @@ import { playersOf } from "../library/facets.ts";
 import { readPicks } from "../library/stars.ts";
 import { parseDemo, povDir, type ParsedDemo } from "../parse/demo.ts";
 import { ff, probe } from "../post/ffmpeg.ts";
-import { pruneTakes } from "../queue/prune.ts";
+import { pruneHeldCaptures, pruneTakes } from "../queue/prune.ts";
 import { prepareJob, runJobs, type JobResult, type PreparedJob, type RenderUnit, type TakeCapture } from "../queue/job.ts";
 import { slug } from "../share/index.ts";
 import { clampSpan } from "./bloopers.ts";
@@ -118,9 +118,16 @@ function writeMaster(take: TakeCapture, workDir: string, out: string, key: strin
   renameSync(tmp, out);
   console.log(`master: ${out} (from ${workDir})`);
   // The master holds the capture now; the raw files would otherwise stay (no library entry holds this id).
-  for (const m of pruneTakes([take]).problems) console.error(`raw capture not removed: ${m}`);
+  for (const m of [...pruneTakes([take]).problems, ...pruneMasterCaptures(u.id).problems]) console.error(`raw capture not removed: ${m}`);
   return { status: "done", id: u.id, title: u.title, clip: out };
 }
+
+/**
+ * The raw captures recorded under a master's id, every attempt: the normal sweep knows only library ids,
+ * so a run that stopped between writing the master and pruning (or an earlier failed attempt) would
+ * leave them for good. Called once the master is written, and whenever one is found held.
+ */
+const pruneMasterCaptures = (unitId: string) => pruneHeldCaptures({ held: new Set([unitId]) });
 
 export type MastersReport = { made: string[]; held: string[]; skipped: string[]; failed: string[]; wouldCapture: number; stoppedBy?: "refusal" | "cleanup" };
 
@@ -158,7 +165,12 @@ export async function runMasters(o: { dryRun?: boolean; timeoutS?: number }): Pr
         const settings = { ...loadSettings(), captureCrf: film.masterCaptureCrf };
         const key = masterKey({ clipId: it.entry.id, ...span, handleSeconds: film.masterHandleSeconds, settings });
         const rel = path.relative(LIBRARY_DIR, it.out);
-        if (masterHeld(it.out, key)) { report.held.push(label); console.log(`held: ${label} → ${rel}`); continue; }
+        if (masterHeld(it.out, key)) {
+          report.held.push(label);
+          console.log(`held: ${label} → ${rel}`);
+          if (!o.dryRun) for (const m of pruneMasterCaptures(`master-${it.entry.id}`).problems) console.error(`raw capture not removed: ${m}`);
+          continue;
+        }
         const secs = ((span.endTick - span.startTick) / parsed.demo.tickrate).toFixed(1);
         if (o.dryRun) { report.wouldCapture++; console.log(`would capture: ${label}, ticks ${span.startTick}-${span.endTick} (${secs} s, CRF ${film.masterCaptureCrf}) → ${rel}`); continue; }
         const prep = await prepareJob({ demo: it.demo!, startTick: span.startTick, endTick: span.endTick, timeoutS: o.timeoutS, inBatch: true, ...(it.pov !== ids.pov ? { pov: it.pov } : {}) });

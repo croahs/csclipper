@@ -107,6 +107,7 @@ test("knife round on an old-style cache: every fire a knife swing (weapon_ prefi
   assert.equal(isKnifeRound(p, r1), true);
   assert.equal(isKnifeRound(p, r2), false);
   assert.equal(isKnifeRound(parsed([r1], [], []), r1), false, "no fires: not a knife round");
+  assert.equal(isKnifeRound(parsed([r1, r2], [], [fire(2, 40990, "weapon_knife_t")]), r2), false, "only the first round can be the knife round");
   assert.deepEqual(moments(p, w).map((m) => m.round), [2], "the knife round's two knife kills are no moment, no bonus");
 });
 

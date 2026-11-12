@@ -799,7 +799,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 - **Match rounds.** A round is a `round_end` with a winner after the last
   `begin_new_match` (FACEIT's warmup and knife restarts come before it; a
   demo without it is refused). Rounds are numbered 1…n from there; above 24
-  is overtime. A knife round is one where every shot fired was a knife,
+  is overtime. A knife round is the match's first round when every shot fired in it was a knife (a later round without a gunshot is a normal round),
   read on bare weapon names (`weapon_fire` names carry a `weapon_` prefix
   that deaths and hurts do not; `bareWeapon`, `isKnife`, `isGunshot` in
   `src/parse/demo.ts`). Until 2026-11-12 the prefix hid every knife round

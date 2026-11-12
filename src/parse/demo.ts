@@ -92,6 +92,9 @@ export const isGunshot = (w: string) => !NOT_A_GUN.test(bareWeapon(w));
  */
 export function isKnifeRound(p: Pick<ParsedDemo, "fires">, r: Pick<Round, "n" | "endTick" | "phase">): boolean {
   if (r.phase === "knife") return true;
+  // Only the match's first round can be one (the knife round decides sides before the match proper): a
+  // later round where nobody fired a gun and someone was knifed is a normal round, and a highlight.
+  if (r.n !== 1) return false;
   const shots = p.fires.filter((f) => f.round === r.n && f.tick <= r.endTick);
   return shots.length > 0 && shots.every((f) => isKnife(f.weapon));
 }
