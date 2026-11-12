@@ -218,7 +218,10 @@ export const povKey = (steamId64: string) => createHash("sha256").update(steamId
 /** The key a POV's caches, clip ids and entries carry: none for the main POV (STEAM_ID64), so everything made before stays valid. */
 export const povKeyFor = (pov: string, mainPov: string) => (pov === mainPov ? undefined : povKey(pov));
 
-/** pnpm go --film: every roster player's highlights scoring minScore or more (no fallback, no reels); settlesDemo: a finished film pass also settles the demo for pnpm go. */
+/**
+ * pnpm go --film: every roster player's highlights scoring minScore or more (no fallback, no reels); settlesDemo: a
+ * finished film pass also settles the demo for pnpm go. Its bloopers' bar and thresholds (film.bloopers) are read by loadBlooperSettings.
+ */
 export type FilmSettings = { minScore: number; settlesDemo: boolean };
 export function loadFilm(file = path.join(ROOT, "config.json")): FilmSettings {
   const f = JSON.parse(readFileSync(file, "utf8")).film ?? {};

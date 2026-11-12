@@ -11,7 +11,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import path from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { DEMOPARSER_VERSION, sha256File } from "../parse/clip-facts.ts";
-import { parseDemo, parseDir, parseIsCurrent, type ParsedDemo } from "../parse/demo.ts";
+import { loadIdentities, povKeyFor } from "../config.ts";
+import { PovAbsent, parseDemo, parseDir, parseKey, povDir, type ParsedDemo } from "../parse/demo.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -37,6 +38,9 @@ export function sampleAt(track: Track, player: number, i: number): Sample {
   const d = track.data[player], o = i * TRACK_STRIDE;
   return { X: d[o], Y: d[o + 1], Z: d[o + 2], yaw: d[o + 3], pitch: d[o + 4], alive: d[o + 5] === 1, spottedBy: d[o + 6] };
 }
+
+/** Whether a spottedBy mask has players[spotter]'s bit; an index of MAX_SPOTTERS or more never does (extract stores none, and 1 << 32 would wrap to bit 0). */
+export const hasSpotter = (mask: number, spotter: number) => spotter >= 0 && spotter < MAX_SPOTTERS && (mask & (1 << spotter)) !== 0;
 
 /** The sample ticks of the match rounds: every `every`-th tick from freeze end to round end. */
 export function trackTicks(p: ParsedDemo, every = TRACK_EVERY): number[] {
@@ -78,26 +82,32 @@ function extract(demo: string, p: ParsedDemo, key: string): Track {
 
 /**
  * The demo's parse for bloopers: rounds, deaths, hurts and fires do not depend on the POV, so the
- * demo's current cached parse whatever its POV, else the given POV (the .env one) when he played in
- * it, else the first player who did.
+ * first of `povs` (roster order) whose own cache (povDir) holds a current parse, else the first who
+ * played in the demo, parsed into that player's cache. PovAbsent when none of them is in it; an
+ * absent player is told by the error's class (any POV's message differs), so the next one is tried.
+ * parse: a test seam.
  */
-export async function parseAnyPov(demo: string, pov: string): Promise<ParsedDemo> {
-  const file = path.join(parseDir(await sha256File(demo)), "parse.json");
-  if (existsSync(file)) {
+export async function parseAnyPov(demo: string, povs: string[], mainPov = loadIdentities().pov, parse = parseDemo): Promise<ParsedDemo> {
+  const sha256 = await sha256File(demo);
+  for (const pov of povs) {
+    const file = path.join(povDir(sha256, povKeyFor(pov, mainPov)), "parse.json");
+    if (!existsSync(file)) continue;
     try {
       const cached = JSON.parse(readFileSync(file, "utf8")) as ParsedDemo;
-      if (parseIsCurrent(cached)) return { ...cached, demo: { ...cached.demo, path: demo } };
+      if (cached.key === parseKey(sha256, pov)) return { ...cached, demo: { ...cached.demo, path: demo } };
     } catch {}
   }
-  const notIn = (e: unknown) => /POV player .* not found/.test((e as Error).message);
-  try { return await parseDemo(demo, pov); } catch (e) { if (!notIn(e)) throw e; }
-  const dp = require("@laihoe/demoparser2");
-  const players = (dp.parsePlayerInfo(demo) as { steamid: unknown; team_number: number }[])
-    .filter((x) => sid(x.steamid) && (x.team_number === 2 || x.team_number === 3));
-  for (const x of players) {
-    try { return await parseDemo(demo, String(x.steamid)); } catch (e) { if (!notIn(e)) throw e; }
+  for (const pov of povs) {
+    try { return await parse(demo, pov, mainPov); } catch (e) { if (!(e instanceof PovAbsent)) throw e; }
   }
-  throw new Error("no player of this demo is in its match rounds");
+  throw new PovAbsent("none of these players is in this demo's match rounds");
+}
+
+/** The SteamID64s on a team (T or CT) in the demo's player info, in its order (pnpm bloopers --all parses through any of them). */
+export function demoPlayers(demo: string): string[] {
+  const dp = require("@laihoe/demoparser2");
+  return (dp.parsePlayerInfo(demo) as { steamid: unknown; team_number: number }[])
+    .filter((x) => x.team_number === 2 || x.team_number === 3).map((x) => sid(String(x.steamid))).filter((x): x is string => !!x);
 }
 
 /** The demo's track, from the cache when its key matches, else one parser pass (seconds), then cached. */

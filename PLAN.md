@@ -23,7 +23,9 @@ folded in below, so this is the version to build from.
   takes over the game while it runs, so rendering is a "while you are
   not playing" job. It must detect a running CS2 and refuse, never
   reuse or kill your session.
-- **Player:** one Steam account (yours). Multi-user is out of scope.
+- **Player:** one Steam account (yours). Multi-user is out of scope,
+  with one exception: the film mode (`pnpm film`, §3) also films the
+  friends listed in `.env`, from their own view, in your demos.
 - **No accounts, no cloud, no backend service.** A CLI on this machine
   plus a static HTML library.
 
@@ -161,6 +163,28 @@ moments from 3–5 of your demos; the ranking is tuned until it agrees
 with your picks, and that sample stays in the repo as the regression
 set. CS2's own highlight markers (`demo_listhighlights`) are read as a
 second opinion in that comparison, not used as the ranking.
+
+#### Film mode and bloopers
+
+`pnpm film` runs the same pipeline for a roster: your account plus the
+friends in `.env` → `FILM_STEAM_ID64S`. Per demo and player present:
+the highlights scoring `film.minScore` (75) or more from that player's
+first person (the same scoring, no fallback), no reels, and his
+bloopers, all in the demo's one launch with your look. A friend is
+named outside `.env` only by a hash of his SteamID64. Each pair of demo
+and player is settled on its own (`state/film.json`), and the film
+pass settles the demo for `pnpm go` as well.
+
+Bloopers are the funny mistakes, a separate score 0-100: a teamkill,
+a death by your own grenade or a fall, a magazine sprayed at an enemy
+right in front without a kill, and standing behind several enemies who
+face away without killing any. Without map geometry, the last two need
+a sign of sight (damage, the game's spotted flag, or dying to that
+enemy). A blooper scoring `film.bloopers.minScore` (50) or more is
+rendered whole at normal speed; of one player's that overlap, the
+higher. Its identity is the event (demo, kind, tick, player), never its
+span, so no threshold change re-makes one the library holds. Details
+and thresholds: `docs/modules.md`, Film and Bloopers.
 
 ### 4. Clip specs
 
@@ -590,6 +614,12 @@ highlight's index entry already carries (`moment.kills`, `.clutch`,
 `.weapons`), so the pipeline writes nothing new; reels and entries
 without a moment match no feat or weapon. Every filter combines with
 the others, Find and the sort; "Newest clips" clears them all.
+Film entries (§3, Film mode and bloopers): Kind gains "Bloopers",
+which show and sort by their own score, and the blooper kinds are
+feats (Teamkill, Own grenade / fall, Spray, no kill, Behind, no kill).
+When any clip is a friend's, a "Player" category lists "Me" and each
+friend under the name on his newest clip. A library without film
+entries looks as it did.
 Death map (decided 2026-11-10): `pnpm deathmap` writes
 `library/deaths.html`, a second static page in the same visual
 language with its data inlined (every `<` escaped), opened from disk,

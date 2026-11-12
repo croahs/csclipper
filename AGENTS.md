@@ -21,6 +21,13 @@ demo (chained takes) and one fetch launch per new matchmaking match (at
 most `sources.valve.maxMatchesPerRun` per `pnpm grab`), and CS2 must be
 closed; refuse otherwise and say so.
 
+A film order ("lag film", demos plus SteamIDs) means: the SteamID64s
+into `.env` → `FILM_STEAM_ID64S` (never into a tracked file, a commit
+or a report), the demos into `demos/inbox/`, then `pnpm film`, under
+the same launch rules (one render launch per demo, CS2 closed, the
+alt). Report the clips made per player, by name, with clip numbers,
+highlights and bloopers apart.
+
 ## Rules
 
 - pnpm, never npm (`pnpm dlx`, not `npx`). TypeScript, ESM, Node 22+.

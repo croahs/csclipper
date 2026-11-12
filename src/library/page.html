@@ -190,6 +190,7 @@
     </label>
     <div class="group"><div class="facet" id="starred"></div></div>
     <div class="group"><h2>Kind</h2><div class="facet" id="kinds"></div></div>
+    <div class="group" id="players-g" hidden><h2>Player</h2><div class="facet" id="players"></div></div>
     <div class="group" id="feats-g"><h2>Feats</h2><div class="facet" id="feats"></div></div>
     <div class="group" id="weapons-g"><h2>Weapon</h2><div class="facet" id="weapons"></div></div>
     <div class="group"><h2>Map</h2><div class="facet" id="maps"></div></div>
@@ -228,7 +229,12 @@
   const clips = data.clips || [];
   const $ = (id) => document.getElementById(id);
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
-  const KINDS = [["highlight", "Highlights"], ["deaths", "Deaths"], ["kills", "Kills"]];
+  // Bloopers (pnpm film) are listed only when the library has one, so a library without any looks as it always did.
+  const KINDS = [["highlight", "Highlights"], ["deaths", "Deaths"], ["kills", "Kills"], ["blooper", "Bloopers"]];
+  // Player (pnpm film): "me" = the main account's clips (no player); a povKey = a friend's, labelled with the
+  // name on that player's newest clip (page.ts). Absent from the data when no clip has a player.
+  const PLAYERS = data.players || [];
+  const playerOf = (c) => c.player || "me";
   const mapName = (m) => (m || "unknown").replace(/^de_/, "");
   const dateOf = (c) => c.matchDate || c.createdAt;
   const day = (iso) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
@@ -243,10 +249,10 @@
 
   // State. Controls are reset on every load: a browser restoring an old filter
   // must not leave the page looking empty.
-  const state = { kind: null, map: null, match: null, star: null, feat: null, weapon: null, moreWeapons: false, current: null };
+  const state = { kind: null, player: null, map: null, match: null, star: null, feat: null, weapon: null, moreWeapons: false, current: null };
   $("find").value = ""; $("sort").value = "score";
   // Every filter off and Find empty; the sort is the caller's.
-  function clearFilters() { state.kind = state.map = state.match = state.star = state.feat = state.weapon = null; state.moreWeapons = false; $("find").value = ""; }
+  function clearFilters() { state.kind = state.player = state.map = state.match = state.star = state.feat = state.weapon = null; state.moreWeapons = false; $("find").value = ""; }
 
   // Stars: clip numbers. Inlined when the page was written; served, refreshed from the server on load.
   const starred = new Set(data.stars || []);
@@ -284,7 +290,7 @@
     const num = /^(clip\s*|#)?(\d+)$/.exec(q);
     const sort = $("sort").value;
     return clips
-      .filter((c) => (!state.kind || c.kind === state.kind) && (!state.map || c.map === state.map) && (!state.match || c.match === state.match))
+      .filter((c) => (!state.kind || c.kind === state.kind) && (!state.player || playerOf(c) === state.player) && (!state.map || c.map === state.map) && (!state.match || c.match === state.match))
       .filter((c) => (!state.star || starred.has(c.no)) && (!state.feat || (c.feats || []).includes(state.feat)) && (!state.weapon || (c.weapons || []).includes(state.weapon)))
       .filter((c) => !q || (num ? c.no === Number(num[2]) : c.title.toLowerCase().includes(q)))
       .sort((a, b) => sort === "no" ? (a.no || 0) - (b.no || 0)
@@ -307,7 +313,7 @@
     now.append(el("span", "no num", String(c.no ?? "")));
     const text = el("div");
     text.append(el("div", "title", c.title));
-    const facts = [c.score !== undefined ? "Score " + c.score : null, c.kills ? c.kills + " kills" : null, c.seconds.toFixed(1) + " s",
+    const facts = [c.score !== undefined ? (c.kind === "blooper" ? "Blooper score " : "Score ") + c.score : null, c.kills ? c.kills + " kills" : null, c.seconds.toFixed(1) + " s",
       c.clutch ? "1v" + c.clutch.vs + (c.clutch.won ? " won" : " lost") : null, ...(c.flags || []), day(dateOf(c))].filter(Boolean);
     text.append(el("div", "facts num", facts.join("  /  ")));
     const act = el("span", "act");
@@ -340,8 +346,10 @@
     const list = shown();
     const kindCount = (k) => clips.filter((c) => c.kind === k).length;
     facet($("starred"), [[true, "★ Starred", clips.filter((c) => starred.has(c.no)).length]], "star");
-    facet($("kinds"), KINDS.map(([k, label]) => [k, label, kindCount(k)]), "kind");
-    // Feats and weapons come from the highlight's moment (page.ts); a group with nothing in it is hidden.
+    facet($("kinds"), KINDS.filter(([k]) => k !== "blooper" || kindCount(k)).map(([k, label]) => [k, label, kindCount(k)]), "kind");
+    facet($("players"), PLAYERS.map((p) => [p.key, p.name, clips.filter((c) => playerOf(c) === p.key).length]).filter((p) => p[2] > 0 || state.player === p[0]), "player");
+    $("players-g").hidden = !PLAYERS.length;
+    // Feats and weapons come from the highlight's moment, a blooper's feat from its type (page.ts); a group with nothing in it is hidden.
     const feats = FEATS.map(([k, label]) => [k, label, clips.filter((c) => (c.feats || []).includes(k)).length]).filter((f) => f[2] > 0);
     facet($("feats"), feats, "feat");
     $("feats-g").hidden = !feats.length;

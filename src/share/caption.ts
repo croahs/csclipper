@@ -1,7 +1,7 @@
 // The caption for a shared clip: one line of plain text to paste next to the file. Pure, so the
 // library page (inlined per clip) and pnpm share give the same line.
 
-export type CaptionInput = { title: string; kind?: "highlight" | "deaths" | "kills"; map?: string; round: number; reel?: { takes: unknown[] } };
+export type CaptionInput = { title: string; kind?: "highlight" | "deaths" | "kills" | "blooper"; map?: string; round: number; reel?: { takes: unknown[] } };
 
 /** "de_dust2" -> "Dust2"; undefined when the map is unknown. */
 export function mapLabel(map: string | undefined): string | undefined {

@@ -81,7 +81,8 @@ export type Dated = { entry: ClipEntry; date: string; exists: boolean };
 export type Skip = { no?: number; title: string; reason: string };
 export type Selection = { week: IsoWeek; picked: ClipEntry[]; skipped: Skip[]; candidates: number };
 
-const isHighlight = (e: ClipEntry) => (e.kind ?? "highlight") === "highlight";
+// The main account's highlights only: a film player's (entry.player) and bloopers never go in the montage.
+const isHighlight = (e: ClipEntry) => (e.kind ?? "highlight") === "highlight" && !e.player;
 export const scoreOf = (e: ClipEntry) => {
   const s = (e.moment as { score?: unknown } | undefined)?.score;
   return typeof s === "number" && Number.isFinite(s) ? s : undefined;

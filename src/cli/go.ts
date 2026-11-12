@@ -8,8 +8,9 @@
 // nothing; later runs skip settled demos, so new rules apply from the next new demo.
 // --no-reels: highlights only for this run (config.json reels stays the default).
 // --film (pnpm film): every roster player's (.env STEAM_ID64 + FILM_STEAM_ID64S) highlights scoring
-// config.json film.minScore or more, from that player's first person, in every registered demo still
-// on disk, settled ones too; no reels. Pairs done go in state/film.json.
+// config.json film.minScore or more and bloopers scoring film.bloopers.minScore or more, from that
+// player's first person, in every registered demo still on disk, settled ones too; no reels. Pairs
+// done go in state/film.json.
 // Exit codes: 0 ok, 1 a job or demo failed, 2 refused (CS2 running, a guard,
 // or another pnpm go), 3 cleanup not verified (the batch stopped; check for cs2.exe by hand).
 import path from "node:path";
@@ -51,13 +52,16 @@ async function main(): Promise<number> {
     console.log(`demos: ${r.demos} (${r.ingested} new), moments selected: ${r.selected}`);
     console.log(`rendered: ${r.rendered.length ? r.rendered.join(" | ") : "none"}`);
     if (r.film) {
-      // Film: made this run per player, with clip numbers, then whom each demo lacked.
+      // Film: made this run per player (highlights, then bloopers), with clip numbers, then whom each demo lacked.
       const f = r.film;
       const label = (p: { key: string; name?: string }) => p.name ?? `player ${p.key}`;
-      console.log(`film (score >= ${f.minScore}, no reels), ${f.players.length} player(s):`);
+      const clips = (ms: typeof r.made) => ms.map((m) => `clip ${m.no ?? "?"} (${m.title})`).join(", ");
+      console.log(`film (highlights >= ${f.minScore}, bloopers >= ${f.blooperMinScore}, no reels), ${f.players.length} player(s):`);
       for (const p of f.players) {
-        const made = r.made.filter((m) => m.kind === "highlight" && m.player?.key === p.key);
-        console.log(`  ${label(p)}: ${made.length ? made.map((m) => `clip ${m.no ?? "?"} (${m.title})`).join(", ") : args.includes("--dry-run") ? "dry run, nothing made (would render: above)" : "nothing new"}`);
+        const hl = r.made.filter((m) => m.kind === "highlight" && m.player?.key === p.key);
+        const bl = r.made.filter((m) => m.kind === "blooper" && m.player?.key === p.key);
+        const made = [hl.length ? clips(hl) : "", bl.length ? `bloopers: ${clips(bl)}` : ""].filter(Boolean).join("; ");
+        console.log(`  ${label(p)}: ${made || (args.includes("--dry-run") ? "dry run, nothing made (would render: above)" : "nothing new")}`);
       }
       for (const p of f.players) {
         const absent = f.absent.filter((a) => a.key === p.key && !f.noPlayer.includes(a.demo));

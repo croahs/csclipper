@@ -58,7 +58,8 @@
   },
   "film": {
     "minScore": 75,
-    "settlesDemo": true
+    "settlesDemo": true,
+    "bloopers": { "minScore": 50 }
   },
   "sources": {
     "faceit": {

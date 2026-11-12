@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { LIBRARY_DIR, STATE_DIR } from "../config.ts";
+import type { BlooperType } from "../film/bloopers.ts";
 
 export const CLIPS_DIR = path.join(LIBRARY_DIR, "clips");
 const INDEX = path.join(LIBRARY_DIR, "index.json");
@@ -35,11 +36,14 @@ export type ClipEntry = {
   frames: number;
   createdAt: string;
   moment?: Record<string, unknown>; // rank, score and signals when the clip came from pnpm moments
-  kind?: "highlight" | "deaths" | "kills"; // absent: highlight (clips made before the reels)
+  kind?: "highlight" | "deaths" | "kills" | "blooper"; // absent: highlight (clips made before the reels)
   leadOverride?: number;
   // pnpm go --film: whose first person a highlight is, when not STEAM_ID64's (absent: the main POV's, as every
   // entry made before). name as the demo has it; key = povKey, never the SteamID (the library stores none).
   player?: { name: string; key: string };
+  // pnpm go --film's blooper (kind "blooper", no moment): its type, its score (0-100 on the blooper scale,
+  // not a highlight's) and what the score was built from (src/film/bloopers.ts).
+  blooper?: { type: BlooperType; score: number; detail: Record<string, number | string> };
   reel?: { takes: { round: number; tick: number; weapon: string; player: string }[] }; // a reel's takes: who killed the POV (deaths) or whom the POV killed (kills) // seconds of lead-in a re-render asked for instead of config.json → clip.leadInSeconds
   // How the clip was trimmed: "scheduled" = by the scheduled record-start mapping (src/post);
   // absent = clips made before M3's simplification, timed from muzzle flash and gunshots.

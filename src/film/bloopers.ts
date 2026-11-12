@@ -4,6 +4,7 @@
 // enemies who face away without killing any of them. detectBloopers is pure: the parse (rounds,
 // deaths, hurts, fires) and the track (positions and views every 0.25 s, src/film/track.ts) in,
 // scored bloopers out. Thresholds: BLOOPER_DEFAULTS, overridable in config.json → film.bloopers.
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { ROOT } from "../config.ts";
@@ -11,12 +12,12 @@ import { weaponName } from "../clip/index.ts";
 import { NOT_A_GUN, facingDeg, matchEndTick, type ParsedDemo, type Round, type Team } from "../parse/demo.ts";
 import { MARGIN_TICKS, SETTLE_TICKS } from "../render/controller/index.ts";
 import { CHAIN_AFTER_TICKS, FIRST_SCHEDULE } from "../render/controller/cfg.ts";
-import { sampleAt, type Sample, type Track } from "./track.ts";
+import { hasSpotter, sampleAt, type Sample, type Track } from "./track.ts";
 
 export type BlooperType = "teamkill" | "selfkill" | "spray" | "behind";
 export type Blooper = {
   type: BlooperType; steamid: string; name: string; round: number;
-  tick: number; // the anchor event: the kill, the death, the spray's last shot, the window's start
+  tick: number; // the anchor event: the kill, the death, the spray's last shot, the window's start (of a window over 25 s: the span's start)
   startTick: number; endTick: number; // the clip span, clamped like a reel take
   score: number; // 0..100, higher = funnier; comparable across types
   title: string; // "<name> · <map> · R<round> · <what>"
@@ -182,7 +183,7 @@ export function detectBloopers(p: ParsedDemo, track: Track, roster: string[], cf
       const shots = p.fires.filter((f) => f.player === id && f.round === r.n && inRound(f.tick) && isGun(f.weapon));
       const hurtsBetween = (a: string, b: string, from: number, to: number) =>
         p.hurts.filter((h) => h.round === r.n && h.attacker === a && h.victim === b && h.tick >= from && h.tick <= to).reduce((s, h) => s + h.dmg, 0);
-      const sees = (a: number, b: number, i: number) => (sampleAt(track, b, i).spottedBy & (1 << a)) !== 0; // a had b spotted at sample i
+      const sees = (a: number, b: number, i: number) => hasSpotter(sampleAt(track, b, i).spottedBy, a); // a had b spotted at sample i
 
       // 3. spray: an episode of minBullets+ gun shots, no kill, an enemy right in front most of the time.
       const sc = cfg.spray;
@@ -250,7 +251,9 @@ export function detectBloopers(p: ParsedDemo, track: Track, roster: string[], cf
           return [{ e, units: dist(a, b) }];
         });
       });
-      const need = Math.max(1, Math.round((bc.minSeconds * t) / track.every));
+      // minSeconds as a tick span: `need` samples `every` ticks apart span need - 1 intervals, so a
+      // window (and an N streak) needs one sample more than minSeconds holds intervals.
+      const need = Math.max(1, Math.ceil((bc.minSeconds * t) / track.every)) + 1;
       for (let s = 0; s < rs.length; ) {
         if (counted[s].length < bc.minEnemies) { s++; continue; }
         let e = s;
@@ -281,17 +284,45 @@ export function detectBloopers(p: ParsedDemo, track: Track, roster: string[], cf
           + 5 * clamp01((run.length - need) / (2 * need));
         const score = sighted ? raw : Math.min(raw, 35);
         const end = deathSoon ? Math.min(to + S(bc.noKillAfterSeconds), deathSoon.tick + S(2)) : to + S(bc.noKillAfterSeconds);
+        // The span: 3 s before the window, at most 25 s. A longer window keeps its last 25 s, and the
+        // anchor (the window's start) moves to the span's start, or clampSpan would drop it.
+        const spanFrom = Math.max(from - S(3), end - S(25));
         keep([r, {
-          type: "behind", steamid: id, round: r.n, tick: from, score,
+          type: "behind", steamid: id, round: r.n, tick: Math.max(from, spanFrom), score,
           what: `behind ${n}, no kill`,
           detail: {
-            enemies: n, who: who.map(nameOf).join(", "), seconds: Math.round(((to - from) / t + track.every / t) * 10) / 10, shots: fired, dealt, units: Math.round(units),
+            enemies: n, who: who.map(nameOf).join(", "), seconds: Math.round(((to - from) / t) * 10) / 10, shots: fired, dealt, units: Math.round(units),
             died: deathSoon ? (diedToThem ? "to them" : "yes") : "no", spotted: spotted ? "yes" : "no", sighted: sighted ? "yes" : "no",
           },
-        }, Math.max(from - S(3), end - S(25)), end]);
+        }, spanFrom, end]);
       }
       for (const a of best.values()) add(...a);
     }
   }
   return out.sort((a, b) => b.score - a.score || a.tick - b.tick);
 }
+
+/**
+ * A blooper's library id: sha256("<demo sha>:blooper:<type>:<anchor tick>:<povKey or empty>"), 16 hex.
+ * Built from the event, never the span, so a threshold or span change never re-makes a blooper the
+ * library holds (held = this id in the index or in state/deleted.json). povKey: empty for STEAM_ID64.
+ */
+export const blooperId = (demoSha256: string, type: BlooperType, tick: number, povKey?: string) =>
+  createHash("sha256").update(`${demoSha256}:blooper:${type}:${tick}:${povKey ?? ""}`).digest("hex").slice(0, 16);
+
+/**
+ * The film batch's pick: bloopers scoring minScore or more; of one player's that overlap in ticks,
+ * only the higher score (a tie: the earlier anchor). Highest score first.
+ */
+export function pickBloopers<T extends Pick<Blooper, "steamid" | "score" | "tick" | "startTick" | "endTick">>(found: T[], minScore: number): T[] {
+  const kept: T[] = [];
+  for (const b of found.filter((x) => x.score >= minScore).sort((x, y) => y.score - x.score || x.tick - y.tick))
+    if (!kept.some((k) => k.steamid === b.steamid && k.startTick < b.endTick && b.startTick < k.endTick)) kept.push(b);
+  return kept;
+}
+
+/** What a render unit and a library entry need of a blooper (JobInput.blooper): its id, span, title and score. */
+export type BlooperClip = Pick<Blooper, "type" | "score" | "detail" | "title" | "round" | "startTick" | "endTick"> & { id: string };
+export const blooperClip = (b: Blooper, demoSha256: string, povKey?: string): BlooperClip => ({
+  id: blooperId(demoSha256, b.type, b.tick, povKey), type: b.type, score: b.score, detail: b.detail, title: b.title, round: b.round, startTick: b.startTick, endTick: b.endTick,
+});

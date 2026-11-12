@@ -41,7 +41,12 @@ async function rerender(ref: string, timeoutS: number | undefined, lead: number 
   if (!pov) throw new Error(`clip ${entry.no ?? id} is ${entry.player!.name}'s, who is no longer in .env FILM_STEAM_ID64S; nothing rendered`);
   const povInput = pov !== mainPov ? { pov } : {};
   let r;
-  if (!Array.isArray(entry.moment?.killTicks)) {
+  if (entry.kind === "blooper" && entry.blooper) {
+    // A blooper: the same span again under its own id (from the event: blooperId); --lead does not apply.
+    if (lead !== undefined) throw new Error("--lead applies to ranked moments; a blooper is re-rendered over its own span");
+    console.log(`re-rendering clip ${entry.no ?? id}: blooper ${entry.title} (ticks ${entry.startTick}-${entry.endTick})`);
+    r = await clipJob({ demo: entry.demo, blooper: { id, ...entry.blooper, title: entry.title, round: entry.round, startTick: entry.startTick, endTick: entry.endTick }, force: true, dryRun, timeoutS, ...povInput });
+  } else if (!Array.isArray(entry.moment?.killTicks)) {
     if (lead !== undefined) throw new Error("--lead applies to ranked moments; a hand-written range is re-rendered by its own ticks");
     // A hand-written range: the same ticks again (its id comes from them).
     console.log(`re-rendering clip ${entry.no ?? id}: ticks ${entry.startTick}-${entry.endTick}`);

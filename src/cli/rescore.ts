@@ -2,6 +2,7 @@
 // breakdown, flags) recomputed with the current scoring.json from each demo's cached parse
 // (state/<sha>/parse.json; a film player's clip from that player's, in state/<sha>/pov-<povKey>/), then the library page rewritten. Display only: no clip is rendered,
 // trimmed or renumbered, no demo is unsettled, and the clip spans stay as rendered (AGENTS.md).
+// Bloopers keep the score they were made with (they are counted, not rescored).
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { loadClipRules, loadRoster, povKey, STATE_DIR } from "../config.ts";
@@ -62,6 +63,9 @@ const changed = dryRun ? apply(structuredClone(readIndex().clips)) : editIndex(a
 for (const l of lines) console.log(l);
 if (stale.length) console.log(`older parse, not used (pnpm moments "<demo>" re-parses it): ${stale.join(", ")}`);
 if (missing.length) console.log(`not rescored (no current cached parse, or the round is no longer a moment): clips ${missing.join(", ")}`);
+// Bloopers carry their own score (src/film/bloopers.ts), not a moment's: never rescored here.
+const bloopers = Object.values(readIndex().clips).filter((c) => c.kind === "blooper").length;
+if (bloopers) console.log(`not rescored (bloopers, scored on their own scale): ${bloopers} clip(s)`);
 if (notInRoster.length) console.log(`not rescored (their player is no longer in .env FILM_STEAM_ID64S): ${notInRoster.length} clip(s): ${notInRoster.join(", ")}`);
 console.log(`${changed} clip${changed === 1 ? "" : "s"} ${dryRun ? "would change" : "rescored"}`);
 // A pnpm go still running keeps its "run in progress" flag on the page.

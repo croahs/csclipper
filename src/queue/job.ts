@@ -14,6 +14,7 @@ import { RenderLock } from "../render/controller/guards.ts";
 import { toolVersions } from "../render/versions.ts";
 import { post } from "../post/index.ts";
 import type { ClipSpec } from "../clip/index.ts";
+import type { BlooperClip } from "../film/bloopers.ts";
 import { writeLibraryPage } from "../library/page.ts";
 import { clipId, clipPath, clipTmpPath, ensureClipsDir, publish, readDeleted, readIndex, recordFailure, writeJsonAtomic, type ClipEntry } from "../library/index.ts";
 import { pruneTakes } from "./prune.ts";
@@ -41,6 +42,11 @@ export type JobInput = {
    * parse and the render key; the look cfg and the launch identities stay the main account's.
    */
   pov?: string;
+  /**
+   * pnpm go --film's blooper instead of a spec: one take over its span, played whole at normal speed
+   * (no action windows), its id the event's (blooperId), so held means that id in the index or deleted.
+   */
+  blooper?: BlooperClip;
 };
 /** done: rendered now; skipped: already in the library; failed: recorded in state/failures.json. */
 /** captured: rendered and its capture recorded, post still to come (runJobs renderOnly). */
@@ -122,10 +128,11 @@ export function heldEntry(clips: Record<string, ClipEntry>, id: string, demoSha2
 export type PreparedJob = Awaited<ReturnType<typeof prepareJob>>;
 
 export async function prepareJob(o: JobInput) {
-  const { demo, spec } = o;
+  const { demo, spec, blooper } = o;
+  if (spec && blooper) throw new Error("a job is a moment or a blooper, not both");
   const debugCommands = o.debugCommands ?? [];
-  const startTick = spec ? spec.startTick : o.startTick!;
-  const endTick = spec ? spec.endTick : o.endTick!;
+  const startTick = spec ? spec.startTick : blooper ? blooper.startTick : o.startTick!;
+  const endTick = spec ? spec.endTick : blooper ? blooper.endTick : o.endTick!;
   if (!Number.isInteger(startTick) || !Number.isInteger(endTick) || endTick <= startTick) throw new Error("bad tick range");
   const settings = loadSettings();
   // ids is never altered: the guards read ids.pov as the main account they refuse to launch on.
@@ -140,10 +147,10 @@ export async function prepareJob(o: JobInput) {
   // Another POV's entry names its player (the parse's name, else the key), never the SteamID.
   const player = playerKey ? { name: parsed?.identity.name || playerKey, key: playerKey } : undefined;
   // A moment carries the match round (pre-match rounds excluded) and its own title.
-  const round = spec ? spec.round : facts.round;
-  const id = clipId(facts.demoSha256, round, startTick, endTick, playerKey);
+  const round = spec ? spec.round : blooper ? blooper.round : facts.round;
+  const id = blooper ? blooper.id : clipId(facts.demoSha256, round, startTick, endTick, playerKey);
   if (spec && id !== spec.id) throw new Error(`clip id ${id} differs from the moment's ${spec.id}`);
-  const title = spec ? spec.title : `${player ? `${player.name} · ` : ""}${facts.map} · R${facts.round} · ticks ${startTick}-${endTick}`;
+  const title = spec ? spec.title : blooper ? blooper.title : `${player ? `${player.name} · ` : ""}${facts.map} · R${facts.round} · ticks ${startTick}-${endTick}`;
   const cutoff = loadCrosshairCutoff();
   const crosshair = crosshairSource(facts.patch, cutoff);
   const look = lookCfg(ids.cs2Exe, ids.pov, crosshair);
@@ -154,7 +161,8 @@ export async function prepareJob(o: JobInput) {
     // demos, M0.2), so the key changes only by those lines. "own" changes the picture (observer crosshair 0).
     ...(crosshair === "own" ? { crosshair } : {}) };
   // The POV id is part of the key but never stored in the library (for STEAM_ID64 the key is the one it always was).
-  const renderKey = createHash("sha256").update(JSON.stringify({ ...renderInputs, pov })).digest("hex").slice(0, 16);
+  // A blooper's id does not carry its span (blooperId), so its key does: a capture of another span is never reused for it.
+  const renderKey = createHash("sha256").update(JSON.stringify({ ...renderInputs, pov, ...(blooper ? { span: [startTick, endTick] } : {}) })).digest("hex").slice(0, 16);
   /** A validated raw capture for this render key exists, so the job needs post only, no launch. */
   const hasCapture = () => !!completedCapture(id, renderKey, `${captureSize(settings).width}x${captureSize(settings).height}`, 1);
   /**
@@ -315,6 +323,7 @@ export async function runJobs(units: RenderUnit[], ro: RunOptions = {}): Promise
 
 function postAndPublish(prep: PreparedJob, capture: TakeCapture & { renderKey: string; workDir: string }, attempt: string, fail: (reasons: string[]) => JobResult): JobResult {
   const { o, demo, spec, startTick, endTick, settings, facts, round, id, title, crosshair, cutoff, versions, renderInputs, renderKey, player } = prep;
+  const b = o.blooper;
   ensureClipsDir();
   const tmp = clipTmpPath(id, attempt);
   const p = post(capture.video, capture.audio, capture.mapping, startTick, endTick, settings, tmp, spec?.windows);
@@ -324,7 +333,8 @@ function postAndPublish(prep: PreparedJob, capture: TakeCapture & { renderKey: s
     ...(spec ? { moment: { rank: spec.rank, score: spec.score, breakdown: spec.breakdown, kills: spec.kills, killTicks: spec.killTicks, weapons: spec.weapons, flags: spec.flags, ...(spec.clutch ? { clutch: { vs: spec.clutch.vs, won: spec.clutch.won } } : {}) } } : {}),
     startTick, endTick, seconds: p.plan!.seconds, frames: p.plan!.frames, createdAt: new Date().toISOString(),
     renderKey, render: { ...renderInputs, node: versions.node, mapping: capture.mapping, trim: p.plan, segments: p.segments!.map(({ startTick, endTick, speed, outSeconds }) => ({ startTick, endTick, speed, outSeconds })), encoder: p.encoder, audio: p.audio, workDir: capture.workDir },
-    kind: "highlight", timing: "scheduled",
+    kind: b ? "blooper" : "highlight", timing: "scheduled",
+    ...(b ? { blooper: { type: b.type, score: b.score, detail: b.detail } } : {}),
     crosshair: { source: crosshair, demoPatch: facts.patch, cutoff: cutoff ?? null },
     ...(o.leadOverride !== undefined ? { leadOverride: o.leadOverride } : {}),
     ...(player ? { player } : {}),

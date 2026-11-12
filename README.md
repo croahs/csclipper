@@ -82,6 +82,20 @@ star, trim and share clips from the page itself. More commands and every
 setting (`config.json`) are in
 [docs/modules.md](docs/modules.md).
 
+## A film with your friends
+
+1. Put your friends' SteamID64s in `.env` as `FILM_STEAM_ID64S`,
+   comma-separated (`.env.example` has the line).
+2. Drop the demos you played together into `demos/inbox/` as above.
+3. Run `pnpm film` (render account, CS2 closed, as for `pnpm go`).
+
+Each player in each demo gets his highlights scoring 75 or more and
+his bloopers (teamkills, deaths by his own grenade or a fall, sprays
+without a kill, standing behind enemies without a kill), all from his
+own view, one CS2 launch per demo. They land in the same library: pick
+a player under "Player" and "Bloopers" under "Kind". A demo already
+filmed is skipped; `pnpm film --dry-run` lists what it would make.
+
 ## Why a second Steam account
 
 HLAE injects into the game to drive the camera and record. Renders always

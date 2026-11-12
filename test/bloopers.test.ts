@@ -128,3 +128,27 @@ test("span: clamped at the round start and short of the match end", () => {
   assert.ok(late.endTick < END && late.endTick >= 19900, `ends ${late.endTick}, short of the match end ${END}`);
   assert.equal(late.endTick, END - 32 - 16 - 1);
 });
+
+// B1-B3 (the first n) ahead of A1 with their backs to him between ticks from and to.
+const backsBetween = (n: number, from: number, to: number) => (id: string, t: number) => (t < from || t > to ? (id === A1 ? { X: 0, Y: 0, yaw: 0 } : undefined) : backs(n)(id, 12000));
+
+test("behind: minSeconds is a tick span (4 samples cover 0.75 s, 5 cover 1 s), and the seconds reported are that span", () => {
+  // Samples fall on 11000 + 16k: 12008, 12024, ... A window of 12008-12056 is 4 samples, 12008-12072 is 5.
+  const p = demo({ fires: fires(A1, 12010, 6, 10, "weapon_glock") });
+  assert.deepEqual(only(p, "behind", track(backsBetween(2, 12008, 12056), [[A1, B1]])), [], "0.75 s is under the 1 s minimum");
+  const [b] = only(p, "behind", track(backsBetween(2, 12008, 12072), [[A1, B1]]));
+  assert.equal(b?.detail.seconds, 1);
+  // The N streak needs the same span: a third enemy for 4 samples of the 5 leaves N at 2.
+  const three = (id: string, t: number) => (id === B3 && t > 12056 ? undefined : backsBetween(3, 12008, 12072)(id, t));
+  assert.equal(only(p, "behind", track(three, [[A1, B1]]))[0]?.title, "anna · de_test · R1 · behind 2, no kill");
+});
+
+test("behind: a window longer than the 25 s cap keeps its last 25 s, anchored at the span's start", () => {
+  const to = 12008 + 30 * 64;
+  const [b] = only(demo({ fires: fires(A1, 12050, 6, 10, "weapon_glock") }), "behind", track(backsBetween(2, 12008, to), [[A1, B1]]));
+  assert.ok(b, "kept, not dropped by clampSpan");
+  assert.equal(b.endTick, to + 6 * 64, "noKillAfterSeconds after the window");
+  assert.equal(b.startTick, b.endTick - 25 * 64);
+  assert.equal(b.tick, b.startTick);
+  assert.equal(b.detail.seconds, 30);
+});
