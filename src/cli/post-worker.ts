@@ -4,14 +4,16 @@
 // never takes the clip lock (pnpm go holds it for its launches) and never writes the ledger:
 // it writes its results to a file and pnpm go records them.
 //   tsx src/cli/post-worker.ts <job.json> <result.json>
-//   job.json: { demo, highlights: [clip ids], reels: ["deaths" | "kills"] }
+//   job.json: { demo, highlights: [{ id, pov: povKey }], reels: ["deaths" | "kills"] }
+// A highlight's POV comes as its povKey (no SteamID in the file) and is resolved through the roster
+// (STEAM_ID64 and FILM_STEAM_ID64S); a key no longer in it fails that unit.
 import { readFileSync, writeFileSync } from "node:fs";
-import { loadIdentities } from "../config.ts";
+import { loadIdentities, loadRoster, povKey } from "../config.ts";
 import { buildMoments } from "../clip/moments.ts";
 import { highlightUnit, prepareJob, runJobs, type JobResult, type RenderUnit } from "../queue/job.ts";
 import { prepareReel, type ReelKind } from "../reel/index.ts";
 
-type PostJob = { demo: string; highlights: string[]; reels: ReelKind[] };
+type PostJob = { demo: string; highlights: { id: string; pov: string }[]; reels: ReelKind[] };
 
 async function main() {
   const [jobFile, resultFile] = process.argv.slice(2);
@@ -19,12 +21,22 @@ async function main() {
   const units: RenderUnit[] = [];
   const results: JobResult[] = [];
   const o = { postOnly: true, inBatch: true };
-  if (job.highlights.length) {
-    const { specs } = await buildMoments(job.demo, loadIdentities().pov);
-    for (const id of job.highlights) {
+  const mainPov = loadIdentities().pov;
+  // The main POV resolves without the film list, so a normal pnpm go never depends on FILM_STEAM_ID64S.
+  let roster: string[] | undefined;
+  const resolve = (key: string) => (key === povKey(mainPov) ? mainPov : (roster ??= loadRoster()).find((id) => povKey(id) === key));
+  for (const key of new Set(job.highlights.map((h) => h.pov))) {
+    const mine = job.highlights.filter((h) => h.pov === key);
+    const pov = resolve(key);
+    if (!pov) {
+      for (const h of mine) results.push({ status: "failed", id: h.id, title: h.id, reasons: [`player ${key} is no longer in the roster (.env STEAM_ID64 / FILM_STEAM_ID64S); not posted`] });
+      continue;
+    }
+    const { specs } = await buildMoments(job.demo, pov, undefined, mainPov);
+    for (const { id } of mine) {
       const spec = specs.find((s) => s.id === id);
       if (!spec) { results.push({ status: "failed", id, title: id, reasons: ["moment no longer among the demo's ranked moments"] }); continue; }
-      units.push(highlightUnit(await prepareJob({ demo: job.demo, spec, ...o })));
+      units.push(highlightUnit(await prepareJob({ demo: job.demo, spec, ...o, ...(pov !== mainPov ? { pov } : {}) })));
     }
   }
   for (const kind of job.reels) {

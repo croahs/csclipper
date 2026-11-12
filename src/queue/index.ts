@@ -10,13 +10,16 @@
 // state/.go.lock and the render locks behind, to be removed by hand after
 // checking no cs2.exe / HLAE.exe is left, as for every lock here.) A clip the library already holds
 // for its render key is done, whatever the ledger says. A job that failed
-// twice is not retried until --retry-failed.
+// twice is not retried until --retry-failed. --film runs the same loop over every roster player per
+// demo (BatchOptions.film): each player's own caches, clip ids and render keys, no reels, and its own
+// settle record (state/film.json); the normal pass is untouched by it.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { constants, setPriority } from "node:os";
 import path from "node:path";
-import { Refusal, STATE_DIR, loadBatch, loadIdentities, loadReels, pickMoments } from "../config.ts";
+import { Refusal, STATE_DIR, loadBatch, loadFilm, loadIdentities, loadReels, loadRoster, pickFilm, pickMoments, povKey } from "../config.ts";
 import { buildMoments } from "../clip/moments.ts";
+import { PovAbsent } from "../parse/demo.ts";
 import type { ClipSpec } from "../clip/index.ts";
 import { ingest, readRegistry } from "../ingest/index.ts";
 import { cleanupUnverified } from "../render/controller/index.ts";
@@ -31,6 +34,10 @@ import { sweepUnderClipLock, type Pruned } from "./prune.ts";
 /** Demos marked processed by pnpm go --settle-existing: sha256 → when. pnpm go skips them. */
 const SETTLED = path.join(STATE_DIR, "settled.json");
 const readSettled = (): Record<string, string> => (existsSync(SETTLED) ? JSON.parse(readFileSync(SETTLED, "utf8")) : {});
+/** pnpm go --film's own settle record: "<demo sha256>:<povKey>" → when that player's film pass over that demo finished. */
+const FILM = path.join(STATE_DIR, "film.json");
+const readFilmState = (): Record<string, string> => (existsSync(FILM) ? JSON.parse(readFileSync(FILM, "utf8")) : {});
+export const filmPair = (sha256: string, key: string) => `${sha256}:${key}`;
 
 const LEDGER = path.join(STATE_DIR, "queue.json");
 const MAX_ATTEMPTS = 2; // the first try and one retry
@@ -54,7 +61,15 @@ export type BatchOptions = {
   settleExisting?: boolean;
   /** --no-reels: highlights only for this run, whatever config.json reels says. */
   noReels?: boolean;
+  /**
+   * --film: every roster player's (loadRoster) highlights scoring config.json film.minScore or more,
+   * from that player's first person, in every registered demo still on disk, settled ones too; no
+   * reels. Done pairs are kept in state/film.json.
+   */
+  film?: boolean;
 };
+/** What a launch renders: a highlight, a reel, or (piece C, not built yet) a film pass's blooper. */
+export type UnitKind = "highlight" | "deaths" | "kills" | "blooper";
 export type BatchReport = {
   ingested: number; demos: number; selected: number;
   rendered: string[]; skipped: string[]; failed: string[]; givenUp: string[];
@@ -62,8 +77,13 @@ export type BatchReport = {
   deferred: string[]; emptyDemos: string[]; demoErrors: string[];
   /** --repost: selected moments without a completed capture (a normal pnpm go renders them). */
   needsRender: string[];
-  /** Clips this run added to the library, with their numbers (the standing order's report). */
-  made: { kind: string; no?: number; title: string }[];
+  /** Clips this run added to the library, with their numbers (the standing order's report); player: whose first person (--film). */
+  made: { kind: string; no?: number; title: string; player?: { key: string; name: string } }[];
+  /**
+   * --film: the roster (povKey and the name a parse gave it this run), demos a player is not in, demos
+   * with no roster player, pairs already done before this run, pairs this run finished, registered demos no longer on disk.
+   */
+  film?: { minScore: number; players: { key: string; name?: string }[]; absent: { demo: string; key: string }[]; noPlayer: string[]; alreadyDone: number; pairsDone: number; missingFiles: number };
   /** Demos skipped because they are settled; --settle-existing: how many it settled now. */
   settled: number; settledNow?: number;
   /** Demos this run settled because its pass over them finished (every selected moment rendered, held or failed for good). */
@@ -76,6 +96,7 @@ export type BatchReport = {
 /** Exit code: 0 ok, 1 a job or demo failed or was given up, 2 refused, 3 cleanup not verified. */
 export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchReport; code: number }> {
   // The whole batch refuses up front: nothing is ingested or rendered.
+  if (o.film && o.settleExisting) throw new Error("--film and --settle-existing together: --settle-existing settles demos for pnpm go, not film pairs");
   const refusal = batchRefusal(o);
   if (refusal) throw refusal;
   const report: BatchReport = { ingested: 0, demos: 0, selected: 0, rendered: [], skipped: [], failed: [], givenUp: [], deferred: [], emptyDemos: [], demoErrors: [], needsRender: [], made: [], settled: 0, autoSettled: [] };
@@ -101,13 +122,61 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
 
   const batch = loadBatch();
   const pov = loadIdentities().pov;
-  const queue: { demo: string; sha256: string; spec: ClipSpec }[] = [];
+  // pov: a film roster player other than STEAM_ID64 (absent: the main POV); player: the name the parse gives (--film).
+  const queue: { demo: string; sha256: string; spec: ClipSpec; pov?: string; player?: string }[] = [];
   const demoFiles = new Map<string, string>(); // every demo this run handles (its reels too, even without highlights)
   const registry = Object.values(readRegistry()).sort((a, b) => a.addedAt.localeCompare(b.addedAt));
   report.demos = registry.length;
-  // Settled demos are done: their moments that were never rendered stay unrendered (Peder,
-  // 2026-10-15: rule changes apply from the next new demo, not retroactively).
+  // --film: the roster, the pairs done before this run, and per demo the pairs this run looked at
+  // (present or not in the demo: settled together when the demo's pass finishes) or could not parse.
+  const film = o.film ? loadFilm() : undefined;
+  const roster = o.film ? loadRoster() : [];
+  const filmDone = o.film ? readFilmState() : {};
+  const looked = new Map<string, string[]>();
+  const filmOpen = new Set<string>();
+  if (film) report.film = { minScore: film.minScore, players: roster.map((id) => ({ key: povKey(id) })), absent: [], noPlayer: [], alreadyDone: 0, pairsDone: 0, missingFiles: 0 };
+  const nameOf = (key: string) => report.film?.players.find((p) => p.key === key)?.name ?? `player ${key}`;
   for (const d of registry) {
+    if (film) {
+      // Every registered demo still on disk, settled or not; per roster player, unless the pair is done.
+      if (!existsSync(d.file)) { report.film!.missingFiles++; continue; }
+      const keys: string[] = [];
+      let present = 0;
+      for (const id of roster) {
+        const key = povKey(id);
+        if (filmDone[filmPair(d.sha256, key)]) { report.film!.alreadyDone++; continue; }
+        try {
+          const m = await buildMoments(d.file, id, undefined, pov);
+          const picked = pickFilm(m.specs, film);
+          const seen = report.film!.players.find((p) => p.key === key)!;
+          seen.name ??= m.parsed.identity.name;
+          console.log(`${m.parsed.demo.map} ${d.originalName} · ${m.parsed.identity.name}: ${m.specs.length} moments, ${picked.length} at ${film.minScore}+${m.cached ? " (cached)" : ""}`);
+          for (const spec of picked) queue.push({ demo: d.file, sha256: d.sha256, spec, ...(id !== pov ? { pov: id } : {}), player: m.parsed.identity.name });
+          keys.push(key);
+          present++;
+        } catch (e) {
+          // Not in this demo: no error, and the pair is settled with the demo's pass.
+          if (e instanceof PovAbsent) {
+            console.log(`${d.originalName} · ${nameOf(key)}: not in this demo`);
+            report.film!.absent.push({ demo: d.originalName, key });
+            keys.push(key);
+            continue;
+          }
+          const reason = (e as Error).message;
+          recordFailure(`demo:${d.sha256}:${key}`, { at: new Date().toISOString(), reasons: [reason], startTick: 0, endTick: 0, demo: d.file });
+          report.demoErrors.push(`${d.originalName} (${nameOf(key)}): ${reason}`);
+          console.error(`demo failed: ${d.originalName} (${nameOf(key)}): ${reason}`);
+          filmOpen.add(d.sha256);
+        }
+      }
+      if (!keys.length && !filmOpen.has(d.sha256)) continue; // every pair done before
+      if (!present && keys.length === roster.length) report.film!.noPlayer.push(d.originalName);
+      looked.set(d.sha256, keys);
+      demoFiles.set(d.sha256, d.file);
+      continue;
+    }
+    // Settled demos are done: their moments that were never rendered stay unrendered (Peder,
+    // 2026-10-15: rule changes apply from the next new demo, not retroactively).
     // A repost only posts existing captures and never adds a render, so it looks at settled demos too.
     if (settled[d.sha256] && !o.repostOnly) { report.settled++; continue; }
     try {
@@ -133,11 +202,21 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   // One launch per demo (chained takes): its jobs are gated one by one, then rendered together.
   const reels = loadReels();
   let posting: Promise<void> = Promise.resolve();
-  const kinds = o.noReels ? [] : (["deaths", "kills"] as const).filter((k) => reels[k].enabled);
+  // A film pass makes no reels, whatever config.json reels says.
+  const kinds = o.noReels || film ? [] : (["deaths", "kills"] as const).filter((k) => reels[k].enabled);
   // A finished pass settles its demo: later rescoring never adds work for it (only pnpm clip --rerender
   // or pnpm unsettle do). Not on a dry run, a repost or a --no-reels pass (its reels are still owed),
-  // and not while a moment still has a retry left.
+  // and not while a moment still has a retry left. A film pass settles the pairs it looked at instead
+  // (state/film.json) and, with film.settlesDemo, the demo for pnpm go as well.
   const settle = (sha: string) => {
+    if (film) {
+      if (!filmSettles(o)) return;
+      const s = settleFilm(readFilmState(), readSettled(), sha, looked.get(sha) ?? [], film.settlesDemo, new Date().toISOString());
+      if (s.film) writeJsonAtomic(FILM, s.film);
+      if (s.settled) { writeJsonAtomic(SETTLED, s.settled); report.autoSettled.push(sha); }
+      report.film!.pairsDone += s.pairs.length;
+      return;
+    }
     if (!settlesDemos(o)) return;
     const s = readSettled();
     if (s[sha]) return;
@@ -147,14 +226,16 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   };
   demos: for (const [sha256, file] of demoFiles) {
     const items = queue.filter((q) => q.sha256 === sha256);
-    let open = false; // a moment of this demo failed in a way the next run retries
-    type Ready = { unit: RenderUnit; kind: "highlight" | "deaths" | "kills"; key: string; prevStatus?: "running" | "done" | "failed"; attempts: number };
+    let open = filmOpen.has(sha256); // a moment of this demo failed in a way the next run retries (--film: or a player's parse did)
+    // pov: the highlight's povKey (the post worker resolves it through the roster); player: its name (--film report).
+    type Ready = { unit: RenderUnit; kind: UnitKind; key: string; prevStatus?: "running" | "done" | "failed"; attempts: number; pov?: string; player?: string };
     const ready: Ready[] = [];
-    for (const { demo, spec } of items) {
+    let lastPlayer: string | undefined;
+    for (const { demo, spec, pov: itemPov, player } of items) {
       let prep: PreparedJob;
       let done: boolean;
       try {
-        prep = await prepareJob({ demo, spec, timeoutS: o.timeoutS, postOnly: o.repostOnly, inBatch: true });
+        prep = await prepareJob({ demo, spec, timeoutS: o.timeoutS, postOnly: o.repostOnly, inBatch: true, ...(itemPov ? { pov: itemPov } : {}) });
         done = prep.inLibrary();
       } catch (e) {
         // Nothing was launched: record it and go on with the next job.
@@ -180,9 +261,18 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
         report.givenUp.push(`${spec.title} (${prev.attempts} attempts: ${prev.lastReasons?.join("; ") ?? "interrupted"})`);
         continue;
       }
-      if (o.dryRun) { console.log(`would render: #${spec.rank} ${spec.title} (score ${spec.score})`); continue; }
-      ready.push({ unit: highlightUnit(prep), kind: "highlight", key, prevStatus: prev?.status, attempts: (prev?.attempts ?? 0) + 1 });
+      if (o.dryRun) {
+        // --film: per demo and player (the main POV's titles carry no name, so each player gets a heading line).
+        if (film && player !== lastPlayer) { console.log(`${registry.find((d) => d.sha256 === sha256)?.originalName ?? path.basename(file)} · ${player}:`); lastPlayer = player; }
+        console.log(film ? `would render: ${spec.title} (score ${spec.score})` : `would render: #${spec.rank} ${spec.title} (score ${spec.score})`);
+        continue;
+      }
+      ready.push({ unit: highlightUnit(prep), kind: "highlight", key, prevStatus: prev?.status, attempts: (prev?.attempts ?? 0) + 1, pov: povKey(itemPov ?? pov), player });
     }
+
+    // Piece C seam: a film pass adds each demo's blooper units here (kind "blooper"), gated like the
+    // highlights above (inLibrary, ledger, attempts, --dry-run) and pushed to `ready`, so they render in
+    // this demo's one launch. Not built yet; postWorker's job file needs a field for them too.
     // The demo's reels (config.json reels), gated like its highlights and rendered in the same launch.
     for (const kind of kinds) {
       let unit: RenderUnit | undefined;
@@ -260,7 +350,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
       if (res.status === "done") {
         report.rendered.push(res.title);
         const e = readIndex().clips[res.id];
-        report.made.push({ kind: e?.kind ?? "highlight", no: e?.no, title: res.title });
+        report.made.push({ kind: e?.kind ?? "highlight", no: e?.no, title: res.title, ...(r.player && r.pov ? { player: { key: r.pov, name: r.player } } : {}) });
       }
       else if (res.status === "skipped") report.skipped.push(res.title);
       else { report.failed.push(`${res.title}: ${res.reasons?.join("; ")}`); code = Math.max(code, 1); }
@@ -278,7 +368,7 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
     // Posts queue behind each other, one at a time, and the launches never wait for them: every
     // capture runs back to back, so CS2 is done early, and the posts catch up afterwards (Peder, 2026-11-02).
     if (toPost.length) {
-      const units = toPost.map((r) => ({ id: r.unit.id, title: r.unit.title, kind: r.kind }));
+      const units = toPost.map((r) => ({ id: r.unit.id, title: r.unit.title, kind: r.kind, pov: r.pov }));
       posting = posting.then(() => postWorker(file, units)).then((done) => {
         let finalHere = allFinal;
         for (const r of toPost) {
@@ -317,12 +407,14 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
  * process stays free to drive the next launch. Resolves with the worker's results; a worker
  * that dies yields failures, never a stuck batch.
  */
-function postWorker(demo: string, units: { id: string; title: string; kind: "highlight" | "deaths" | "kills" }[]): Promise<JobResult[]> {
+function postWorker(demo: string, units: { id: string; title: string; kind: UnitKind; pov?: string }[]): Promise<JobResult[]> {
   const dir = path.join(STATE_DIR, "post-jobs");
   mkdirSync(dir, { recursive: true });
   const stamp = `${Date.now()}-${process.pid}`;
   const jobFile = path.join(dir, `${stamp}.job.json`), resultFile = path.join(dir, `${stamp}.result.json`);
-  writeFileSync(jobFile, JSON.stringify({ demo, highlights: units.filter((u) => u.kind === "highlight").map((u) => u.id), reels: units.filter((u) => u.kind !== "highlight").map((u) => u.kind) }));
+  // Each highlight names its POV by povKey, never by SteamID (the worker resolves it through the roster).
+  // A blooper unit (piece C) has no field here yet: it would come back "no result from the post worker".
+  writeFileSync(jobFile, JSON.stringify({ demo, highlights: units.filter((u) => u.kind === "highlight").map((u) => ({ id: u.id, pov: u.pov })), reels: units.filter((u) => u.kind === "deaths" || u.kind === "kills").map((u) => u.kind) }));
   const fail = (reason: string): JobResult[] => units.map((u) => ({ status: "failed", id: u.id, title: u.title, reasons: [reason] }));
   return new Promise((resolve) => {
     const child = spawn(process.execPath, ["--import", "tsx", path.join(import.meta.dirname, "..", "cli", "post-worker.ts"), jobFile, resultFile], { stdio: "inherit", windowsHide: true });
@@ -339,6 +431,22 @@ function postWorker(demo: string, units: { id: string; title: string; kind: "hig
 
 /** Whether a pass of this kind may settle demos: not a dry run, a repost or a --no-reels pass (its reels are owed). */
 export const settlesDemos = (o: Pick<BatchOptions, "dryRun" | "repostOnly" | "noReels">) => !o.dryRun && !o.repostOnly && !o.noReels;
+/** Whether a film pass may settle: not a dry run or a repost (it owes no reels, so --no-reels changes nothing). */
+export const filmSettles = (o: Pick<BatchOptions, "dryRun" | "repostOnly">) => !o.dryRun && !o.repostOnly;
+
+/**
+ * A finished film pass over one demo: every pair it looked at (keys: povKeys, present or not in the
+ * demo) goes into the film record, and with settlesDemo the demo into settled.json, so a later normal
+ * pnpm go skips it. Returns the new records only where they changed (undefined: nothing to write).
+ */
+export function settleFilm(filmState: Record<string, string>, settled: Record<string, string>, sha256: string, keys: string[], settlesDemo: boolean, now: string): { film?: Record<string, string>; settled?: Record<string, string>; pairs: string[] } {
+  const pairs = [...new Set(keys.map((k) => filmPair(sha256, k)))].filter((p) => !filmState[p]);
+  return {
+    pairs,
+    ...(pairs.length ? { film: { ...filmState, ...Object.fromEntries(pairs.map((p) => [p, now])) } } : {}),
+    ...(settlesDemo && !settled[sha256] ? { settled: { ...settled, [sha256]: now } } : {}),
+  };
+}
 
 /**
  * The refusal a batch gets before it ingests anything: CS2 running, or the FACEIT client's

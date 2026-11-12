@@ -14,6 +14,7 @@
     "typecheck": "tsc -p .",
     "moments": "tsx src/cli/moments.ts",
     "go": "tsx src/cli/go.ts",
+    "film": "tsx src/cli/go.ts --film",
     "test": "tsx --test test/*.test.ts",
     "grab": "tsx src/cli/grab.ts",
     "deaths": "tsx src/cli/reel.ts deaths",

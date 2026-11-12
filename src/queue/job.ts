@@ -5,7 +5,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { Refusal, STATE_DIR, captureSize, loadCrosshairCutoff, loadIdentities, loadSettings, type Identities, type RenderSettings } from "../config.ts";
+import { Refusal, STATE_DIR, captureSize, loadCrosshairCutoff, loadIdentities, loadSettings, povKeyFor, type Identities, type RenderSettings } from "../config.ts";
 import { clipFacts } from "../parse/clip-facts.ts";
 import { matchEndTick, parseDemo } from "../parse/demo.ts";
 import { MARGIN_TICKS, SETTLE_TICKS, passesMatchEnd, render, validateCapture, type TakeSpec, type TickMapping } from "../render/controller/index.ts";
@@ -36,6 +36,11 @@ export type JobInput = {
   leadOverride?: number;
   /** pnpm clip --rerender: the library clip this one replaces (moved to library/replaced/ on publish). */
   replaces?: string;
+  /**
+   * Whose first person (pnpm go --film): a roster SteamID64, default STEAM_ID64. It picks the slot, the
+   * parse and the render key; the look cfg and the launch identities stay the main account's.
+   */
+  pov?: string;
 };
 /** done: rendered now; skipped: already in the library; failed: recorded in state/failures.json. */
 /** captured: rendered and its capture recorded, post still to come (runJobs renderOnly). */
@@ -100,14 +105,16 @@ export const unitHasCapture = (u: RenderUnit) => !!completedCapture(u.id, u.rend
  * The library entry that holds this moment: the same clip id, or (for a ranked moment) a clip
  * of the same demo and round sharing a kill, made when the span rules were different. Sharing
  * one kill is enough on purpose: a moment the library holds is never re-made by a rule change,
- * even when the new span would add kills (AGENTS.md); pnpm clip --rerender does that.
+ * even when the new span would add kills (AGENTS.md); pnpm clip --rerender does that. The shared
+ * kill counts only for the same player: playerKey (povKey) equal to the entry's player.key, both
+ * absent for the main POV.
  */
-export function heldEntry(clips: Record<string, ClipEntry>, id: string, demoSha256: string, round: number, spec?: ClipSpec): ClipEntry | undefined {
+export function heldEntry(clips: Record<string, ClipEntry>, id: string, demoSha256: string, round: number, spec?: ClipSpec, playerKey?: string): ClipEntry | undefined {
   if (clips[id]) return clips[id];
   if (!spec) return undefined;
   return Object.values(clips).find((e) => {
     const ticks = e.moment?.killTicks;
-    return e.demoSha256 === demoSha256 && e.round === round && Array.isArray(ticks) && ticks.some((t) => spec.killTicks.includes(t as number));
+    return e.demoSha256 === demoSha256 && e.round === round && e.player?.key === playerKey && Array.isArray(ticks) && ticks.some((t) => spec.killTicks.includes(t as number));
   });
 }
 
@@ -121,16 +128,22 @@ export async function prepareJob(o: JobInput) {
   const endTick = spec ? spec.endTick : o.endTick!;
   if (!Number.isInteger(startTick) || !Number.isInteger(endTick) || endTick <= startTick) throw new Error("bad tick range");
   const settings = loadSettings();
+  // ids is never altered: the guards read ids.pov as the main account they refuse to launch on.
   const ids = loadIdentities();
-  const facts = await clipFacts(demo, ids.pov, startTick, endTick);
+  const pov = o.pov ?? ids.pov;
+  const playerKey = povKeyFor(pov, ids.pov);
+  const facts = await clipFacts(demo, pov, startTick, endTick);
   // Where CS2's end-of-match state starts (passesMatchEnd), by the same rule as the reels. A range in
   // a demo the parser refuses (pnpm clip on a demo without a match start) has no reels beside it.
-  const matchEnd = await parseDemo(demo, ids.pov).then(matchEndTick, () => facts.playbackTicks);
+  const parsed = await parseDemo(demo, pov, ids.pov).catch(() => undefined);
+  const matchEnd = parsed ? matchEndTick(parsed) : facts.playbackTicks;
+  // Another POV's entry names its player (the parse's name, else the key), never the SteamID.
+  const player = playerKey ? { name: parsed?.identity.name || playerKey, key: playerKey } : undefined;
   // A moment carries the match round (pre-match rounds excluded) and its own title.
   const round = spec ? spec.round : facts.round;
-  const id = clipId(facts.demoSha256, round, startTick, endTick);
+  const id = clipId(facts.demoSha256, round, startTick, endTick, playerKey);
   if (spec && id !== spec.id) throw new Error(`clip id ${id} differs from the moment's ${spec.id}`);
-  const title = spec ? spec.title : `${facts.map} · R${facts.round} · ticks ${startTick}-${endTick}`;
+  const title = spec ? spec.title : `${player ? `${player.name} · ` : ""}${facts.map} · R${facts.round} · ticks ${startTick}-${endTick}`;
   const cutoff = loadCrosshairCutoff();
   const crosshair = crosshairSource(facts.patch, cutoff);
   const look = lookCfg(ids.cs2Exe, ids.pov, crosshair);
@@ -140,8 +153,8 @@ export async function prepareJob(o: JobInput) {
     // "demo" adds nothing: its look hash simply lacks the crosshair convars (they never showed for these
     // demos, M0.2), so the key changes only by those lines. "own" changes the picture (observer crosshair 0).
     ...(crosshair === "own" ? { crosshair } : {}) };
-  // The POV id is part of the key but never stored in the library.
-  const renderKey = createHash("sha256").update(JSON.stringify({ ...renderInputs, pov: ids.pov })).digest("hex").slice(0, 16);
+  // The POV id is part of the key but never stored in the library (for STEAM_ID64 the key is the one it always was).
+  const renderKey = createHash("sha256").update(JSON.stringify({ ...renderInputs, pov })).digest("hex").slice(0, 16);
   /** A validated raw capture for this render key exists, so the job needs post only, no launch. */
   const hasCapture = () => !!completedCapture(id, renderKey, `${captureSize(settings).width}x${captureSize(settings).height}`, 1);
   /**
@@ -151,14 +164,14 @@ export async function prepareJob(o: JobInput) {
    */
   const inLibrary = () => {
     // A deleted moment counts as held: deleting a clip means "never make it again".
-    const held = heldEntry({ ...readDeleted(), ...readIndex().clips }, id, facts.demoSha256, round, spec);
+    const held = heldEntry({ ...readDeleted(), ...readIndex().clips }, id, facts.demoSha256, round, spec, playerKey);
     if (!held) return false;
     if (readDeleted()[held.id]) { console.log(`clip ${held.no ?? held.id} was deleted; not made again`); return true; }
     if (held.id !== id) console.log(`the library holds this moment as clip ${held.no ?? held.id} (other span); kept as done`);
     if (!existsSync(clipPath(held.id))) console.log(`library entry ${held.id} has no file; kept as done (pnpm clip --rerender ${held.id} re-makes it)`);
     return true;
   };
-  return { o, demo, spec, debugCommands, startTick, endTick, matchEnd, settings, ids, facts, round, id, title, look, crosshair, cutoff, versions, renderInputs, renderKey, inLibrary, hasCapture };
+  return { o, demo, spec, debugCommands, startTick, endTick, matchEnd, settings, ids, pov, player, facts, round, id, title, look, crosshair, cutoff, versions, renderInputs, renderKey, inLibrary, hasCapture };
 }
 
 export async function clipJob(o: JobInput): Promise<JobResult> {
@@ -301,7 +314,7 @@ export async function runJobs(units: RenderUnit[], ro: RunOptions = {}): Promise
 }
 
 function postAndPublish(prep: PreparedJob, capture: TakeCapture & { renderKey: string; workDir: string }, attempt: string, fail: (reasons: string[]) => JobResult): JobResult {
-  const { o, demo, spec, startTick, endTick, settings, facts, round, id, title, crosshair, cutoff, versions, renderInputs, renderKey } = prep;
+  const { o, demo, spec, startTick, endTick, settings, facts, round, id, title, crosshair, cutoff, versions, renderInputs, renderKey, player } = prep;
   ensureClipsDir();
   const tmp = clipTmpPath(id, attempt);
   const p = post(capture.video, capture.audio, capture.mapping, startTick, endTick, settings, tmp, spec?.windows);
@@ -314,6 +327,7 @@ function postAndPublish(prep: PreparedJob, capture: TakeCapture & { renderKey: s
     kind: "highlight", timing: "scheduled",
     crosshair: { source: crosshair, demoPatch: facts.patch, cutoff: cutoff ?? null },
     ...(o.leadOverride !== undefined ? { leadOverride: o.leadOverride } : {}),
+    ...(player ? { player } : {}),
   }, o.replaces);
   // The page shows each clip as it lands; inside a pnpm go run it says the run is still going.
   try { writeLibraryPage({ running: !!o.inBatch }); } catch (e) { console.error(`library page not rewritten: ${(e as Error).message}`); }

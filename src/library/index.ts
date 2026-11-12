@@ -10,9 +10,9 @@ export const CLIPS_DIR = path.join(LIBRARY_DIR, "clips");
 const INDEX = path.join(LIBRARY_DIR, "index.json");
 const FAILURES = path.join(STATE_DIR, "failures.json");
 
-/** PLAN.md: stable hash of (demo hash, round, start_tick, end_tick). */
-export const clipId = (demoSha256: string, round: number, startTick: number, endTick: number) =>
-  createHash("sha256").update(`${demoSha256}:${round}:${startTick}:${endTick}`).digest("hex").slice(0, 16);
+/** PLAN.md: stable hash of (demo hash, round, start_tick, end_tick); a POV other than STEAM_ID64 adds its povKey. */
+export const clipId = (demoSha256: string, round: number, startTick: number, endTick: number, povKey?: string) =>
+  createHash("sha256").update(`${demoSha256}:${round}:${startTick}:${endTick}${povKey ? `:${povKey}` : ""}`).digest("hex").slice(0, 16);
 
 export const clipPath = (id: string) => path.join(CLIPS_DIR, `${id}.mp4`);
 /** Per attempt, so two runs can never write or remove each other's temp file. */
@@ -37,6 +37,9 @@ export type ClipEntry = {
   moment?: Record<string, unknown>; // rank, score and signals when the clip came from pnpm moments
   kind?: "highlight" | "deaths" | "kills"; // absent: highlight (clips made before the reels)
   leadOverride?: number;
+  // pnpm go --film: whose first person a highlight is, when not STEAM_ID64's (absent: the main POV's, as every
+  // entry made before). name as the demo has it; key = povKey, never the SteamID (the library stores none).
+  player?: { name: string; key: string };
   reel?: { takes: { round: number; tick: number; weapon: string; player: string }[] }; // a reel's takes: who killed the POV (deaths) or whom the POV killed (kills) // seconds of lead-in a re-render asked for instead of config.json → clip.leadInSeconds
   // How the clip was trimmed: "scheduled" = by the scheduled record-start mapping (src/post);
   // absent = clips made before M3's simplification, timed from muzzle flash and gunshots.

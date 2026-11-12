@@ -1,4 +1,5 @@
-// Per-demo extraction into state/<demo sha256>/parse.json (PLAN.md §2): the
+// Per-demo extraction into state/<demo sha256>/parse.json (PLAN.md §2; a film POV other than
+// STEAM_ID64 into its pov-<povKey>/ under that dir): the
 // match's rounds with phase, winner and reason, every player's team at each
 // round's freeze end, and the events scoring needs. Cached under the
 // resumability contract: the cache key covers the demo hash, the parser
@@ -10,7 +11,7 @@
 import { createRequire } from "node:module";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { STATE_DIR } from "../config.ts";
+import { STATE_DIR, loadIdentities, povKey, povKeyFor } from "../config.ts";
 import { DEMOPARSER_VERSION, TICKRATE, sha256File } from "./clip-facts.ts";
 import { readFileInfo } from "./fileinfo.ts";
 
@@ -91,8 +92,18 @@ export function facingDeg(v: { X: number; Y: number; yaw: number }, a: { X: numb
 export function parseDir(sha256: string) {
   return path.join(STATE_DIR, sha256);
 }
+/**
+ * Where one POV's parse.json and moments files live: the main POV (STEAM_ID64, no key) in the demo's
+ * own state dir as always, any other POV in pov-<povKey>/ under it.
+ */
+export const povDir = (sha256: string, key?: string) => (key ? path.join(parseDir(sha256), `pov-${key}`) : parseDir(sha256));
+/** The parse cache key: demo hash, parser, schema, POV (one form for every POV). */
+export const parseKey = (sha256: string, pov: string) => `${sha256}:demoparser2@${DEMOPARSER_VERSION}:schema${SCHEMA}:pov${pov}`;
 
-function extract(demo: string, sha256: string, pov: string, key: string): ParsedDemo {
+/** The POV is not among the players of the demo's match rounds; for a film roster player that means "not in this demo", not an error. */
+export class PovAbsent extends Error {}
+
+function extract(demo: string, sha256: string, pov: string, key: string, main: boolean): ParsedDemo {
   const info = readFileInfo(demo);
   const rate = info.playback_ticks / info.playback_time;
   if (Math.round(rate) !== TICKRATE) throw new Error(`demo tickrate ${rate} != ${TICKRATE}`);
@@ -139,7 +150,7 @@ function extract(demo: string, sha256: string, pov: string, key: string): Parsed
     }
   }
   const mine = rows.filter((x) => x.steamid === pov);
-  if (!mine.length) throw new Error("POV player (STEAM_ID64) not found in this demo's match rounds");
+  if (!mine.length) throw new PovAbsent(main ? "POV player (STEAM_ID64) not found in this demo's match rounds" : `player ${povKey(pov)} not found in this demo's match rounds`);
   const identity = { steamid: pov, name: mine[0].name, userIds: [...new Set(mine.map((x) => x.user_id))] };
 
   const inMatch = <T extends { tick: number }>(xs: T[]) => xs.filter((x) => x.tick > matchStartTick && roundAt(x.tick) > 0);
@@ -277,11 +288,14 @@ export const matchEndTick = (p: ParsedDemo) => (p.rounds.length ? Math.max(...p.
 /** A cached parse made by this parser version and schema (an older one lacks fields scoring reads). */
 export const parseIsCurrent = (p: ParsedDemo) => p.key.includes(`:demoparser2@${DEMOPARSER_VERSION}:schema${SCHEMA}:`);
 
-/** Parse once per demo, cached; a cached file counts only if its key matches. */
-export async function parseDemo(demo: string, pov: string): Promise<ParsedDemo> {
+/**
+ * Parse once per demo and POV, cached; a cached file counts only if its key matches. mainPov
+ * (STEAM_ID64) decides the cache's place (povDir): the main POV's stays where it always was.
+ */
+export async function parseDemo(demo: string, pov: string, mainPov = loadIdentities().pov): Promise<ParsedDemo> {
   const sha256 = await sha256File(demo);
-  const key = `${sha256}:demoparser2@${DEMOPARSER_VERSION}:schema${SCHEMA}:pov${pov}`;
-  const dir = parseDir(sha256);
+  const key = parseKey(sha256, pov);
+  const dir = povDir(sha256, povKeyFor(pov, mainPov));
   const file = path.join(dir, "parse.json");
   if (existsSync(file)) {
     try {
@@ -289,7 +303,7 @@ export async function parseDemo(demo: string, pov: string): Promise<ParsedDemo> 
       if (cached.key === key) return { ...cached, demo: { ...cached.demo, path: demo } };
     } catch {}
   }
-  const parsed = extract(demo, sha256, pov, key);
+  const parsed = extract(demo, sha256, pov, key, pov === mainPov);
   mkdirSync(dir, { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`; // unique per writer
   writeFileSync(tmp, JSON.stringify(parsed));
@@ -303,11 +317,11 @@ export async function parseDemo(demo: string, pov: string): Promise<ParsedDemo> 
 // parses. So a cache made before them stays current, and pnpm deathmap re-parses a demo that is still
 // in the store once to add them: the same key (as parseDemo builds it), temp file then rename.
 export const hasPositions = (p: ParsedDemo) => p.footprint !== undefined;
-export async function reparseDemo(demo: string, pov: string): Promise<ParsedDemo> {
+export async function reparseDemo(demo: string, pov: string, mainPov = loadIdentities().pov): Promise<ParsedDemo> {
   const sha256 = await sha256File(demo);
-  const key = `${sha256}:demoparser2@${DEMOPARSER_VERSION}:schema${SCHEMA}:pov${pov}`;
-  const parsed = extract(demo, sha256, pov, key);
-  const file = path.join(parseDir(sha256), "parse.json");
+  const key = parseKey(sha256, pov);
+  const parsed = extract(demo, sha256, pov, key, pov === mainPov);
+  const file = path.join(povDir(sha256, povKeyFor(pov, mainPov)), "parse.json");
   mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmp, JSON.stringify(parsed));

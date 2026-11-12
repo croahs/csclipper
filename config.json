@@ -56,6 +56,10 @@
     "minScore": 40,
     "fallbackBest": true
   },
+  "film": {
+    "minScore": 75,
+    "settlesDemo": true
+  },
   "sources": {
     "faceit": {
       "maxMatchesPerRun": 5,

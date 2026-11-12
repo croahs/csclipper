@@ -1,12 +1,12 @@
-// parse → score → clip specs for one demo, written to state/<sha>/moments.json
+// parse → score → clip specs for one demo and POV, written to state/<sha>/moments.json
 // (sorted, the ranked specs) and moments.txt (the readable table), each via a
-// temp file and a rename.
+// temp file and a rename; a POV other than STEAM_ID64 into state/<sha>/pov-<povKey>/.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { parseDemo, parseDir, type ParsedDemo } from "../parse/demo.ts";
+import { parseDemo, povDir, type ParsedDemo } from "../parse/demo.ts";
 import { loadWeights, moments } from "../score/index.ts";
-import { loadClipRules, type ClipRules } from "../config.ts";
+import { loadClipRules, loadIdentities, povKeyFor, type ClipRules } from "../config.ts";
 import { clipSpecs, type ClipSpec } from "./index.ts";
 
 export type MomentsResult = { parsed: ParsedDemo; specs: ClipSpec[]; table: string; file: string; cached: boolean };
@@ -38,16 +38,18 @@ const MOMENTS_SCHEMA = 7; // 7: trade and save flags; 2: no 30 s cap, action win
  * An empty spec list is a valid result. `override` (pnpm clip --rerender --lead) changes the clip
  * rules for this call only: the specs are built fresh and the cache is neither read nor written.
  */
-export async function buildMoments(demo: string, pov: string, override?: Partial<ClipRules>): Promise<MomentsResult> {
-  const parsed = await parseDemo(demo, pov);
+export async function buildMoments(demo: string, pov: string, override?: Partial<ClipRules>, mainPov = loadIdentities().pov): Promise<MomentsResult> {
+  // A POV other than STEAM_ID64 (pnpm go --film): its own parse and moments files (povDir), its key in clip ids and titles.
+  const playerKey = povKeyFor(pov, mainPov);
+  const parsed = await parseDemo(demo, pov, mainPov);
   const w = loadWeights();
   const rules = { ...loadClipRules(), ...override };
   if (override) {
-    const specs = clipSpecs(parsed, moments(parsed, w), w, rules);
+    const specs = clipSpecs(parsed, moments(parsed, w), w, rules, playerKey);
     return { parsed, specs, table: table(parsed, specs), file: "", cached: false };
   }
   const key = createHash("sha256").update(JSON.stringify({ parse: parsed.key, weights: w, rules, schema: MOMENTS_SCHEMA })).digest("hex").slice(0, 16);
-  const dir = parseDir(parsed.demo.sha256);
+  const dir = povDir(parsed.demo.sha256, playerKey);
   const file = path.join(dir, "moments.json");
   if (existsSync(file)) {
     try {
@@ -61,7 +63,7 @@ export async function buildMoments(demo: string, pov: string, override?: Partial
       }
     } catch {}
   }
-  const specs = clipSpecs(parsed, moments(parsed, w), w, rules);
+  const specs = clipSpecs(parsed, moments(parsed, w), w, rules, playerKey);
   const t = table(parsed, specs);
   writeAtomic(path.join(dir, "moments.txt"), t);
   writeAtomic(file, JSON.stringify({ key, demo: parsed.demo, pov: parsed.identity, generatedAt: new Date().toISOString(), weights: w, specs }, null, 2));

@@ -1,4 +1,5 @@
 // Repo paths, render settings (config.json) and identities (.env).
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import path from "node:path";
@@ -186,6 +187,46 @@ export function loadIdentities(envFile = path.join(ROOT, ".env")): Identities {
 }
 
 export const accountId = (steamId64: string) => (BigInt(steamId64) - STEAMID64_BASE).toString();
+
+/**
+ * The film roster (pnpm go --film): STEAM_ID64 first, then FILM_STEAM_ID64S from .env (optional,
+ * comma- or whitespace-separated), each a SteamID64, deduplicated. The render account in the list is
+ * refused. Errors name an entry's position, never its value.
+ */
+export function loadRoster(envFile = path.join(ROOT, ".env")): string[] {
+  const ids = loadIdentities(envFile);
+  const raw = parseEnv(readFileSync(envFile, "utf8")).FILM_STEAM_ID64S?.trim() ?? "";
+  const inherited = process.env.FILM_STEAM_ID64S?.trim();
+  if (inherited && inherited !== raw) throw new Refusal(`refusing: FILM_STEAM_ID64S in the environment differs from ${envFile}`);
+  return parseRoster(ids.pov, ids.renderAccount, raw);
+}
+export function parseRoster(main: string, renderAccount: string, raw: string): string[] {
+  const out = [main];
+  raw.split(/[\s,]+/).filter(Boolean).forEach((v, i) => {
+    if (!/^\d{17}$/.test(v) || BigInt(v) <= STEAMID64_BASE) throw new Refusal(`refusing: FILM_STEAM_ID64S entry ${i + 1} is not a SteamID64`);
+    if (v === renderAccount) throw new Refusal(`refusing: FILM_STEAM_ID64S entry ${i + 1} is RENDER_STEAM_ID64; the render account is never filmed`);
+    if (!out.includes(v)) out.push(v);
+  });
+  return out;
+}
+
+/**
+ * A POV's stand-in wherever a SteamID must not go (the library, job files, reports): the first 8 hex
+ * of sha256 of the SteamID64. Library entries of a POV other than STEAM_ID64 carry it as player.key.
+ */
+export const povKey = (steamId64: string) => createHash("sha256").update(steamId64).digest("hex").slice(0, 8);
+/** The key a POV's caches, clip ids and entries carry: none for the main POV (STEAM_ID64), so everything made before stays valid. */
+export const povKeyFor = (pov: string, mainPov: string) => (pov === mainPov ? undefined : povKey(pov));
+
+/** pnpm go --film: every roster player's highlights scoring minScore or more (no fallback, no reels); settlesDemo: a finished film pass also settles the demo for pnpm go. */
+export type FilmSettings = { minScore: number; settlesDemo: boolean };
+export function loadFilm(file = path.join(ROOT, "config.json")): FilmSettings {
+  const f = JSON.parse(readFileSync(file, "utf8")).film ?? {};
+  if (typeof f.minScore !== "number" || !Number.isFinite(f.minScore) || typeof f.settlesDemo !== "boolean") throw new Error("config.json film needs minScore (number) and settlesDemo (true/false)");
+  return { minScore: f.minScore, settlesDemo: f.settlesDemo };
+}
+/** The film pick from a player's ranked specs: every one scoring minScore or more, never a fallback. */
+export const pickFilm = <T extends { score: number }>(ranked: T[], f: Pick<FilmSettings, "minScore">): T[] => ranked.filter((s) => s.score >= f.minScore);
 
 /**
  * pnpm week (PLAN.md §6, best of the week, the fragmovie): how many highlights, the cap on the

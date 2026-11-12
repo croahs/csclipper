@@ -8,7 +8,7 @@
 // launched), 3 cleanup not verified (a game process may still run; the lock stays).
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { Refusal, loadIdentities } from "../config.ts";
+import { Refusal, loadIdentities, loadRoster, povKey } from "../config.ts";
 import { cleanupUnverified } from "../render/controller/index.ts";
 import { exitOnSignal } from "../render/controller/launch.ts";
 import { buildMoments } from "../clip/moments.ts";
@@ -35,28 +35,33 @@ async function rerender(ref: string, timeoutS: number | undefined, lead: number 
   const id = entry.id;
   if (!existsSync(entry.demo)) throw new Error(`the clip's demo is gone: ${entry.demo}`);
   const dryRun = args.includes("--dry-run");
+  // A film clip (entry.player) is that player's first person: resolved through the roster, never stored.
+  const mainPov = loadIdentities().pov;
+  const pov = entry.player ? loadRoster().find((x) => povKey(x) === entry.player!.key) : mainPov;
+  if (!pov) throw new Error(`clip ${entry.no ?? id} is ${entry.player!.name}'s, who is no longer in .env FILM_STEAM_ID64S; nothing rendered`);
+  const povInput = pov !== mainPov ? { pov } : {};
   let r;
   if (!Array.isArray(entry.moment?.killTicks)) {
     if (lead !== undefined) throw new Error("--lead applies to ranked moments; a hand-written range is re-rendered by its own ticks");
     // A hand-written range: the same ticks again (its id comes from them).
     console.log(`re-rendering clip ${entry.no ?? id}: ticks ${entry.startTick}-${entry.endTick}`);
-    r = await clipJob({ demo: entry.demo, startTick: entry.startTick, endTick: entry.endTick, force: true, dryRun, timeoutS });
+    r = await clipJob({ demo: entry.demo, startTick: entry.startTick, endTick: entry.endTick, force: true, dryRun, timeoutS, ...povInput });
   } else {
     // A ranked moment: ranked afresh, so new span rules apply. Its spec is the one with the same id,
-    // else the one sharing the most kills with it that shares none with another library clip; a tie refuses.
+    // else the one sharing the most kills with it that shares none with another library clip of the same player; a tie refuses.
     const clips = readIndex().clips;
     // --lead: this clip's spec is built with that lead-in instead of the configured one.
-    const { specs } = await buildMoments(entry.demo, loadIdentities().pov, lead !== undefined ? { leadInSeconds: lead } : undefined);
+    const { specs } = await buildMoments(entry.demo, pov, lead !== undefined ? { leadInSeconds: lead } : undefined, mainPov);
     const mine = new Set(entry.moment!.killTicks as number[]);
     const shared = (s: ClipSpec) => s.killTicks.filter((t) => mine.has(t)).length;
     const candidates = specs
-      .filter((s) => s.id === id || (s.round === entry.round && shared(s) > 0 && !Object.values(clips).some((e) => e.id !== id && heldEntry({ [e.id]: e }, s.id, entry.demoSha256, s.round, s))))
+      .filter((s) => s.id === id || (s.round === entry.round && shared(s) > 0 && !Object.values(clips).some((e) => e.id !== id && heldEntry({ [e.id]: e }, s.id, entry.demoSha256, s.round, s, entry.player?.key))))
       .sort((x, y) => Number(y.id === id) - Number(x.id === id) || shared(y) - shared(x));
     const spec = candidates[0];
     if (!spec) throw new Error(`clip ${entry.no ?? id}'s moment is no longer among the demo's ranked moments`);
     if (spec.id !== id && candidates[1] && shared(candidates[1]) === shared(spec)) throw new Error(`clip ${entry.no ?? id} matches more than one ranked moment equally (${candidates.map((c) => c.id).join(", ")}); nothing rendered`);
     console.log(`re-rendering clip ${entry.no ?? id} as moment ${spec.id}: ${spec.title} (ticks ${spec.startTick}-${spec.endTick})`);
-    r = await clipJob({ demo: entry.demo, spec, force: true, dryRun, timeoutS, replaces: spec.id !== id ? id : undefined, leadOverride: lead });
+    r = await clipJob({ demo: entry.demo, spec, force: true, dryRun, timeoutS, replaces: spec.id !== id ? id : undefined, leadOverride: lead, ...povInput });
     if (r.status === "done" && spec.id !== id) console.log(`replaced ${id}: moved to library/replaced/`);
   }
   if (r.status === "done") writeLibraryPage();

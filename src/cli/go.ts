@@ -1,4 +1,4 @@
-// pnpm go [--dry-run] [--retry-failed] [--repost] [--settle-existing] [--no-reels] [--timeout <s>] [--test-exit-after <s>]: the whole pipeline in
+// pnpm go [--dry-run] [--retry-failed] [--repost] [--settle-existing] [--no-reels] [--film] [--timeout <s>] [--test-exit-after <s>]: the whole pipeline in
 // one command. Ingest demos/inbox/, parse and rank every registered demo,
 // render the selected moments (config.json batch: every one with score >= minScore,
 // else the best one when none reaches it and fallbackBest) that are not in the library yet, rewrite library/index.html.
@@ -7,6 +7,9 @@
 // --settle-existing marks every registered demo processed (state/settled.json) and renders
 // nothing; later runs skip settled demos, so new rules apply from the next new demo.
 // --no-reels: highlights only for this run (config.json reels stays the default).
+// --film (pnpm film): every roster player's (.env STEAM_ID64 + FILM_STEAM_ID64S) highlights scoring
+// config.json film.minScore or more, from that player's first person, in every registered demo still
+// on disk, settled ones too; no reels. Pairs done go in state/film.json.
 // Exit codes: 0 ok, 1 a job or demo failed, 2 refused (CS2 running, a guard,
 // or another pnpm go), 3 cleanup not verified (the batch stopped; check for cs2.exe by hand).
 import path from "node:path";
@@ -35,7 +38,7 @@ async function main(): Promise<number> {
   try {
     const testExit = flag("--test-exit-after");
     const { report: r, code } = await runBatch({
-      dryRun: args.includes("--dry-run"), retryFailed: args.includes("--retry-failed"), repostOnly: args.includes("--repost"), settleExisting: args.includes("--settle-existing"), noReels: args.includes("--no-reels"), timeoutS,
+      dryRun: args.includes("--dry-run"), retryFailed: args.includes("--retry-failed"), repostOnly: args.includes("--repost"), settleExisting: args.includes("--settle-existing"), noReels: args.includes("--no-reels"), film: args.includes("--film"), timeoutS,
       testExitAfterS: testExit === undefined ? undefined : Number(testExit),
     });
     if (r.settledNow !== undefined) {
@@ -47,8 +50,26 @@ async function main(): Promise<number> {
     console.log("\n== batch ==");
     console.log(`demos: ${r.demos} (${r.ingested} new), moments selected: ${r.selected}`);
     console.log(`rendered: ${r.rendered.length ? r.rendered.join(" | ") : "none"}`);
+    if (r.film) {
+      // Film: made this run per player, with clip numbers, then whom each demo lacked.
+      const f = r.film;
+      const label = (p: { key: string; name?: string }) => p.name ?? `player ${p.key}`;
+      console.log(`film (score >= ${f.minScore}, no reels), ${f.players.length} player(s):`);
+      for (const p of f.players) {
+        const made = r.made.filter((m) => m.kind === "highlight" && m.player?.key === p.key);
+        console.log(`  ${label(p)}: ${made.length ? made.map((m) => `clip ${m.no ?? "?"} (${m.title})`).join(", ") : args.includes("--dry-run") ? "dry run, nothing made (would render: above)" : "nothing new"}`);
+      }
+      for (const p of f.players) {
+        const absent = f.absent.filter((a) => a.key === p.key && !f.noPlayer.includes(a.demo));
+        if (absent.length) console.log(`  not in ${absent.length} demo(s): ${label(p)}`);
+      }
+      if (f.noPlayer.length) console.log(`no roster player in: ${f.noPlayer.join(", ")}`);
+      if (f.alreadyDone) console.log(`player-demo pairs done on earlier film runs: ${f.alreadyDone}`);
+      if (f.pairsDone) console.log(`player-demo pairs done now: ${f.pairsDone} (state/film.json)`);
+      if (f.missingFiles) console.log(`registered demos no longer on disk, skipped: ${f.missingFiles}`);
+    }
     // Made this run, by kind, with clip numbers (the page and pnpm clip --rerender take them).
-    for (const kind of ["highlight", "deaths", "kills"]) {
+    for (const kind of r.film ? [] : ["highlight", "deaths", "kills"]) {
       const made = r.made.filter((m) => m.kind === kind);
       if (made.length) console.log(`${kind === "highlight" ? "highlights" : kind === "deaths" ? "deaths reels" : "kills reels"}: ${made.map((m) => `clip ${m.no ?? "?"} (${m.title})`).join(", ")}`);
     }

@@ -138,7 +138,11 @@ export function actionWindows(p: ParsedDemo, round: number, start: number, end: 
   return out;
 }
 
-export function clipSpecs(p: ParsedDemo, ms: Moment[], w: Weights, rules: ClipRules): ClipSpec[] {
+/**
+ * povKey: set for a POV other than STEAM_ID64 (pnpm go --film); it goes into each clip id, and each
+ * title leads with the player's name as the demo has it (`<name> · <map> · R<round> · …`).
+ */
+export function clipSpecs(p: ParsedDemo, ms: Moment[], w: Weights, rules: ClipRules, povKey?: string): ClipSpec[] {
   const t = p.demo.tickrate;
   type Draft = { round: number; kills: Death[]; clutch?: Clutch; roundWon: boolean; start: number; end: number; outcomes: number[]; tails: ActionWindow[] };
   const drafts: Draft[] = ms.map((m) => {
@@ -166,9 +170,9 @@ export function clipSpecs(p: ParsedDemo, ms: Moment[], w: Weights, rules: ClipRu
   const specs = merged.map((d) => {
     const s = scoreKills(p, d.kills, d.clutch, d.roundWon, w);
     return {
-      id: clipId(p.demo.sha256, d.round, d.start, d.end),
+      id: clipId(p.demo.sha256, d.round, d.start, d.end, povKey),
       rank: 0,
-      title: title(p.demo.map, d.round, d.kills, d.clutch),
+      title: (povKey ? `${p.identity.name} · ` : "") + title(p.demo.map, d.round, d.kills, d.clutch),
       round: d.round, startTick: d.start, endTick: d.end,
       score: s.score, breakdown: s.breakdown,
       kills: d.kills.length, killTicks: d.kills.map((k) => k.tick),
