@@ -55,6 +55,16 @@ test("film selection: bloopers at the bar or more, the best few; none at all is 
   assert.deepEqual(selectFilm([cand(1)], [], { top: 0, bloopersTop: 5, blooperMinScore: 50 }).highlights.taken, [], "top 0: no highlights");
 });
 
+test("film selection: highlights under film.minScore are not taken, held or not; bloopers keep their own bar", () => {
+  const hl = [cand(120), cand(45), cand(39), cand(20)];
+  assert.deepEqual(selectFilm(hl, [], { top: 20, minScore: 40, bloopersTop: 5, blooperMinScore: 50 }).highlights.taken.map((x) => x.score), [120, 45]);
+  assert.deepEqual(selectFilm(hl, [], { top: 3, bloopersTop: 5, blooperMinScore: 50 }).highlights.taken.map((x) => x.score), [120, 45, 39], "absent: by top as before");
+  assert.deepEqual(selectFilm(hl, [], { top: 3, minScore: 0, bloopersTop: 5, blooperMinScore: 50 }).highlights.taken.map((x) => x.score), [120, 45, 39], "0: by top as before");
+  const held = selectFilm([cand(30, { held: { no: 4 } }), cand(60)], [], { top: 20, minScore: 40, bloopersTop: 5, blooperMinScore: 50 });
+  assert.deepEqual(held.highlights.taken.map((x) => x.score), [60], "a held clip under the bound is not in the selection");
+  assert.deepEqual(selectFilm([], [cand(35), cand(55)], { top: 20, minScore: 40, bloopersTop: 5, blooperMinScore: 30 }).bloopers.taken.map((x) => x.score), [55, 35], "bloopers: their own bar");
+});
+
 // --- weapons on bare names ---
 test("bare weapon names: weapon_fire's prefix is dropped before every test", () => {
   assert.equal(bareWeapon("weapon_knife_ursus"), "knife_ursus");
@@ -257,10 +267,10 @@ test("loadFilm: top, bloopersTop, master handles and CRF validated", () => withD
   const f = path.join(dir, "config.json");
   const write = (film: unknown) => writeFileSync(f, JSON.stringify({ film }));
   write({ top: 20, bloopersTop: 5, bloopers: { minScore: 50 } });
-  assert.deepEqual(loadFilm(f), { top: 20, bloopersTop: 5, masterHandleSeconds: 2, masterCaptureCrf: 8 });
-  write({ top: 20, bloopersTop: 5, masterHandleSeconds: 1.5, masterCaptureCrf: 0 });
-  assert.deepEqual(loadFilm(f), { top: 20, bloopersTop: 5, masterHandleSeconds: 1.5, masterCaptureCrf: 0 });
-  for (const bad of [{ bloopersTop: 5 }, { top: 2.5, bloopersTop: 5 }, { top: 20, bloopersTop: -1 }, { top: 20, bloopersTop: 5, masterCaptureCrf: 52 }, { top: 20, bloopersTop: 5, masterHandleSeconds: -1 }, { minScore: 75, settlesDemo: true }])
+  assert.deepEqual(loadFilm(f), { top: 20, minScore: 0, bloopersTop: 5, masterHandleSeconds: 2, masterCaptureCrf: 8 }, "minScore absent: 0");
+  write({ top: 20, minScore: 40, bloopersTop: 5, masterHandleSeconds: 1.5, masterCaptureCrf: 0 });
+  assert.deepEqual(loadFilm(f), { top: 20, minScore: 40, bloopersTop: 5, masterHandleSeconds: 1.5, masterCaptureCrf: 0 });
+  for (const bad of [{ bloopersTop: 5 }, { top: 2.5, bloopersTop: 5 }, { top: 20, bloopersTop: -1 }, { top: 20, bloopersTop: 5, masterCaptureCrf: 52 }, { top: 20, bloopersTop: 5, masterHandleSeconds: -1 }, { top: 20, bloopersTop: 5, minScore: -1 }, { top: 20, bloopersTop: 5, minScore: "40" }])
     assert.throws(() => { write(bad); loadFilm(f); }, /config\.json film\./, JSON.stringify(bad));
-  assert.deepEqual(loadFilm(), { top: 20, bloopersTop: 5, masterHandleSeconds: 2, masterCaptureCrf: 8 }, "the repo's config.json");
+  assert.deepEqual(loadFilm(), { top: 20, minScore: 40, bloopersTop: 5, masterHandleSeconds: 2, masterCaptureCrf: 8 }, "the repo's config.json");
 }));

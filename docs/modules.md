@@ -68,7 +68,9 @@ checked mid-take, never on a seam where the fades meet. `pnpm deaths` /
 render account is refused). A pass ranks every roster player's moments
 over every registered demo still on disk, settled or not, by the film
 weights (`scoring.film.json`, Film weights in `docs/scoring-notes.md`),
-and selects per player the `config.json` → `film.top` (20) best, plus
+and selects per player the `config.json` → `film.top` (20) best of
+those scoring `film.minScore` (40; absent: 0) or more (fewer or none is
+fine; a held clip under it is simply out of the selection), plus
 the `film.bloopersTop` (5) best of his bloopers scoring
 `film.bloopers.minScore` (50) or more (few or none is fine). A clip the
 library already holds counts toward the player's number and is not
@@ -88,7 +90,12 @@ moment the library holds under the normal weights is the same clip. The
 library entry carries the normal score (the post worker finds the spec
 by id among the normal moments, and `pnpm rescore` keeps it); the film
 score lives in the cache and the dry run's table. Another player's parse
-and moments are cached in `state/<sha>/pov-<povKey>/`; `povKey` (the
+and moments are cached in `state/<sha>/pov-<povKey>/`, and so is his
+absence: a player not in the demo (`PovAbsent`) gets `absent.json`
+there (its key the demo hash, the POV's hash, parser version and parse
+schema, no SteamID), so a later pass answers without opening the demo and a schema
+or parser bump re-checks; a real parse failure is never cached as
+absent. `povKey` (the
 first 8 hex of the SteamID64's sha256) is the only handle on a player
 outside `.env`: in clip ids, render keys, job files and the library
 entry's `player: { name, key }`. The main POV's caches, ids and keys are
@@ -145,8 +152,11 @@ one take from his first person over its span, played whole at normal
 speed. Detection is pure over the parse (rounds, deaths, hurts, fires:
 the same whichever roster player's parse it is) and a track of every
 player's position, view, alive state and spotted-by mask every 16 ticks
-(0.25 s) from freeze end to round end, cached as
-`state/<sha>/bloopers-track.json.gz`. Knife rounds are out. One per
+(0.25 s) from freeze end to round end, plus the smokes (each
+`smokegrenade_detonate`'s point and tick to its entity's
+`smokegrenade_expired`, else `SMOKE_SECONDS` 22 s on, never past its
+round's end), cached as `state/<sha>/bloopers-track.json.gz` (schema 2;
+a track without smokes reads as none). Knife rounds are out. One per
 player, round and kind, the best; scores 0-100, comparable across kinds
 (`early`: 1 up to 15 s after freeze end, 0 from 60 s):
 - **teamkill**: he killed a teammate. 55, plus 20 knife / 15 grenade or
@@ -154,13 +164,31 @@ player, round and kind, the best; scores 0-100, comparable across kinds
   had 100 HP, 10 when the round was lost. Span 6 s before, 3 s after.
 - **selfkill** (own grenade / fall): killed by his own HE, molotov or
   incendiary, or a fall (damage from no one at the death tick; the bomb
-  and a disconnect are not). 65, plus 15 fall / 10 own grenade, plus 15
-  × HP before / 100, plus 5 × early. Span 7 s before (or 1 s before the
+  and a disconnect are not). A fall: 80, plus 15 × HP before / 100, plus
+  5 × early. Own grenade or fire: 20, plus 70 × own damage / 100, plus 5
+  × early, where own damage is what his own HE, molotov and incendiary
+  hits did to him that round up to the death, each hit as the health it
+  took (`dmg_health` of a killing hit is not capped at the health left),
+  100 at most (`detail.ownDamage`). Span 7 s before (or 1 s before the
   throw, when earlier), 2 s after.
+- **selfnade** (own grenade, survived): one throw of his own HE (its hits
+  on one tick) or fire (his own fire hits with no pause over 2 s) took
+  50 or more health from him (`selfnade.minDamage`, counted by the same
+  health walk) and did not kill him; the throw that killed him is a
+  selfkill only. 20, plus 70 × damage / 100, plus 5 × early, so 50
+  damage scores 55-60. Anchor: the throw's last hurt. Span from 1 s
+  before the throw (7 s before the anchor when no throw is found) to 3 s
+  after.
 - **spray** (spray, no kill): 25 or more gun shots with no pause over
   1 s, an enemy within 700 units and 12° of his view's yaw and 20° of
   its pitch in 60 % of the samples, no kill from the first shot to 2 s
-  after the last. 30, plus 25 × (shots − 25) / 20, plus 15 × closeness
+  after the last. Shots into a smoke do not count: a shot with a smoke
+  up at its tick within `SMOKE_RADIUS` (155 units) of the line from his
+  eyes to that enemy's chest at the nearest sample (or either standing
+  in it) is
+  left out (`detail.inSmoke`), and the shots left must still be 25 or
+  more; they are the bullets of the title and the score. The anchor
+  stays the last shot. 30, plus 25 × (shots − 25) / 20, plus 15 × closeness
   (700 down to 150 units), plus 15 × (1 − damage dealt to any enemy /
   100), plus 15 when that enemy killed him. Span from 3 s before the
   first shot to 3 s after the last (2 s after his death within 4 s), at
@@ -174,7 +202,7 @@ player, round and kind, the best; scores 0-100, comparable across kinds
   his death), at most 25 s: a longer window keeps its last 25 s, and its
   anchor stays the window's start, so its id does not move with the cut.
 Every threshold is in `BLOOPER_DEFAULTS`, overridable in `config.json` →
-`film.bloopers` (`minScore` 50, `spray`, `behind`). Spans are clamped
+`film.bloopers` (`minScore` 50, `selfnade`, `spray`, `behind`). Spans are clamped
 like reel takes (round start, the demo's playable ticks, short of the
 match end). There is no map geometry: "in front" and "in view" are a
 range and a cone, so an enemy behind a wall or on another floor counts.
@@ -590,7 +618,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 
 | Path | What |
 |---|---|
-| `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds`; `ingest.keepOriginals` (default false: the file a demo arrived in is deleted once the store holds it); `montage` for `pnpm week`: `top` (10), `maxSeconds` (60, the video's cap), `music` (`smash-it.mp3`, the default track, a file name in `music/`), `musicGainDb` (-7, the music up front), `shot` (`preSeconds` 0.65 and `postSeconds` 0.4 around each kill); `post.audio` (`raw` default, `even`) and `share.audio` (`even` default, `raw`); `vertical` (`width`, `height`, `crf`) for `pnpm vertical`; `cut.crf` (18) for `pnpm cut`; `film` for `pnpm film`: `top` (20, highlights per player), `bloopersTop` (5), `masterHandleSeconds` (2) and `masterCaptureCrf` (8) for `pnpm film masters`, `bloopers` (`minScore` 50 and the detector thresholds; Bloopers above); the even-sound chain's `audio` parameters (`thresholdDb`, `ratio`, `attackMs`, `releaseMs`, `makeupDb`, `limitDb`; Even sound above) |
+| `config.json` | render settings: `hud` (`full` default = in-play HUD, `bare` = crosshair and killfeed only), output `width`×`height` (default 1920×1080, 16:9, whatever the player's own `cs2_video.txt` says), `aspect`, `fps` (60), HLAE's intermediate `captureCrf`, final `crf`, `fadeSeconds`; `ingest.keepOriginals` (default false: the file a demo arrived in is deleted once the store holds it); `montage` for `pnpm week`: `top` (10), `maxSeconds` (60, the video's cap), `music` (`smash-it.mp3`, the default track, a file name in `music/`), `musicGainDb` (-7, the music up front), `shot` (`preSeconds` 0.65 and `postSeconds` 0.4 around each kill); `post.audio` (`raw` default, `even`) and `share.audio` (`even` default, `raw`); `vertical` (`width`, `height`, `crf`) for `pnpm vertical`; `cut.crf` (18) for `pnpm cut`; `film` for `pnpm film`: `top` (20, highlights per player), `minScore` (40, a highlight's film score must reach it; absent: 0), `bloopersTop` (5), `masterHandleSeconds` (2) and `masterCaptureCrf` (8) for `pnpm film masters`, `bloopers` (`minScore` 50 and the detector thresholds; Bloopers above); the even-sound chain's `audio` parameters (`thresholdDb`, `ratio`, `attackMs`, `releaseMs`, `makeupDb`, `limitDb`; Even sound above) |
 | `.env` | identities and tool paths, and the optional film roster `FILM_STEAM_ID64S` (`.env.example`; `pnpm prep` fills it; M0.2 setup in `docs/spikes.md`) |
 | `src/cli/setup.ts` | `pnpm prep` / `pnpm check`: tool pins with their sha256, Steam and CS2 lookup, the requirement report |
 | `docs/m6-mm-fetch.md` | the execution plan for M6 (matchmaking demos fetched through a CS2 launch, no login): phases, agents, gate, tests |
@@ -602,7 +630,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `src/queue/` | the batch and its job ledger (`index.ts`); one clip job, shared by `pnpm clip` and the batch (`job.ts`) |
 | `src/library/page.html`, `page.ts` | the library page template and its writer |
 | `src/film/` | `bloopers.ts` the blooper detector, its settings, the overlap pick and the blooper id; `track.ts` the position/view track, its cache and the parse a blooper pass uses (`parseAnyPov`); `select.ts` the film selection (top N per player); `masters.ts` `pnpm film masters` (plan, key, span, unit, mux) |
-| `state/<demo sha256>/pov-<povKey>/`, `moments.film.json`, `bloopers-track.json.gz` | a film player's parse and moments caches; every POV's film-weighted moments beside its `moments.json`; the demo's blooper track |
+| `state/<demo sha256>/pov-<povKey>/`, `moments.film.json`, `bloopers-track.json.gz` | a film player's parse and moments caches (or `absent.json` when he is not in the demo); every POV's film-weighted moments beside its `moments.json`; the demo's blooper track |
 | `library/film-picks.json`, `library/film/masters/` | the clips ticked Film; their masters, one folder per player |
 | `src/library/stars.ts`, `facets.ts`, `hash.ts`, `match-date.ts` | the stars and film-picks files; the feat, weapon and player filters' derivation (blooper kinds as feats); the `#clip=<no>&t=<s>` parser (its source is inlined into the page); the one rule that dates a clip's match (page, `pnpm week`, death map) |
 | `src/share/` | derived copies of a library clip, none of them in `index.json`: `index.ts` share, `vertical.ts`, `cut.ts`, `caption.ts` |

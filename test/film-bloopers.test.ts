@@ -74,7 +74,7 @@ test("blooper held: its id in the index or among the deleted, whatever the span"
 });
 
 test("facets: a blooper's type is its feat; the Player list names each key by its newest entry, Me first", () => {
-  assert.deepEqual(BLOOPER_FEATS.map((f) => f[1]), ["Teamkill", "Own grenade / fall", "Spray, no kill", "Behind, no kill"]);
+  assert.deepEqual(BLOOPER_FEATS.map((f) => f[1]), ["Teamkill", "Own grenade / fall", "Own grenade, survived", "Spray, no kill", "Behind, no kill"]);
   const ka = povKey(A), kb = povKey("76561198000000004");
   assert.deepEqual(playersOf([entry({})]), [], "no player anywhere: no list, no group");
   assert.deepEqual(playersOf([

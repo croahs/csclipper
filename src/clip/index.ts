@@ -4,7 +4,7 @@
 // generated title.
 import type { Death, ParsedDemo, Round } from "../parse/demo.ts";
 import { clipId } from "../library/index.ts";
-import { knifeKills, scoreKills, teamplay, weaponClass, type Clutch, type Moment, type Teamplay, type Weights } from "../score/index.ts";
+import { knifeKills, scoreMoment, teamplay, weaponClass, type Clutch, type Moment, type Teamplay, type Weights } from "../score/index.ts";
 import type { ClipRules } from "../config.ts";
 
 const ENGAGE_WINDOW_S = 5; // engagement signals this far before the first kill
@@ -35,6 +35,8 @@ export type ClipSpec = {
   weapons: string[];
   flags: string[];
   clutch?: Clutch;
+  /** pace.stretch (film weights): the kills the score comes from (indices into killTicks, inclusive), when fewer than all. */
+  stretch?: { from: number; to: number };
   aboveThreshold: boolean;
   /** Normal-speed windows inside [startTick, endTick], in order, more than FAST_FORWARD_GAP_S apart. */
   windows: ActionWindow[];
@@ -171,7 +173,7 @@ export function clipSpecs(p: ParsedDemo, ms: Moment[], w: Weights, rules: ClipRu
   }
   // No cap: a moment is never cut short (PLAN.md §4); post fast-forwards the stretches without action.
   const specs = merged.map((d) => {
-    const s = scoreKills(p, d.kills, d.clutch, d.roundWon, w);
+    const s = scoreMoment(p, d.kills, d.clutch, d.roundWon, w);
     return {
       id: clipId(p.demo.sha256, d.round, d.start, d.end, povKey),
       rank: 0,
@@ -182,6 +184,7 @@ export function clipSpecs(p: ParsedDemo, ms: Moment[], w: Weights, rules: ClipRu
       weapons: [...new Set(d.kills.map((k) => weaponName(k.weapon)))],
       flags: flagsOf(d.kills, teamplay(p, d.kills, w)),
       ...(d.clutch ? { clutch: d.clutch } : {}),
+      ...(s.stretch ? { stretch: s.stretch } : {}),
       aboveThreshold: s.score >= w.threshold,
       windows: actionWindows(p, d.round, d.start, d.end, d.outcomes, d.tails),
     };

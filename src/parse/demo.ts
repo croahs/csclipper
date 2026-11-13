@@ -122,6 +122,7 @@ export const parseKey = (sha256: string, pov: string) => `${sha256}:demoparser2@
 
 /** The POV is not among the players of the demo's match rounds; for a film roster player that means "not in this demo", not an error. */
 export class PovAbsent extends Error {}
+const absentMessage = (pov: string, main: boolean) => (main ? "POV player (STEAM_ID64) not found in this demo's match rounds" : `player ${povKey(pov)} not found in this demo's match rounds`);
 
 function extract(demo: string, sha256: string, pov: string, key: string, main: boolean): ParsedDemo {
   const info = readFileInfo(demo);
@@ -170,7 +171,7 @@ function extract(demo: string, sha256: string, pov: string, key: string, main: b
     }
   }
   const mine = rows.filter((x) => x.steamid === pov);
-  if (!mine.length) throw new PovAbsent(main ? "POV player (STEAM_ID64) not found in this demo's match rounds" : `player ${povKey(pov)} not found in this demo's match rounds`);
+  if (!mine.length) throw new PovAbsent(absentMessage(pov, main));
   const identity = { steamid: pov, name: mine[0].name, userIds: [...new Set(mine.map((x) => x.user_id))] };
 
   const inMatch = <T extends { tick: number }>(xs: T[]) => xs.filter((x) => x.tick > matchStartTick && roundAt(x.tick) > 0);
@@ -311,7 +312,7 @@ export const parseIsCurrent = (p: ParsedDemo) => p.key.includes(`:demoparser2@${
  * Parse once per demo and POV, cached; a cached file counts only if its key matches. mainPov
  * (STEAM_ID64) decides the cache's place (povDir): the main POV's stays where it always was.
  */
-export async function parseDemo(demo: string, pov: string, mainPov = loadIdentities().pov): Promise<ParsedDemo> {
+export async function parseDemo(demo: string, pov: string, mainPov = loadIdentities().pov, extractor = extract): Promise<ParsedDemo> {
   const sha256 = await sha256File(demo);
   const key = parseKey(sha256, pov);
   const dir = povDir(sha256, povKeyFor(pov, mainPov));
@@ -322,7 +323,26 @@ export async function parseDemo(demo: string, pov: string, mainPov = loadIdentit
       if (cached.key === key) return { ...cached, demo: { ...cached.demo, path: demo } };
     } catch {}
   }
-  const parsed = extract(demo, sha256, pov, key, pov === mainPov);
+  // "Not in this demo", cached beside the parse (absent.json): the folder names the POV (povKey), the
+  // key holds demo hash, the POV's hash (the main POV shares the demo's own folder, and STEAM_ID64 can
+  // change), parser and schema, so a schema or parser bump re-checks. Only PovAbsent is cached; any
+  // other failure is thrown as it was and parsed again next time.
+  const absent = path.join(dir, "absent.json");
+  const absentKey = `${sha256}:${povKey(pov)}:demoparser2@${DEMOPARSER_VERSION}:schema${SCHEMA}`;
+  const main = pov === mainPov;
+  if (existsSync(absent)) {
+    try { if (JSON.parse(readFileSync(absent, "utf8")).key === absentKey) throw new PovAbsent(absentMessage(pov, main)); } catch (e) { if (e instanceof PovAbsent) throw e; }
+  }
+  let parsed: ParsedDemo;
+  try { parsed = extractor(demo, sha256, pov, key, main); } catch (e) {
+    if (e instanceof PovAbsent) {
+      mkdirSync(dir, { recursive: true });
+      const tmp = `${absent}.${process.pid}.${Date.now()}.tmp`;
+      writeFileSync(tmp, JSON.stringify({ key: absentKey }));
+      renameSync(tmp, absent);
+    }
+    throw e;
+  }
   mkdirSync(dir, { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`; // unique per writer
   writeFileSync(tmp, JSON.stringify(parsed));

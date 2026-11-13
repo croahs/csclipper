@@ -60,7 +60,7 @@ async function main(): Promise<number> {
       const f = r.film;
       const label = (p: { key: string; name?: string }) => p.name ?? `player ${p.key}`;
       const clips = (ms: typeof r.made) => ms.map((m) => `clip ${m.no ?? "?"} (${m.title})`).join(", ");
-      console.log(`film (per player the top ${f.top} highlights by film score and the top ${f.bloopersTop} bloopers at ${f.blooperMinScore}+, no reels, no settling), ${f.players.length} player(s); already in the library: ${f.held} of the selection:`);
+      console.log(`film (per player the top ${f.top} highlights at ${f.minScore}+ by film score and the top ${f.bloopersTop} bloopers at ${f.blooperMinScore}+, no reels, no settling), ${f.players.length} player(s); already in the library: ${f.held} of the selection:`);
       for (const p of f.players) {
         const hl = r.made.filter((m) => m.kind === "highlight" && m.player?.key === p.key);
         const bl = r.made.filter((m) => m.kind === "blooper" && m.player?.key === p.key);

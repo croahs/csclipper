@@ -58,6 +58,7 @@
   },
   "film": {
     "top": 20,
+    "minScore": 40,
     "bloopersTop": 5,
     "masterHandleSeconds": 2,
     "masterCaptureCrf": 8,

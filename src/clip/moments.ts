@@ -3,11 +3,13 @@
 // temp file and a rename; a POV other than STEAM_ID64 into state/<sha>/pov-<povKey>/.
 // Film weights (scoring.film.json, pnpm film) go to moments.film.json / moments.film.txt beside them,
 // for every POV, so the two modes never rewrite each other's cache. Spans and ids do not depend on
-// the weights, so a moment has the same clip id in both.
+// the weights, so a moment has the same clip id in both. The cache key holds the weights themselves,
+// so a change to either file (pace.stretch included) rebuilds that mode's moments on the next run.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isKnifeRound, parseDemo, povDir, type ParsedDemo } from "../parse/demo.ts";
+import { TICKRATE } from "../parse/clip-facts.ts";
 import { loadFilmWeights, loadWeights, moments } from "../score/index.ts";
 import { loadClipRules, loadIdentities, povKeyFor, type ClipRules } from "../config.ts";
 import { clipSpecs, type ClipSpec } from "./index.ts";
@@ -20,11 +22,19 @@ function writeAtomic(file: string, text: string) {
   renameSync(tmp, file);
 }
 
+/** A film spec scored as a stretch of its kills (pace.stretch): "3 of 5 kills, 1.4 s apart"; empty otherwise. */
+export function stretchText(s: Pick<ClipSpec, "stretch" | "kills" | "killTicks">, tickrate = TICKRATE): string {
+  if (!s.stretch) return "";
+  const n = s.stretch.to - s.stretch.from + 1;
+  const gap = n > 1 ? (s.killTicks[s.stretch.to] - s.killTicks[s.stretch.from]) / (n - 1) / tickrate : 0;
+  return `${n} of ${s.kills} kills${n > 1 ? `, ${gap.toFixed(1)} s apart` : ""}`;
+}
+
 export function table(p: ParsedDemo, specs: ClipSpec[]): string {
   const head = `${p.demo.map} · ${path.basename(p.demo.path)} · ${p.rounds.length} match rounds (${p.preMatchRounds} pre-match skipped, ${p.rounds.filter((r) => isKnifeRound(p, r)).length} knife, ${p.rounds.filter((r) => r.phase === "overtime").length} overtime, ${p.rounds.filter((r) => r.rosterChanged).length} with roster changes)`;
   const rows = specs.map((s) => [
     String(s.rank), `R${s.round}`, s.score.toFixed(1), String(s.kills),
-    [s.clutch ? `1v${s.clutch.vs}${s.clutch.won ? " won" : " lost"}` : "", ...s.flags].filter(Boolean).join(", "),
+    [s.clutch ? `1v${s.clutch.vs}${s.clutch.won ? " won" : " lost"}` : "", ...s.flags, stretchText(s, p.demo.tickrate)].filter(Boolean).join(", "),
     String(s.startTick), String(s.endTick), ((s.endTick - s.startTick) / p.demo.tickrate).toFixed(1), s.title,
   ]);
   const cols = ["#", "round", "score", "kills", "flags", "start", "end", "sec", "title"];

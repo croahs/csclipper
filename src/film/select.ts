@@ -1,5 +1,6 @@
 // pnpm film's selection (pure): per roster player, his moments over every registered demo still on
-// disk ranked by their film score (scoring.film.json), and the best config.json film.top of them; his
+// disk ranked by their film score (scoring.film.json), and the best config.json film.top of those
+// scoring film.minScore or more (Peder, 2026-11-13: "nedre grense 40. synd for xz1ted, men sånn er det"); his
 // bloopers scoring film.bloopers.minScore or more ranked the same way, the best film.bloopersTop. A clip
 // the library holds counts toward the player's number and is not rendered again; a deleted one
 // (state/deleted.json) is passed over and the next best takes its place. No record of its own: what the
@@ -31,9 +32,13 @@ export function topN<T extends Candidate>(xs: T[], n: number): { taken: T[]; pas
 
 export type FilmSelection<H extends Candidate, B extends Candidate> = { highlights: { taken: H[]; passed: H[] }; bloopers: { taken: B[]; passed: B[] } };
 
-/** One player's selection: his top highlights, and his top bloopers among those at minScore or more (few or none is fine). */
-export function selectFilm<H extends Candidate, B extends Candidate>(highlights: H[], bloopers: B[], s: { top: number; bloopersTop: number; blooperMinScore: number }): FilmSelection<H, B> {
-  return { highlights: topN(highlights, s.top), bloopers: topN(bloopers.filter((b) => b.score >= s.blooperMinScore), s.bloopersTop) };
+/**
+ * One player's selection: his top highlights among those at minScore or more (absent: 0), and his top
+ * bloopers among those at blooperMinScore or more (few or none of either is fine). A held clip under
+ * the bound is not taken: it stays in the library, it just is not in the selection.
+ */
+export function selectFilm<H extends Candidate, B extends Candidate>(highlights: H[], bloopers: B[], s: { top: number; minScore?: number; bloopersTop: number; blooperMinScore: number }): FilmSelection<H, B> {
+  return { highlights: topN(highlights.filter((h) => h.score >= (s.minScore ?? 0)), s.top), bloopers: topN(bloopers.filter((b) => b.score >= s.blooperMinScore), s.bloopersTop) };
 }
 
 /** What a selection still needs rendered: taken and not held. */

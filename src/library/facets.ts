@@ -6,7 +6,7 @@
 /** Filter order and labels, as the sidebar shows them. */
 export const FEATS = [["ace", "Ace"], ["4k", "4k"], ["3k", "3k"], ["clutch", "Clutch"], ["knife2k", "Knife 2k+"]] as const;
 /** A blooper's feat is its type (src/film/bloopers.ts), listed after the highlight feats. */
-export const BLOOPER_FEATS = [["teamkill", "Teamkill"], ["selfkill", "Own grenade / fall"], ["spray", "Spray, no kill"], ["behind", "Behind, no kill"]] as const;
+export const BLOOPER_FEATS = [["teamkill", "Teamkill"], ["selfkill", "Own grenade / fall"], ["selfnade", "Own grenade, survived"],["spray", "Spray, no kill"], ["behind", "Behind, no kill"]] as const;
 export type Feat = (typeof FEATS)[number][0];
 
 type Moment = { kills?: unknown; clutch?: unknown; weapons?: unknown; flags?: unknown } | undefined;

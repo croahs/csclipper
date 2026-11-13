@@ -219,19 +219,22 @@ export const povKey = (steamId64: string) => createHash("sha256").update(steamId
 export const povKeyFor = (pov: string, mainPov: string) => (pov === mainPov ? undefined : povKey(pov));
 
 /**
- * pnpm film (config.json → film): per roster player, the `top` best highlights (film weights) and the
+ * pnpm film (config.json → film): per roster player, the `top` best highlights (film weights) scoring
+ * `minScore` or more (absent: 0) and the
  * `bloopersTop` best bloopers across every registered demo still on disk; the masters' handles on each
  * side (seconds) and their capture CRF (HLAE's x264, instead of render.captureCrf). The bloopers' bar and
  * thresholds (film.bloopers) are read by loadBlooperSettings.
  */
-export type FilmSettings = { top: number; bloopersTop: number; masterHandleSeconds: number; masterCaptureCrf: number };
+export type FilmSettings = { top: number; minScore: number; bloopersTop: number; masterHandleSeconds: number; masterCaptureCrf: number };
 export function loadFilm(file = path.join(ROOT, "config.json")): FilmSettings {
   const f = JSON.parse(readFileSync(file, "utf8")).film ?? {};
   for (const k of ["top", "bloopersTop"] as const) if (!Number.isInteger(f[k]) || f[k] < 0) throw new Error(`config.json film.${k} must be a whole number >= 0`);
+  const minScore = f.minScore ?? 0; // a highlight's film score must reach it (absent: no bound)
+  if (typeof minScore !== "number" || !(minScore >= 0)) throw new Error("config.json film.minScore must be a number >= 0");
   const handle = f.masterHandleSeconds ?? 2, crf = f.masterCaptureCrf ?? 8;
   if (typeof handle !== "number" || !(handle >= 0 && handle <= 30)) throw new Error("config.json film.masterHandleSeconds must be a number of seconds from 0 to 30");
   if (!Number.isInteger(crf) || crf < 0 || crf > 51) throw new Error("config.json film.masterCaptureCrf must be a whole number from 0 to 51");
-  return { top: f.top, bloopersTop: f.bloopersTop, masterHandleSeconds: handle, masterCaptureCrf: crf };
+  return { top: f.top, minScore, bloopersTop: f.bloopersTop, masterHandleSeconds: handle, masterCaptureCrf: crf };
 }
 
 /**

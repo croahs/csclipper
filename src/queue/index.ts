@@ -20,7 +20,7 @@ import { spawn } from "node:child_process";
 import { constants, setPriority } from "node:os";
 import path from "node:path";
 import { Refusal, STATE_DIR, loadBatch, loadFilm, loadIdentities, loadReels, loadRoster, pickMoments, povKey, povKeyFor } from "../config.ts";
-import { buildMoments } from "../clip/moments.ts";
+import { buildMoments, stretchText } from "../clip/moments.ts";
 import { PovAbsent, type ParsedDemo } from "../parse/demo.ts";
 import { blooperClip, detectBloopers, loadBlooperSettings, pickBloopers, type BlooperClip } from "../film/bloopers.ts";
 import { selectFilm, toRender, type Candidate } from "../film/select.ts";
@@ -85,7 +85,7 @@ export type BatchReport = {
    * --film: the settings, the roster (povKey and the name a parse gave it this run), demos a player is not
    * in, demos with no roster player, registered demos no longer on disk, and how many selected clips the library already held.
    */
-  film?: { top: number; bloopersTop: number; blooperMinScore: number; players: { key: string; name?: string }[]; absent: { demo: string; key: string }[]; noPlayer: string[]; missingFiles: number; held: number };
+  film?: { top: number; minScore: number; bloopersTop: number; blooperMinScore: number; players: { key: string; name?: string }[]; absent: { demo: string; key: string }[]; noPlayer: string[]; missingFiles: number; held: number };
   /** Demos skipped because they are settled; --settle-existing: how many it settled now. */
   settled: number; settledNow?: number;
   /** Demos this run settled because its pass over them finished (every selected moment rendered, held or failed for good). */
@@ -402,7 +402,7 @@ async function filmQueue(registry: DemoRecord[], pov: string, report: BatchRepor
   const film = loadFilm();
   const bloopers = loadBlooperSettings();
   const roster = loadRoster();
-  const f: NonNullable<BatchReport["film"]> = { top: film.top, bloopersTop: film.bloopersTop, blooperMinScore: bloopers.minScore, players: roster.map((id) => ({ key: povKey(id) })), absent: [], noPlayer: [], missingFiles: 0, held: 0 };
+  const f: NonNullable<BatchReport["film"]> = { top: film.top, minScore: film.minScore, bloopersTop: film.bloopersTop, blooperMinScore: bloopers.minScore, players: roster.map((id) => ({ key: povKey(id) })), absent: [], noPlayer: [], missingFiles: 0, held: 0 };
   report.film = f;
   const nameOf = (id: string) => f.players.find((p) => p.key === povKey(id))?.name ?? `player ${povKey(id)}`;
   const clips = readIndex().clips, deleted = readDeleted();
@@ -455,10 +455,10 @@ async function filmQueue(registry: DemoRecord[], pov: string, report: BatchRepor
   const out: QueueItem[] = [];
   for (const id of roster) {
     const { hl, bl } = per.get(id)!;
-    const sel = selectFilm(hl, bl, { top: film.top, bloopersTop: film.bloopersTop, blooperMinScore: bloopers.minScore });
+    const sel = selectFilm(hl, bl, { top: film.top, minScore: film.minScore, bloopersTop: film.bloopersTop, blooperMinScore: bloopers.minScore });
     const who = { ...(id !== pov ? { pov: id } : {}), player: nameOf(id) };
-    console.log(`\n${nameOf(id)}: top ${film.top} highlights (film weights) of ${hl.length} moment(s)`);
-    console.log(filmTable(sel.highlights, (x) => x.spec.title, dryRun));
+    console.log(`\n${nameOf(id)}: top ${film.top} highlights at ${film.minScore}+ (film weights) of ${hl.length} moment(s)`);
+    console.log(filmTable(sel.highlights, (x) => x.spec.title + (x.spec.stretch ? ` (${stretchText(x.spec)})` : ""), dryRun));
     console.log(`${nameOf(id)}: top ${film.bloopersTop} bloopers at ${bloopers.minScore}+ of ${bl.length}`);
     console.log(filmTable(sel.bloopers, (x) => x.clip.title, dryRun));
     const render = [...toRender(sel.highlights), ...toRender(sel.bloopers)];

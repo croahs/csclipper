@@ -139,7 +139,7 @@ Score per moment from, first ranking only:
 | Signal | Why it matters |
 |---|---|
 | kill count in cluster (2k…5k) | multikills are the backbone |
-| time between kills | fast 3k > slow 3k; decided by Peder 2026-11-02: weighted up and sliding, every second between kills counts (1 s more than 2 s, ... 7 s more than 8 s), flat from 8 s, not a step at a cutoff |
+| time between kills | fast 3k > slow 3k; decided by Peder 2026-11-02: weighted up and sliding, every second between kills counts (1 s more than 2 s, ... 7 s more than 8 s), flat from 8 s, not a step at a cutoff; the film weights also scale the round itself by its tempo (best stretch, Film mode below) |
 | collateral (one shot, several kills: POV gun kills on the same tick, shotgun blasts included) | decided by Peder 2026-11-02: a flat bonus per extra kill, on par with a third kill's tempo |
 | clutch state (1vX, won) | highest-value single signal, but scaled by X and by kills in the clutch: a 1v1 with one kill is small, 1v3+ is big (recalibrated 2026-10-15 after clip 90) |
 | headshot, wallbang, no-scope, through smoke, while blind | flavour, straight from the death event |
@@ -171,8 +171,19 @@ plus the friends in `.env` → `FILM_STEAM_ID64S`. It ranks every
 player's moments over every demo still on disk with its own weights
 (`scoring.film.json`: shown to an audience, so tempo is worth far more
 and a clutch counts only when exceptional; trades and saves, invisible
-on screen, count nothing) and renders per player the 20 best
-(`film.top`) and his 5 best bloopers (`film.bloopersTop`) from his own
+on screen, count nothing). Tempo there is more than an addition: a
+round is worth its best stretch, its run of consecutive kills whose own
+score times a tempo factor is highest, the factor 1 up to 3 s between
+kills on average, falling in a straight line to 0.2 at 12 s (Peder,
+2026-11-13: his friend's best clips had 30 s between kills). The clip
+still shows the whole round. A won clutch with 4 or more kills in it is
+exempt and scores on all its kills: in a 1v4 or 1v5 he wins alone, the
+waits are suspense, not dead air. It renders per player the 20 best
+(`film.top`) scoring 40 or more (`film.minScore`, so a player with few
+good moments gets fewer, or none; Peder, 2026-11-13, after a top 20
+filled with single kills scoring about 20: "nedre grense 40. synd for
+xz1ted, men sånn er det"; a held clip under it leaves the selection,
+not the library) and his 5 best bloopers (`film.bloopersTop`) from his own
 first person, no reels, one launch per demo with your look. Two or more
 knife kills in a round that is not the knife round are a highlight in
 their own right, in both weight files. A clip the library holds counts
@@ -190,11 +201,21 @@ stream and its sound as PCM in a `.mov`, one folder per player. The
 library clip is not touched.
 
 Bloopers are the funny mistakes, a separate score 0-100: a teamkill,
-a death by your own grenade or a fall, a magazine sprayed at an enemy
+a death by your own grenade or a fall, your own grenade or fire taking
+50 or more health in one throw you survive (Peder, 2026-11-13:
+"selvskade uten død kan også vær med hvis noen kaster en HE på seg selv
+og tar sånn 50 damage"), a magazine sprayed at an enemy
 right in front without a kill, and standing behind several enemies who
 face away without killing any. Without map geometry, the last two need
 a sign of sight (damage, the game's spotted flag, or dying to that
-enemy). A blooper scoring `film.bloopers.minScore` (50) or more can be
+enemy). Two rules from Peder (2026-11-13), "bloopers må endres. Spam i
+smoke teller ikke som bomma kuler, self-nade-damage must be rated by how
+much damage the molotov/nade does": a spray counts only the shots with no
+active smoke between the shooter and the enemy he aims at, and must
+still reach the minimum on that count; a death by your own grenade or
+fire is rated by the damage your own grenades and fire did to you that
+round, not by the health you had left (finishing a player on 12 HP is
+no blooper). A blooper scoring `film.bloopers.minScore` (50) or more can be
 selected (few or none in 50 demos is fine) and is rendered whole at
 normal speed; of one player's that overlap, the higher. Its identity is
 the event (demo, kind, tick, player), never its span, so no threshold
@@ -631,7 +652,8 @@ without a moment match no feat or weapon. Every filter combines with
 the others, Find and the sort; "Newest clips" clears them all.
 Film entries (§3, Film mode and bloopers): Kind gains "Bloopers",
 which show and sort by their own score, and the blooper kinds are
-feats (Teamkill, Own grenade / fall, Spray, no kill, Behind, no kill).
+feats (Teamkill, Own grenade / fall, Own grenade, survived, Spray, no kill,
+Behind, no kill).
 When any clip is a friend's, a "Player" category lists "Me" and each
 friend under the name on his newest clip. A library without film
 entries looks as it did. Every clip has a "Film" checkbox in its action

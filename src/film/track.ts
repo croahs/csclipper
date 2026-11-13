@@ -3,7 +3,8 @@
 // each player spotted (the game's own spotted-by mask, CCSPlayerPawn.m_bSpottedByMask through
 // demoparser2's approximate_spotted_by: a positive line-of-sight signal, set for the victim at
 // 71 % of one demo's non-wallbang gun kills the tick before and at none of its wallbangs; its
-// absence proves nothing).
+// absence proves nothing), and where the smokes were: each smoke's centre and its active ticks, so
+// shots into a smoke are not counted as missed bullets (src/film/bloopers.ts).
 // Cached as state/<demo sha256>/bloopers-track.json.gz under the resumability contract: the key
 // covers the demo hash, the parser version and this file's schema; temp file, then rename.
 import { createRequire } from "node:module";
@@ -16,11 +17,16 @@ import { PovAbsent, parseDemo, parseDir, parseKey, povDir, type ParsedDemo } fro
 
 const require = createRequire(import.meta.url);
 
-const SCHEMA = 1;
+const SCHEMA = 2; // 2: smokes
 export const TRACK_EVERY = 16; // ticks between samples
 /** Values per player per sample in Track.data: X, Y, Z, yaw, pitch, alive (0/1), spottedBy (bit i: players[i] had this player spotted). */
 export const TRACK_STRIDE = 7;
 const MAX_SPOTTERS = 31; // bitmask width; a demo has 10 (a substitute or two more)
+/**
+ * A smoke's life when the demo holds no smokegrenade_expired for it: 22 s, measured (bloom to
+ * expire was 22.06 s, 1412 ticks at 64, for every expired smoke of one demo). Capped at the round's end.
+ */
+export const SMOKE_SECONDS = 22;
 
 export type Track = {
   schema: number; key: string;
@@ -30,7 +36,11 @@ export type Track = {
   names: string[];
   // data[player][sample * TRACK_STRIDE + k], rounded ints (a dead or absent player: zeros)
   data: number[][];
+  // The match rounds' smokes. Absent (a Track built without it, as in tests): no smokes.
+  smokes?: Smoke[];
 };
+/** A smoke: its centre (the detonation point, rounded), the tick it bloomed and the tick it ended. */
+export type Smoke = { X: number; Y: number; Z: number; from: number; to: number };
 export type Sample = { X: number; Y: number; Z: number; yaw: number; pitch: number; alive: boolean; spottedBy: number };
 
 /** A player's state at sample i (track.players index). */
@@ -51,7 +61,8 @@ export function trackTicks(p: ParsedDemo, every = TRACK_EVERY): number[] {
 
 const sid = (v: unknown) => (typeof v === "string" && /^\d{17}$/.test(v) ? v : null);
 
-function extract(demo: string, p: ParsedDemo, key: string): Track {
+/** One parser pass over the demo: the samples and the smokes (sampleTrack caches it). */
+export function extractTrack(demo: string, p: ParsedDemo, key: string): Track {
   const dp = require("@laihoe/demoparser2");
   const ticks = trackTicks(p);
   const index = new Map(ticks.map((t, i) => [t, i]));
@@ -77,7 +88,23 @@ function extract(demo: string, p: ParsedDemo, key: string): Track {
     const d = data[pi];
     d[o] = num(r.X); d[o + 1] = num(r.Y); d[o + 2] = num(r.Z); d[o + 3] = num(r.yaw); d[o + 4] = num(r.pitch); d[o + 5] = 1; d[o + 6] = mask >>> 0;
   }
-  return { schema: SCHEMA, key, every: TRACK_EVERY, ticks, players, names, data };
+  const smokes = smokesOf(p, dp.parseEvent(demo, "smokegrenade_detonate", [], []), dp.parseEvent(demo, "smokegrenade_expired", [], []));
+  return { schema: SCHEMA, key, every: TRACK_EVERY, ticks, players, names, data, smokes };
+}
+
+type SmokeEvent = { tick: number; entityid: number; x: number; y: number; z: number };
+/** The match rounds' smokes: each detonation, ended by its entity's first expire after it in that round, else SMOKE_SECONDS on, never past its round's end. */
+export function smokesOf(p: Pick<ParsedDemo, "rounds" | "demo">, detonated: SmokeEvent[], expired: SmokeEvent[]): Smoke[] {
+  const out: Smoke[] = [];
+  for (const d of detonated) {
+    const r = p.rounds.find((x) => d.tick > x.startTick && d.tick <= x.endTick);
+    if (!r) continue;
+    // Only an expire in the same round ends it: an entity id is reused in later rounds.
+    const exp = Math.min(...expired.filter((e) => e.entityid === d.entityid && e.tick > d.tick && e.tick <= r.endTick).map((e) => e.tick));
+    const to = Math.min(Number.isFinite(exp) ? exp : d.tick + Math.round(SMOKE_SECONDS * p.demo.tickrate), r.endTick);
+    out.push({ X: Math.round(d.x), Y: Math.round(d.y), Z: Math.round(d.z), from: d.tick, to });
+  }
+  return out;
 }
 
 /**
@@ -120,7 +147,7 @@ export function sampleTrack(demoPath: string, p: ParsedDemo): Track {
       if (cached.key === key) return cached;
     } catch {}
   }
-  const track = extract(demoPath, p, key);
+  const track = extractTrack(demoPath, p, key);
   mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`; // unique per writer
   writeFileSync(tmp, gzipSync(JSON.stringify(track)));

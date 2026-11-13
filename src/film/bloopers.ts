@@ -1,9 +1,15 @@
 // Bloopers ("tabber"): the funniest mistakes of a roster's players in one demo, each a clip span
-// in that player's first person. Four kinds: a teamkill, a death by one's own grenade or a fall,
-// a spray of a magazine at an enemy right in front without a kill, and standing behind several
+// in that player's first person. Five kinds: a teamkill, a death by one's own grenade or a fall,
+// a throw of one's own grenade that took 50+ health without killing him, a spray of a magazine at an enemy right in front without a kill, and standing behind several
 // enemies who face away without killing any of them. detectBloopers is pure: the parse (rounds,
-// deaths, hurts, fires) and the track (positions and views every 0.25 s, src/film/track.ts) in,
-// scored bloopers out. Thresholds: BLOOPER_DEFAULTS, overridable in config.json → film.bloopers.
+// deaths, hurts, fires) and the track (positions and views every 0.25 s, and the smokes,
+// src/film/track.ts) in, scored bloopers out. Thresholds: BLOOPER_DEFAULTS, overridable in
+// config.json → film.bloopers. Two rules from Peder (2026-11-13): "Spam i smoke teller ikke som bomma
+// kuler" (a spray counts only the shots with no smoke between him and the enemy he aims at), and
+// "self-nade-damage must be rated by how much damage the molotov/nade does" (a death by his own
+// grenade or fire scores by the damage it did to him that round, not by the health he had left);
+// and "selvskade uten død kan også vær med hvis noen kaster en HE på seg selv og tar sånn 50 damage"
+// (selfnade, on the same scale).
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -14,7 +20,7 @@ import { MARGIN_TICKS, SETTLE_TICKS } from "../render/controller/index.ts";
 import { CHAIN_AFTER_TICKS, FIRST_SCHEDULE } from "../render/controller/cfg.ts";
 import { hasSpotter, sampleAt, type Sample, type Track } from "./track.ts";
 
-export type BlooperType = "teamkill" | "selfkill" | "spray" | "behind";
+export type BlooperType = "teamkill" | "selfkill" | "selfnade" | "spray" | "behind";
 export type Blooper = {
   type: BlooperType; steamid: string; name: string; round: number;
   tick: number; // the anchor event: the kill, the death, the spray's last shot, the window's start (which a span cut to 25 s no longer shows)
@@ -35,6 +41,9 @@ export type BlooperSettings = {
     frontShare: number; // at this share of the episode's samples
     noKillAfterSeconds: number; // no kill from the first shot until this long after the last
   };
+  selfnade: {
+    minDamage: number; // health his own grenade or fire took from him in one throw he survived
+  };
   behind: {
     minEnemies: number; // enemies in view at once, facing away
     minSeconds: number; // for this long
@@ -49,6 +58,7 @@ export type BlooperSettings = {
 
 export const BLOOPER_DEFAULTS: BlooperSettings = {
   minScore: 50,
+  selfnade: { minDamage: 50 },
   spray: { minBullets: 25, gapSeconds: 1, rangeUnits: 700, coneDeg: 12, pitchDeg: 20, frontShare: 0.6, noKillAfterSeconds: 2 },
   behind: { minEnemies: 2, minSeconds: 1, rangeUnits: 1200, coneDeg: 35, facingAwayDeg: 110, minShots: 3, shotsAfterSeconds: 4, noKillAfterSeconds: 6 },
 };
@@ -57,10 +67,10 @@ export const BLOOPER_DEFAULTS: BlooperSettings = {
 export function loadBlooperSettings(file = path.join(ROOT, "config.json")): BlooperSettings {
   const o = (existsSync(file) ? JSON.parse(readFileSync(file, "utf8")).film?.bloopers : undefined) ?? {};
   const d = BLOOPER_DEFAULTS;
-  const s: BlooperSettings = { minScore: o.minScore ?? d.minScore, spray: { ...d.spray, ...o.spray }, behind: { ...d.behind, ...o.behind } };
+  const s: BlooperSettings = { minScore: o.minScore ?? d.minScore, selfnade: { ...d.selfnade, ...o.selfnade }, spray: { ...d.spray, ...o.spray }, behind: { ...d.behind, ...o.behind } };
   const bad = (k: string, v: unknown) => typeof v !== "number" || !Number.isFinite(v) || v < 0;
   if (bad("minScore", s.minScore)) throw new Error("config.json film.bloopers.minScore must be a number >= 0");
-  for (const g of ["spray", "behind"] as const) for (const [k, v] of Object.entries(s[g])) if (bad(k, v)) throw new Error(`config.json film.bloopers.${g}.${k} must be a number >= 0`);
+  for (const g of ["selfnade", "spray", "behind"] as const) for (const [k, v] of Object.entries(s[g])) if (bad(k, v)) throw new Error(`config.json film.bloopers.${g}.${k} must be a number >= 0`);
   return s;
 }
 
@@ -74,6 +84,20 @@ function offView(a: Sample, b: Sample): { yaw: number; pitch: number } {
   const pitchTo = (-Math.atan2(dz, Math.hypot(dx, dy)) * 180) / Math.PI; // CS pitch: positive looks down
   return { yaw: angDiff(a.yaw, yawTo), pitch: angDiff(a.pitch, pitchTo) };
 }
+/** The distance from point c to the segment a-b (3D). */
+function segmentDist(a: number[], b: number[], c: number[]): number {
+  const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+  const len2 = d[0] ** 2 + d[1] ** 2 + d[2] ** 2;
+  const k = len2 ? clamp01((w[0] * d[0] + w[1] * d[1] + w[2] * d[2]) / len2) : 0;
+  return Math.hypot(a[0] + k * d[0] - c[0], a[1] + k * d[1] - c[1], a[2] + k * d[2] - c[2]);
+}
+/**
+ * A smoke blocks a line passing this close (units) to its detonation point. 155: CS:GO's bot and
+ * game-rules smoke radius (SmokeGrenadeRadius, as recalled; not checked against CS2). Measured on 24
+ * demos: 69 % of thrusmoke kills' lines (attacker's eyes to victim's chest) pass this close to an
+ * active smoke, against 4 % of the other gun kills while a smoke was up.
+ */
+export const SMOKE_RADIUS = 155;
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0; };
 
@@ -116,6 +140,15 @@ export function detectBloopers(p: ParsedDemo, track: Track, roster: string[], cf
     for (let i = lo; i < track.ticks.length && track.ticks[i] <= to; i++) out.push(i);
     return out;
   };
+  const nearestSample = (tick: number) => {
+    let lo = 0, hi = track.ticks.length - 1;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (track.ticks[m] < tick) lo = m + 1; else hi = m; }
+    return lo > 0 && tick - track.ticks[lo - 1] <= track.ticks[lo] - tick ? lo - 1 : lo;
+  };
+  // A smoke active at `tick` within SMOKE_RADIUS of the line from a's eyes to b's chest (which holds
+  // a or b standing inside it).
+  const smokeBlocks = (a: Sample, b: Sample, tick: number) =>
+    (track.smokes ?? []).some((s) => s.from <= tick && tick <= s.to && segmentDist([a.X, a.Y, a.Z + 64], [b.X, b.Y, b.Z + 40], [s.X, s.Y, s.Z]) <= SMOKE_RADIUS);
   const out: Blooper[] = [];
   // hold: the tick the span must contain when that is not the anchor (a behind window cut to its last 25 s).
   const add = (r: Round, b: Omit<Blooper, "startTick" | "endTick" | "title" | "name"> & { what: string }, from: number, to: number, hold = b.tick) => {
@@ -157,6 +190,16 @@ export function detectBloopers(p: ParsedDemo, track: Track, roster: string[], cf
         }, d.tick - S(6), d.tick + S(3)]);
       }
 
+      // His own HE, molotov and incendiary hits this round, each as the health it took (player_hurt's
+      // dmg_health is not capped at the health left: a killing hit reads 104 on 80 HP), walked from 100.
+      const ownHits: { tick: number; took: number; health: number; weapon: string }[] = [];
+      let hp = 100;
+      for (const h of p.hurts.filter((x) => x.round === r.n && x.victim === id && x.tick > r.startTick).sort((a, b) => a.tick - b.tick)) {
+        const took = Math.max(0, Math.min(h.dmg, hp - h.health));
+        hp = h.health;
+        if (h.attacker === id && THROWN.test(bare(h.weapon) === "inferno" ? "molotov" : bare(h.weapon))) ownHits.push({ tick: h.tick, took, health: h.health, weapon: bare(h.weapon) });
+      }
+
       // 2. selfkill: own grenade or fire, or a fall. Bomb deaths (planted_c4) and disconnects ("world",
       // no damage at all) are not: a fall is a death whose damage came from no one, at that tick.
       if (died) {
@@ -167,13 +210,42 @@ export function detectBloopers(p: ParsedDemo, track: Track, roster: string[], cf
         if (own || fall) {
           const throwTick = own ? p.fires.filter((f) => f.player === id && f.round === r.n && THROWN.test(bare(f.weapon)) && f.tick <= d.tick).at(-1)?.tick : undefined;
           const cause = fall ? "fall" : `own ${named(d.weapon)}`;
-          const score = 65 + (fall ? 15 : 10) + 15 * (d.victimHpBefore / 100) + 5 * early(d.tick);
+          // Own grenade: rated by the damage his own grenades and fire did to him this round up to the
+          // death (ownHits), 100 at most.
+          const ownDamage = own ? Math.min(100, ownHits.filter((h) => h.tick <= d.tick).reduce((s, h) => s + h.took, 0)) : 0;
+          const score = fall ? 80 + 15 * (d.victimHpBefore / 100) + 5 * early(d.tick) : 20 + 70 * (ownDamage / 100) + 5 * early(d.tick);
           keep([r, {
             type: "selfkill", steamid: id, round: r.n, tick: d.tick, score,
             what: fall ? "fell to his death" : `killed by ${cause}`,
-            detail: { cause, hpBefore: d.victimHpBefore, secondsIn: Math.round(secondsIn(d.tick)), ...(throwTick !== undefined ? { thrownSecondsBefore: Math.round((d.tick - throwTick) / t * 10) / 10 } : {}) },
+            detail: { cause, hpBefore: d.victimHpBefore, ...(own ? { ownDamage } : {}), secondsIn: Math.round(secondsIn(d.tick)), ...(throwTick !== undefined ? { thrownSecondsBefore: Math.round((d.tick - throwTick) / t * 10) / 10 } : {}) },
           }, Math.min(d.tick - S(7), throwTick !== undefined ? throwTick - S(1) : Infinity), d.tick + S(2)]);
         }
+      }
+
+      // 2b. selfnade: one throw of his own HE (its hits on one tick) or fire (his own fire hits with no
+      // pause over 2 s) took minDamage+ health from him and did not kill him (that throw is a selfkill).
+      // Fire hurts carry no throw identity, so a pause splits and overlapping fires merge; when his own
+      // grenade of that kind killed him this round, none of that kind's episodes is reported (the death
+      // is). Hurts after the round's end are not counted.
+      const isHe = (w: string) => bare(w) === "hegrenade";
+      const diedOwn = died && died.attacker === id && THROWN.test(died.weapon === "inferno" ? "molotov" : died.weapon) ? died : undefined;
+      const throws: (typeof ownHits)[] = [];
+      for (const h of ownHits.filter((x) => x.tick <= r.endTick)) {
+        const he = h.weapon === "hegrenade";
+        const cur = throws.findLast((x) => (x[0].weapon === "hegrenade") === he);
+        if (cur && (he ? h.tick === cur.at(-1)!.tick : h.tick - cur.at(-1)!.tick <= S(2))) cur.push(h); else throws.push([h]);
+      }
+      for (const th of throws) {
+        const damage = th.reduce((s, h) => s + h.took, 0), last = th.at(-1)!;
+        if (damage < cfg.selfnade.minDamage || th.some((h) => h.health === 0) || (diedOwn && isHe(diedOwn.weapon) === isHe(last.weapon))) continue;
+        // The throw: his last one of this kind (an HE, or a molotov or incendiary) before the first hurt.
+        const throwTick = p.fires.filter((f) => f.player === id && f.round === r.n && THROWN.test(bare(f.weapon)) && isHe(f.weapon) === isHe(last.weapon) && f.tick <= th[0].tick).at(-1)?.tick;
+        const grenade = named(last.weapon);
+        keep([r, {
+          type: "selfnade", steamid: id, round: r.n, tick: last.tick, score: 20 + 70 * (damage / 100) + 5 * early(last.tick),
+          what: `${damage} damage from own ${grenade}`,
+          detail: { cause: `own ${grenade}`, ownDamage: damage, hpAfter: last.health, secondsIn: Math.round(secondsIn(last.tick)), ...(throwTick !== undefined ? { thrownSecondsBefore: Math.round((last.tick - throwTick) / t * 10) / 10 } : {}) },
+        }, throwTick !== undefined ? throwTick - S(1) : last.tick - S(7), last.tick + S(3)]);
       }
 
       const me = slot.get(id);
@@ -218,7 +290,12 @@ export function detectBloopers(p: ParsedDemo, track: Track, roster: string[], cf
           if (!pick || share > pick.share || (share === pick.share && metres < pick.metres)) pick = { e, share, metres, sight, dealt, taken, killedBy };
         }
         if (!pick) continue;
-        const bullets = ep.length;
+        // Shots into a smoke are not missed bullets: the count is the shots with no smoke on the line.
+        const pe = slot.get(pick.e)!;
+        // A dead or absent sample is zero-filled (no position): that shot stays a counted bullet.
+        const inSmoke = ep.filter((f) => { const i = nearestSample(f.tick), a = sampleAt(track, me, i), b = sampleAt(track, pe, i); return a.alive && b.alive && smokeBlocks(a, b, f.tick); }).length;
+        const bullets = ep.length - inSmoke;
+        if (bullets < sc.minBullets) continue;
         // Damage to anyone counts against it: hits on another enemy mean the spray was a fight elsewhere.
         const dealtAll = enemies.reduce((sum, e) => sum + hurtsBetween(id, e, first, last + S(1)), 0);
         const score = 30 + 25 * clamp01((bullets - sc.minBullets) / 20) + 15 * clamp01((sc.rangeUnits - pick.metres) / (sc.rangeUnits - 150))
@@ -229,7 +306,7 @@ export function detectBloopers(p: ParsedDemo, track: Track, roster: string[], cf
           type: "spray", steamid: id, round: r.n, tick: last, score,
           what: `${bullets} bullets, no kill`,
           detail: {
-            bullets, weapon: named(ep.at(-1)!.weapon), target: nameOf(pick.e), units: Math.round(pick.metres), inFront: `${Math.round(pick.share * 100)}%`,
+            bullets, ...(inSmoke ? { inSmoke } : {}), weapon: named(ep.at(-1)!.weapon), target: nameOf(pick.e), units: Math.round(pick.metres), inFront: `${Math.round(pick.share * 100)}%`,
             dealt: pick.dealt, dealtAll, taken: pick.taken, died: pick.killedBy ? "to him" : deathSoon !== undefined ? "yes" : "no", sight: pick.sight.join("+"),
           },
         }, Math.max(first - S(3), end - S(20)), end]);

@@ -189,7 +189,33 @@ and low save 0 (invisible on screen); `roundOutcome` 1.0 both ways;
 economy `perLnRatio` 0.2 → 0.1; style one-bullet 1.6, flick 1.6, big
 flick 2.8, no-scope 1.6, airborne 1.4; collat 40; flags headshot 3,
 wallbang, through smoke and while blind 10; `knife.multi` 200. Film
-moments are cached in `moments.film.json` beside `moments.json`.
+moments are cached in `moments.film.json` beside `moments.json`, keyed
+on the weights themselves, so any change to this file rebuilds them.
+
+`pace.stretch` (2026-11-13, film only; `scoring.json` has none, and
+without it nothing changes): tempo is otherwise only an addition
+(`speed`, `tight`), so kill base, weapon, style, clutch and economy paid
+in full however slow the round (Peder: "Tempo skulle vektes høyere, men
+arneys beste klipp er sånn 30 sekund mellom hvert kill"). Now a round is
+worth its best stretch: over every run of consecutive kills (single
+kills included), `scoreKills` of the run, clutch passed as is, times
+`tempo(avg)`: 1 up to `fullSeconds` (3) average seconds between its
+kills, a straight line down to `floor` (0.2) at `zeroSeconds` (12),
+`floor` after; a single kill 1. Highest wins, ties to the longer run,
+then the earlier. The moment keeps all its kills (spans, titles, ids,
+render keys unchanged); its breakdown is the stretch's own plus `tempo`
+(the change the factor made), and `stretch: { from, to }` is set when the
+stretch is shorter than the round (the tables show "3 of 5 kills, 1.4 s
+apart"). `clutchKills` (4) exempts a won clutch with that many of his
+kills from its start: in a 1v4 or 1v5 he wins alone, the waits are
+suspense, not dead air (Peder: "1v5 til arney ska være med fortsatt, men
+den dglrunden har dårlig scoring. den fungerer ikke på film"; a won 1v3
+over 92 s is not exempt). On arney_'s top 20 over all cached parses 6 of
+20 leave, the slow rounds: de_dust2 R2 4k Deagle 1v3 (92 s) 239.6 → 47.9,
+de_ancient R6 4k Deagle (41 s) 205.0 → 41.8, de_ancient R23 4k AWP (77 s)
+136.4 → 50.0, and three more; the exempt de_dust2 R15 5k Galil 1v5 keeps
+248.3 and is #1; fast 3k-4k rounds come in. The full list is the
+2026-11-13 line in the file's `_changes`.
 
 Main POV over the 9 demos, top 10, `scoring.json` → `scoring.film.json`:
 

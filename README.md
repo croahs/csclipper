@@ -98,8 +98,9 @@ setting (`config.json`) are in
 
 Each player gets his 20 best moments across all those demos, scored for
 an audience (fast multi-kills count most, an ordinary clutch little),
+scoring 40 or more (fewer if he has fewer that good),
 and his 5 best bloopers (teamkills, deaths by his own grenade or a fall,
-sprays without a kill, standing behind enemies without a kill), if he
+50+ damage from his own grenade, sprays without a kill, standing behind enemies without a kill), if he
 has any that funny, all from his own view, one CS2 launch per demo. They
 land in the same library: pick a player under "Player" and "Bloopers"
 under "Kind". Clips already in the library are kept, never made again;

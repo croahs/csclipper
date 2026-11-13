@@ -5,7 +5,10 @@
 // airborne kills, collaterals (one bullet, several kills), small flat per-kill teamplay
 // bonuses for trades and saves (a kill that saved a damaged teammate), and a knife multi-kill.
 // Two weight files of one shape: scoring.json (pnpm go and the rest) and scoring.film.json (pnpm
-// film only: a fragmovie for an audience). Weapon tests go through the bare name (isGunshot,
+// film only: a fragmovie for an audience). Only the film file sets pace.stretch: a round is worth its best
+// stretch of consecutive kills, each stretch's score times a tempo factor that falls with the seconds
+// between its kills (scoreMoment), so a slow round no longer pays kills, weapon and clutch in full; a won
+// clutch with stretch.clutchKills or more kills in it is exempt (its waits are suspense). Weapon tests go through the bare name (isGunshot,
 // isKnife): a knife swing or a grenade throw never counts as a bullet or a flick shot.
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -14,7 +17,11 @@ import { isGunshot, isKnife, isKnifeRound, type Death, type ParsedDemo, type Rou
 
 export type Weights = {
   killBase: Record<string, number>;
-  pace: { flatSeconds: number; curve: number; speedMax: number; perKillBeyondTwo: number };
+  /**
+   * stretch (optional, scoring.film.json only): a moment scores as its best stretch of consecutive kills,
+   * each stretch's own score times its tempo factor (tempoFactor); absent, a moment scores all its kills.
+   */
+  pace: { flatSeconds: number; curve: number; speedMax: number; perKillBeyondTwo: number; stretch?: Stretch };
   clutch: { byEnemies: Record<string, number>; lostFactor: number };
   spread: { minDegrees: number; points: number; pointsPer45Degrees: number; max: number };
   flags: { headshot: number; wallbang: number; thrusmoke: number; attackerblind: number };
@@ -52,6 +59,8 @@ export function weaponClass(weapon: string): WeaponClass {
   return "other";
 }
 
+/** clutchKills (optional): a won clutch with this many of his kills from its start or more is exempt (exemptClutch). */
+export type Stretch = { fullSeconds: number; zeroSeconds: number; floor: number; clutchKills?: number };
 export type Clutch = { vs: number; won: boolean; fromTick: number };
 export type Moment = {
   round: number;
@@ -60,6 +69,8 @@ export type Moment = {
   roundWon: boolean;
   score: number;
   breakdown: Record<string, number>;
+  /** pace.stretch: the kills (indices into kills, inclusive) the score comes from, set only when fewer than all of them. */
+  stretch?: { from: number; to: number };
 };
 
 /** The POV's team in a round, from the freeze-end teams. */
@@ -251,6 +262,43 @@ export function scoreKills(p: ParsedDemo, kills: Death[], clutch: Clutch | undef
   return { score: Math.round(Object.values(b).reduce((a, x) => a + x, 0) * 10) / 10, breakdown: b };
 }
 
+/** A stretch's tempo by the average seconds between its kills: 1 up to fullSeconds, a straight line down to floor at zeroSeconds, floor after. */
+export const tempoFactor = (avgGapS: number, s: Stretch) =>
+  avgGapS <= s.fullSeconds ? 1 : avgGapS >= s.zeroSeconds ? s.floor : 1 - ((1 - s.floor) * (avgGapS - s.fullSeconds)) / (s.zeroSeconds - s.fullSeconds);
+
+/**
+ * A won clutch with at least stretch.clutchKills of his kills from its start (Peder, 2026-11-13: the
+ * 1v5 stays): in a 1v4 or 1v5 he wins alone the time between kills is suspense, not dead air.
+ */
+export const exemptClutch = (kills: Pick<Death, "tick">[], clutch: Clutch | undefined, s: Stretch) =>
+  !!clutch?.won && s.clutchKills !== undefined && kills.filter((k) => k.tick >= clutch.fromTick).length >= s.clutchKills;
+
+/**
+ * A round's score. Without pace.stretch: scoreKills over all its kills. With it (Peder, 2026-11-13: a
+ * round is worth its best stretch): every run of consecutive kills, single kills included, scores
+ * scoreKills of that run (the clutch passed as is) times its tempo factor (a single kill: 1); the highest
+ * wins, ties to the longer run, then the earlier. The breakdown is the winning run's own plus `tempo`,
+ * the change the factor made (omitted when 0), so the parts still sum to the score. An exceptional
+ * clutch is exempt (exemptClutch) and scores on all its kills.
+ */
+export function scoreMoment(p: ParsedDemo, kills: Death[], clutch: Clutch | undefined, roundWon: boolean, w: Weights): Pick<Moment, "score" | "breakdown" | "stretch"> {
+  const s = w.pace.stretch;
+  if (!s || kills.length < 2 || exemptClutch(kills, clutch, s)) return scoreKills(p, kills, clutch, roundWon, w);
+  const t = p.demo.tickrate;
+  let best: { v: number; i: number; j: number; r: Pick<Moment, "score" | "breakdown"> } | undefined;
+  for (let i = 0; i < kills.length; i++) for (let j = i; j < kills.length; j++) {
+    const run = kills.slice(i, j + 1);
+    const f = run.length > 1 ? tempoFactor((run[run.length - 1].tick - run[0].tick) / (run.length - 1) / t, s) : 1;
+    const r = scoreKills(p, run, clutch, roundWon, w);
+    const v = r.score * f;
+    if (!best || v > best.v || (v === best.v && j - i > best.j - best.i)) best = { v, i, j, r };
+  }
+  const { v, i, j, r } = best!;
+  const score = Math.round(v * 10) / 10;
+  const tempo = Math.round((score - r.score) * 10) / 10;
+  return { score, breakdown: { ...r.breakdown, ...(tempo ? { tempo } : {}) }, ...(j - i + 1 < kills.length ? { stretch: { from: i, to: j } } : {}) };
+}
+
 /** How many of these kills were made with a knife. */
 export const knifeKills = (kills: Pick<Death, "weapon">[]) => kills.filter((k) => isKnife(k.weapon)).length;
 
@@ -281,7 +329,8 @@ export function economyFactor(p: ParsedDemo, round: number | undefined, w: Weigh
  * One moment per round (Peder, 2026-10-15): all of the POV's kills in it, however far
  * apart, with the round's clutch state. Knife rounds are excluded (isKnifeRound, also on a cache
  * parsed before they could be detected), overtime unless includeOvertime (PLAN.md §3 excludes it).
- * A moment needs a POV kill (a clutch won without one is not a clip).
+ * A moment needs a POV kill (a clutch won without one is not a clip). Scored by scoreMoment, so with
+ * pace.stretch as its best stretch, while the moment still carries all the round's kills.
  */
 export function moments(p: ParsedDemo, w: Weights): Moment[] {
   const out: Moment[] = [];
@@ -292,7 +341,7 @@ export function moments(p: ParsedDemo, w: Weights): Moment[] {
     if (!kills.length) continue;
     const roundWon = r.winner === team;
     const clutch = clutchState(p, r);
-    out.push({ round: r.n, kills, ...(clutch ? { clutch } : {}), roundWon, ...scoreKills(p, kills, clutch, roundWon, w) });
+    out.push({ round: r.n, kills, ...(clutch ? { clutch } : {}), roundWon, ...scoreMoment(p, kills, clutch, roundWon, w) });
   }
   return out.sort((a, b) => b.score - a.score);
 }
