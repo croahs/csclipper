@@ -11,8 +11,8 @@
 // best highlights under the film weights (scoring.film.json) and the film.bloopersTop best bloopers
 // scoring film.bloopers.minScore or more, ranked over every registered demo still on disk, from that
 // player's first person; no reels, no settling. --dry-run prints each player's ranked tables.
-// pnpm film masters [--dry-run] (--film masters): an edit-grade .mov of every clip ticked "Film" on the
-// library page, in library/film/masters/<player>/ (src/film/masters.ts).
+// pnpm film masters [--dry-run] (--film masters): an edit-grade .mov of every clip picked for the film (the
+// film picker or the library page's "Film" box), in library/film/masters/<player>/ (src/film/masters.ts).
 // Exit codes: 0 ok, 1 a job or demo failed, 2 refused (CS2 running, a guard,
 // or another pnpm go), 3 cleanup not verified (the batch stopped; check for cs2.exe by hand).
 import path from "node:path";

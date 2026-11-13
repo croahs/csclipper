@@ -32,6 +32,7 @@ import { imageRunning } from "../render/controller/processes.ts";
 import { faceitRefusal } from "../render/controller/guards.ts";
 import { readDeleted, readIndex, recordFailure, writeJsonAtomic } from "../library/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
+import { filmSelection, writeFilmSelection, type SelectionDraft } from "../library/film-selection.ts";
 import { heldEntry, highlightUnit, prepareJob, runJobs, unitHasCapture, type JobResult, type PreparedJob, type RenderUnit } from "./job.ts";
 import { prepareReel } from "../reel/index.ts";
 import { sweepUnderClipLock, type Pruned } from "./prune.ts";
@@ -130,7 +131,12 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
   report.demos = registry.length;
   const film = !!o.film;
   // --film: the selection across demos (filmQueue), then the same per-demo loop as a normal pass.
-  if (film) for (const q of await filmQueue(registry, pov, report, !!o.dryRun)) { queue.push(q); demoFiles.set(q.sha256, q.demo); }
+  let filmDraft: SelectionDraft | undefined;
+  if (film) {
+    const fq = await filmQueue(registry, pov, report, !!o.dryRun);
+    filmDraft = fq.draft;
+    for (const q of fq.queue) { queue.push(q); demoFiles.set(q.sha256, q.demo); }
+  }
   if (!film) for (const d of registry) {
     // Settled demos are done: their moments that were never rendered stay unrendered (Peder,
     // 2026-10-15: rule changes apply from the next new demo, not retroactively).
@@ -343,6 +349,10 @@ export async function runBatch(o: BatchOptions = {}): Promise<{ report: BatchRep
     for (const p of report.pruned?.problems ?? []) console.error(`raw capture not removed: ${p}`);
   }
   if ((report.demoErrors.length || report.givenUp.length) && code === 0) code = 1;
+  // --film: the picker's snapshot of the selection (library/film-selection.json, display data only:
+  // nothing reads it back), each clip by the number the library now holds; the dry run too, so the
+  // picker's lists can be refreshed without a launch. Written before the pages, which show it.
+  if (filmDraft) try { writeFilmSelection(filmSelection(filmDraft, readIndex().clips)); } catch (e) { console.error(`film selection not written: ${(e as Error).message}`); }
   // The page is rewritten even after a stop; its own failure never hides the batch's exit code.
   try { writeLibraryPage(); } catch (e) { report.pageError = (e as Error).message; if (code === 0) code = 1; }
   return { report, code };
@@ -396,9 +406,10 @@ type FilmBlooper = Candidate & { d: DemoRecord; clip: BlooperClip };
  * pnpm film's selection (src/film/select.ts) over every registered demo still on disk: per roster
  * player, his moments under the film weights (moments.film.json) and his bloopers (one detection per
  * demo, through the first present player's parse), each marked held or deleted as the library has it;
- * the ranked tables printed; the selected clips the library does not hold returned for the per-demo loop.
+ * the ranked tables printed; the selected clips the library does not hold returned for the per-demo loop,
+ * and every selected clip as the picker's snapshot draft (film-selection.ts).
  */
-async function filmQueue(registry: DemoRecord[], pov: string, report: BatchReport, dryRun: boolean): Promise<QueueItem[]> {
+async function filmQueue(registry: DemoRecord[], pov: string, report: BatchReport, dryRun: boolean): Promise<{ queue: QueueItem[]; draft: SelectionDraft }> {
   const film = loadFilm();
   const bloopers = loadBlooperSettings();
   const roster = loadRoster();
@@ -453,6 +464,7 @@ async function filmQueue(registry: DemoRecord[], pov: string, report: BatchRepor
   }
   // Per player: the ranked tables, then his clips to render (highlights, then bloopers; the per-demo loop keeps this order).
   const out: QueueItem[] = [];
+  const draft: SelectionDraft = [];
   for (const id of roster) {
     const { hl, bl } = per.get(id)!;
     const sel = selectFilm(hl, bl, { top: film.top, minScore: film.minScore, bloopersTop: film.bloopersTop, blooperMinScore: bloopers.minScore });
@@ -465,8 +477,13 @@ async function filmQueue(registry: DemoRecord[], pov: string, report: BatchRepor
     f.held += sel.highlights.taken.length + sel.bloopers.taken.length - render.length;
     for (const x of toRender(sel.highlights)) out.push({ demo: x.d.file, sha256: x.d.sha256, spec: x.spec, ...who });
     for (const x of toRender(sel.bloopers)) out.push({ demo: x.d.file, sha256: x.d.sha256, blooper: x.clip, ...who });
+    draft.push({
+      name: nameOf(id), me: id === pov,
+      highlights: sel.highlights.taken.map((x) => ({ id: x.spec.id, no: x.held?.no, score: x.score, title: x.spec.title, ...(x.spec.stretch ? { stretch: stretchText(x.spec) } : {}) })),
+      bloopers: sel.bloopers.taken.map((x) => ({ id: x.clip.id, no: x.held?.no, score: x.score, title: x.clip.title, type: x.clip.type })),
+    });
   }
-  return out;
+  return { queue: out, draft };
 }
 
 /** One player's ranked rows: rank, film score, demo, title, held (clip no.) or to render; the deleted ones passed over, unranked. */

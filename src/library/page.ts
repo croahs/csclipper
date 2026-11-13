@@ -11,6 +11,8 @@ import { BLOOPER_FEATS, FEATS, featsOf, playersOf, weaponsOf } from "./facets.ts
 import { parseClipHash } from "./hash.ts";
 import { readIndex, type ClipEntry } from "./index.ts";
 import { readPicks, readStars } from "./stars.ts";
+import { writeFilmPage } from "./film-page.ts";
+import { readFilmSelection } from "./film-selection.ts";
 import { matchDateOf, readMatchDates } from "./match-date.ts";
 
 const TEMPLATE = path.join(import.meta.dirname, "page.html");
@@ -48,16 +50,29 @@ export function pageData(entries: ClipEntry[], registry: Record<string, DemoReco
   return { running: !!o.running, hasDeathMap: !!o.hasDeathMap, clips, stars, featLabels, ...(players.length ? { players } : {}), ...(picks.length ? { picks } : {}) };
 }
 
-/** running: a pnpm go run is still adding clips (the page says so). */
+/** running: a pnpm go run is still adding clips (the page says so). Writes the film picker (film.html) too. */
 export function writeLibraryPage(o: { running?: boolean } = {}): string {
   const hasDeathMap = existsSync(path.join(LIBRARY_DIR, "deaths.html")); // pnpm deathmap has written it: the sidebar links to it
-  const data = pageData(Object.values(readIndex().clips), readRegistry(), readMatchDates(), readStars(), { running: o.running, hasDeathMap, picks: readPicks() });
+  const entries = Object.values(readIndex().clips), picks = readPicks();
+  const data = pageData(entries, readRegistry(), readMatchDates(), readStars(), { running: o.running, hasDeathMap, picks });
   // Every "<" escaped, so no title can end or reinterpret the script element.
   const json = JSON.stringify({ generatedAt: new Date().toISOString(), ...data }).replaceAll("<", "\\u003c");
   const html = readFileSync(TEMPLATE, "utf8").replace("/*__CLIPS__*/[]", () => json).replace("/*__HASH__*/null", () => hashParserSource());
   mkdirSync(LIBRARY_DIR, { recursive: true });
-  const tmp = `${PAGE}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(tmp, html);
-  renameSync(tmp, PAGE);
-  return PAGE;
+  return libraryThenFilm(() => {
+    const tmp = `${PAGE}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(tmp, html);
+    renameSync(tmp, PAGE);
+    return PAGE;
+  }, () => { writeFilmPage(entries, picks, readFilmSelection()); });
+}
+
+/**
+ * The library page first, then the film picker, never at the library page's cost: a picker failure
+ * (a write error, anything thrown) is one logged line; a library page failure still throws.
+ */
+export function libraryThenFilm(library: () => string, film: () => void, log: (line: string) => void = console.error): string {
+  const page = library();
+  try { film(); } catch (e) { log(`film picker not rewritten: ${(e as Error).message}`); }
+  return page;
 }

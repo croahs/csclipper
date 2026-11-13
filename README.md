@@ -89,11 +89,13 @@ setting (`config.json`) are in
 2. Drop the demos you played together into `demos/inbox/` as above.
 3. Run `pnpm film` (render account, CS2 closed, as for `pnpm go`).
    `pnpm film --dry-run` first shows each player's ranked list.
-4. Open the library (`pnpm library`), watch, and tick the **Film** box
-   on every clip you want in the edit ("Film picks" in the sidebar lists
-   them).
+4. Run `pnpm film:pick` and open the film picker,
+   http://127.0.0.1:8765/film.html: each player's selected highlights
+   and bloopers as cards, a toggle under each to pick it for the edit,
+   saved as you go. (The **Film** box under each clip on the library
+   page does the same, one clip at a time.)
 5. Run `pnpm film masters` (CS2 closed again): an edit-grade `.mov` of
-   each ticked clip lands in `library/film/masters/<player>/`, ready for
+   each picked clip lands in `library/film/masters/<player>/`, ready for
    DaVinci Resolve.
 
 Each player gets his 20 best moments across all those demos, scored for

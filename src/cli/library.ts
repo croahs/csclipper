@@ -15,7 +15,11 @@
 //   GET  /stars        { stars }: the current starred clip numbers
 //   POST /pick/<no>, /unpick/<no>  as pnpm pick / unpick <no> (the "Film" box, library/film-picks.json);
 //                      answers { picks }, then the page is rewritten
+//   POST /picks        body {"pick": [<no>...], "unpick": [<no>...]} (either may be absent): the film
+//                      picker's bulk change, all or nothing (a number the index does not hold refuses
+//                      the whole request); answers { picks }, then the pages are rewritten
 //   GET  /picks        { picks }: the current film picks
+// The film picker is library/film.html (template src/library/film.html), written with index.html.
 // Requests whose Host is not this server, or a POST whose Origin is another site, are refused,
 // so no other web page (or DNS rebinding) can delete, share, cut or star clips through it. The POST
 // routes take a clip number (a cut also two numbers, a reveal a kind and a checked name), never a path.
@@ -27,6 +31,7 @@ import { LIBRARY_DIR } from "../config.ts";
 import { deleteClip, readIndex } from "../library/index.ts";
 import { writeLibraryPage } from "../library/page.ts";
 import { changePicks, changeStars, readPicks, readStars } from "../library/stars.ts";
+import { postPicks, readBody } from "../library/picks-route.ts";
 import { CUT_DIR, cutSource, CutRefusal, isCutName, planCut, type CutResult } from "../share/cut.ts";
 import { findClip, sharePath, type ShareResult } from "../share/index.ts";
 import { verticalPath, type VerticalResult } from "../share/vertical.ts";
@@ -108,6 +113,14 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       let pageError: string | undefined;
       try { writeLibraryPage(); } catch (err) { pageError = (err as Error).message; console.error(`library page not rewritten: ${pageError}`); }
       return json(200, { stars: r.stars, ...(pageError ? { pageError } : {}) });
+    }
+    if (url.pathname === "/picks") {
+      // postPicks never rejects: whatever throws in it answers 500, and the server keeps serving.
+      void postPicks(req, json, {
+        known: knownNos, log: (l) => console.log(l),
+        after: () => { try { writeLibraryPage(); } catch (err) { const m = (err as Error).message; console.error(`library page not rewritten: ${m}`); return m; } },
+      });
+      return;
     }
     const pk = /^\/(pick|unpick)\/(\d+)$/.exec(url.pathname);
     if (pk) {
@@ -197,20 +210,9 @@ function runChild<T>(what: string, script: string, args: string[]): Promise<T> {
   return p;
 }
 
-/** A request body of at most max characters; a longer one is refused. */
-function readBody(req: http.IncomingMessage, max: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let text = "";
-    req.setEncoding("utf8");
-    req.on("data", (d: string) => { text += d; if (text.length > max) { reject(new Error("body too large")); req.destroy(); } });
-    req.on("end", () => resolve(text));
-    req.on("error", reject);
-  });
-}
-
 // A file can vanish between the check and the read (a delete): end that response, keep serving.
 function stream(file: string, res: http.ServerResponse, range?: { start: number; end: number }) {
   createReadStream(file, range).on("error", () => res.destroy()).pipe(res);
 }
 
-server.listen(port, "127.0.0.1", () => console.log(`library: http://127.0.0.1:${port}/ (Ctrl+C stops it)`));
+server.listen(port, "127.0.0.1", () => console.log(`library: http://127.0.0.1:${port}/  film picker: http://127.0.0.1:${port}/film.html (Ctrl+C stops it)`));

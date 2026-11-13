@@ -150,6 +150,13 @@ open http://127.0.0.1:8765/ while it runs; that page has a Delete
 button. Bookmark that one too if you like, it only works while the
 command runs.
 
+After a film run (`pnpm film`), pick the clips for the film on the
+film picker: run `pnpm film:pick` and open
+http://127.0.0.1:8765/film.html (or click **Film picker** at the top
+of the library page). Every player's clips are there as cards; hover to
+preview, click a clip to watch it with sound, click the bar under it to
+put it in the film or take it out. It saves as you click.
+
 ## Every time after that
 
 Play. Click **Watch demo** in the FACEIT room. Log in with the second

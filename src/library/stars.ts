@@ -23,6 +23,7 @@ function parseMarks(text: string | undefined, field: Field): number[] {
   } catch { return []; }
 }
 const readMarks = (file: string, field: Field) => { try { return existsSync(file) ? parseMarks(readFileSync(file, "utf8"), field) : []; } catch { return []; } };
+type Writer = (nos: number[], file: string, field: Field) => void;
 function writeMarks(nos: number[], file: string, field: Field) {
   mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
@@ -34,18 +35,19 @@ function writeMarks(nos: number[], file: string, field: Field) {
   }
 }
 /**
- * Adds or removes marks. known: the clip numbers the index holds. Any number it does not hold refuses
- * the whole change (nothing written, returned as unknown). Marks of clips no longer in the index are
- * dropped on the way.
+ * Adds and removes marks in one write (the adds first, then the removes). known: the clip numbers the
+ * index holds. Any number it does not hold refuses the whole change (nothing written, returned as
+ * unknown). Marks of clips no longer in the index are dropped on the way.
  */
-function changeMarks(add: boolean, nos: number[], known: Set<number>, file: string, field: Field): { marks: number[]; unknown: number[] } {
-  const unknown = nos.filter((n) => !known.has(n));
+function changeMarks(add: number[], remove: number[], known: Set<number>, file: string, field: Field, write: Writer = writeMarks): { marks: number[]; unknown: number[] } {
+  const unknown = [...add, ...remove].filter((n) => !known.has(n));
   const current = readMarks(file, field);
   if (unknown.length) return { marks: current, unknown };
   const set = new Set(current.filter((n) => known.has(n)));
-  for (const n of nos) add ? set.add(n) : set.delete(n);
+  for (const n of add) set.add(n);
+  for (const n of remove) set.delete(n);
   const marks = clean([...set]);
-  writeMarks(marks, file, field);
+  write(marks, file, field);
   return { marks, unknown: [] };
 }
 
@@ -54,7 +56,7 @@ export const parseStars = (text: string | undefined) => parseMarks(text, "stars"
 export const readStars = (file = STARS) => readMarks(file, "stars");
 export const writeStars = (nos: number[], file = STARS) => writeMarks(nos, file, "stars");
 export function changeStars(op: "star" | "unstar", nos: number[], known: Set<number>, file = STARS): { stars: number[]; unknown: number[] } {
-  const r = changeMarks(op === "star", nos, known, file, "stars");
+  const r = op === "star" ? changeMarks(nos, [], known, file, "stars") : changeMarks([], nos, known, file, "stars");
   return { stars: r.marks, unknown: r.unknown };
 }
 
@@ -62,6 +64,29 @@ export function changeStars(op: "star" | "unstar", nos: number[], known: Set<num
 export const parsePicks = (text: string | undefined) => parseMarks(text, "picks");
 export const readPicks = (file = PICKS) => readMarks(file, "picks");
 export function changePicks(op: "pick" | "unpick", nos: number[], known: Set<number>, file = PICKS): { picks: number[]; unknown: number[] } {
-  const r = changeMarks(op === "pick", nos, known, file, "picks");
+  const r = op === "pick" ? changeMarks(nos, [], known, file, "picks") : changeMarks([], nos, known, file, "picks");
   return { picks: r.marks, unknown: r.unknown };
+}
+
+/**
+ * The film picker's bulk change (POST /picks): body { pick?: number[], unpick?: number[] }, each a clip
+ * number the index holds. Anything else, or any number the index does not hold, refuses the whole
+ * request (nothing written). The final set (the picks added, then the unpicks removed) is written once,
+ * atomically; an empty body writes nothing and answers the current picks. write: the file writer
+ * (injectable so a test can count the writes).
+ */
+export function changePicksBulk(body: unknown, known: Set<number>, file = PICKS, write: Writer = writeMarks): { picks: number[] } | { status: 400 | 404; error: string } {
+  const b = body as { pick?: unknown; unpick?: unknown } | null;
+  if (!b || typeof b !== "object" || Array.isArray(b)) return { status: 400, error: 'the body must be JSON: {"pick": [<no>...], "unpick": [<no>...]}' };
+  const lists: Record<"pick" | "unpick", number[]> = { pick: [], unpick: [] };
+  for (const k of ["pick", "unpick"] as const) {
+    const v = b[k];
+    if (v === undefined) continue;
+    if (!Array.isArray(v) || !v.every((n) => Number.isInteger(n) && n > 0)) return { status: 400, error: `${k} must be a list of clip numbers` };
+    lists[k] = v as number[];
+  }
+  const unknown = [...lists.pick, ...lists.unpick].filter((n) => !known.has(n));
+  if (unknown.length) return { status: 404, error: `no clip ${[...new Set(unknown)].join(", ")}` };
+  if (!lists.pick.length && !lists.unpick.length) return { picks: readPicks(file).filter((n) => known.has(n)) };
+  return { picks: changeMarks(lists.pick, lists.unpick, known, file, "picks", write).marks };
 }

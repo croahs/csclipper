@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>croclipper film picker</title>
+<!-- The tab icon, inline so it also shows when the page is opened from disk (the library page's). -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2315171a'/%3E%3Cpath d='M3 16Q16 3 29 16 16 29 3 16z' fill='%23f0a63a'/%3E%3Cellipse cx='16' cy='16' rx='2.4' ry='8' fill='%2315171a'/%3E%3C/svg%3E">
+<style>
+  /* The library page's palette, type and controls (src/library/page.html). */
+  :root {
+    --bg: #0e0f11;
+    --surface: #15171a;
+    --surface-2: #1c1f23;
+    --line: #272a30;
+    --text: #e6e8eb;
+    --muted: #979da6;
+    --accent: #f0a63a;
+    --accent-ink: #1a1306;
+    --accent-tint: rgba(240, 166, 58, 0.12);
+    --accent-line: rgba(240, 166, 58, 0.45);
+    --err: #f0b3a8;
+    --radius: 6px;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; }
+  .num { font-variant-numeric: tabular-nums; }
+  a { color: var(--text); }
+  button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  code { font: 12px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace; }
+
+  /* Top bar: totals, filter, the players; sticky */
+  header.bar { position: sticky; top: 0; z-index: 5; background: var(--surface); border-bottom: 1px solid var(--line); padding: 10px 20px 8px; }
+  .row1 { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
+  h1 { font-size: 15px; font-weight: 650; margin: 0; letter-spacing: 0.01em; }
+  .back { font-size: 12px; color: var(--muted); text-decoration: none; padding: 4px 8px; border-radius: var(--radius); }
+  .back:hover { background: var(--surface-2); color: var(--text); }
+  .totals { font-size: 13px; color: var(--muted); }
+  .totals b { color: var(--text); font-weight: 650; }
+  .seg { display: inline-flex; margin-left: auto; }
+  .seg button { background: var(--surface-2); border: 1px solid var(--line); padding: 4px 12px; cursor: pointer; font-size: 12px; border-radius: 0; margin-left: -1px; }
+  .seg button:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
+  .seg button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+  .seg button[aria-pressed="true"] { background: var(--accent-tint); border-color: var(--accent-line); font-weight: 600; position: relative; }
+  nav.jump { display: flex; gap: 4px; margin-top: 8px; overflow-x: auto; scrollbar-width: thin; }
+  nav.jump a { flex: none; display: inline-flex; gap: 8px; align-items: baseline; padding: 4px 10px; border-radius: var(--radius); text-decoration: none; font-size: 13px; }
+  nav.jump a:hover { background: var(--surface-2); }
+  nav.jump .count { color: var(--muted); font-size: 12px; }
+  .note { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+  .note code { color: var(--text); }
+  .note.err { color: var(--err); }
+  .note[hidden] { display: none; }
+  main > #mode { margin: 12px 0 0; }
+  .note.warn { color: var(--accent); display: flex; align-items: center; gap: 10px; }
+  .note.warn[hidden] { display: none; }
+  .note.warn button { background: var(--surface-2); border: 1px solid var(--accent-line); border-radius: var(--radius); padding: 2px 10px; cursor: pointer; font-size: 12px; color: var(--accent); }
+
+  main { padding: 6px 20px 120px; }
+  section.player { scroll-margin-top: 120px; }
+  section.player > h2 { font-size: 17px; font-weight: 650; margin: 26px 0 2px; display: flex; align-items: baseline; gap: 10px; }
+  section.player > h2 .sub, section.player > h2 .count { font-size: 13px; color: var(--muted); font-weight: 400; }
+  .sect-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 14px 0 8px; }
+  .sect-head h3 { font-size: 12px; font-weight: 600; color: var(--muted); margin: 0; text-transform: uppercase; letter-spacing: 0.06em; }
+  .sect-head .count { font-size: 12px; color: var(--muted); }
+  .sect-head .bulk { display: inline-flex; gap: 6px; margin-left: auto; }
+  .bulk button, .pending button, .toast button, dialog button.x {
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 10px; cursor: pointer; font-size: 12px;
+  }
+  .bulk button:hover, .pending button:hover, .toast button:hover { border-color: #3a3f47; }
+  .none { color: var(--muted); font-size: 13px; padding: 4px 0 8px; }
+
+  /* Cards */
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); }
+  .card { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .card[hidden] { display: none; }
+  .card.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .shot { position: relative; aspect-ratio: 16 / 9; background: #08090a; cursor: zoom-in; }
+  .shot video { display: block; width: 100%; height: 100%; object-fit: cover; background: #08090a; }
+  .shot .badge { position: absolute; top: 8px; left: 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; padding: 2px 7px; border-radius: 4px; background: var(--accent); color: var(--accent-ink); display: none; }
+  .card.on .shot .badge { display: block; }
+  .shot .len { position: absolute; right: 8px; bottom: 8px; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: rgba(0, 0, 0, 0.7); }
+  .shot .missing { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 12px; }
+  .info { padding: 8px 10px 10px; display: grid; gap: 3px; flex: 1; }
+  .top { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--muted); }
+  .top .rank { font-weight: 700; color: var(--text); }
+  .top .no { margin-left: auto; }
+  .ttl { font-weight: 600; font-size: 14px; line-height: 1.3; }
+  .facts { font-size: 12px; color: var(--muted); }
+  .facts .kind { color: var(--text); }
+  /* The whole footer is the toggle: picked = filled accent with a check, not picked = a quiet outline with a plus. */
+  button.tog {
+    display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 44px;
+    border: 0; border-top: 1px solid var(--line); background: var(--surface-2); color: var(--muted);
+    cursor: pointer; font-size: 14px; font-weight: 600; padding: 8px 10px;
+  }
+  button.tog:hover { color: var(--text); background: #23272c; }
+  button.tog .ic { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 4px; border: 1.5px solid currentColor; font-size: 12px; line-height: 1; }
+  .card.on button.tog { background: var(--accent); color: var(--accent-ink); border-top-color: var(--accent); }
+  .card.on button.tog:hover { background: #f4b45a; }
+  .card.on button.tog .ic { background: var(--accent-ink); color: var(--accent); border-color: var(--accent-ink); }
+  button.tog:focus-visible { outline: 3px solid var(--text); outline-offset: -3px; }
+  button.tog .unsaved { font-weight: 400; font-size: 12px; opacity: 0.85; }
+  .card.busy button.tog { cursor: progress; }
+
+  /* Bottom: the pending commands (from disk) and the undo after a bulk change */
+  .dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: grid; gap: 8px; padding: 0 20px 14px; pointer-events: none; }
+  .pending, .toast { pointer-events: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5); }
+  .pending[hidden], .toast[hidden] { display: none; }
+  .pending { border-color: var(--accent-line); }
+  .pending .what { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .pending .what b { color: var(--accent); }
+  .pending .cmd { display: flex; align-items: center; gap: 8px; margin-top: 4px; min-width: 0; }
+  .pending .cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 4px 8px; background: var(--bg); border-radius: 4px; }
+  .toast { justify-self: center; display: flex; align-items: center; gap: 14px; font-size: 13px; }
+  .toast button { border-color: var(--accent-line); color: var(--accent); font-weight: 600; }
+
+  /* Enlarged clip: with sound and controls */
+  dialog { padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); width: min(1200px, 94vw); }
+  dialog::backdrop { background: rgba(0, 0, 0, 0.75); }
+  dialog video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #08090a; }
+  dialog .dlg-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 12px; }
+  dialog .dlg-row .ttl { flex: 1; min-width: 12ch; }
+  dialog .dlg-row a { font-size: 12px; color: var(--muted); }
+  dialog button.tog { width: auto; min-width: 190px; border: 1px solid var(--line); border-radius: var(--radius); min-height: 36px; }
+  dialog.on button.tog { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  dialog.on button.tog .ic { background: var(--accent-ink); color: var(--accent); border-color: var(--accent-ink); }
+
+  @media (max-width: 720px) {
+    header.bar { padding: 8px 16px 6px; }
+    .seg { margin-left: 0; }
+    main { padding: 4px 16px 140px; }
+    .grid { grid-template-columns: minmax(0, 1fr); }
+    .dock { padding: 0 8px 8px; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    button.tog, .card { transition: background-color .12s ease, border-color .12s ease, box-shadow .12s ease; }
+  }
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="row1">
+    <h1>Film picker</h1>
+    <a class="back" href="index.html">&larr; Library</a>
+    <span class="totals num" id="totals"></span>
+    <div class="seg" role="group" aria-label="Show">
+      <button type="button" data-f="all" aria-pressed="true">All</button>
+      <button type="button" data-f="on" aria-pressed="false">Picked</button>
+      <button type="button" data-f="off" aria-pressed="false">Not picked</button>
+    </div>
+  </div>
+  <nav class="jump" id="jump" aria-label="Players"></nav>
+  <p class="note warn" id="unseen" hidden><span id="unseen-text"></span><button type="button" id="reload">Reload</button></p>
+  <p class="note err" id="err" role="alert" hidden></p>
+</header>
+<main id="main"><p class="note" id="mode"></p></main>
+<div class="dock">
+  <div class="toast" id="toast" role="status" hidden><span id="toast-text"></span><button type="button" id="undo">Undo</button></div>
+  <div class="pending" id="pending" hidden>
+    <div class="what" id="pending-what"></div>
+    <div class="cmd" id="cmd-pick"><code></code><button type="button">Copy</button></div>
+    <div class="cmd" id="cmd-unpick"><code></code><button type="button">Copy</button></div>
+  </div>
+</div>
+<dialog id="dlg" aria-label="Clip">
+  <video id="dlg-video" controls playsinline preload="metadata"></video>
+  <div class="dlg-row"><span class="ttl" id="dlg-title"></span><a id="dlg-lib" href="index.html">In the library</a><button type="button" class="tog" id="dlg-tog"></button><button type="button" class="x" id="dlg-close">Close (Esc)</button></div>
+</dialog>
+
+<script type="application/json" id="film">/*__FILM__*/{}</script>
+<script>
+  "use strict";
+  const data = JSON.parse(document.getElementById("film").textContent);
+  const groups = data.groups || [];
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const served = location.protocol === "http:" && /^(127\.0\.0\.1|localhost)$/.test(location.hostname);
+  const mss = (s) => { const t = Math.round(s); return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"); };
+
+  // Picks. confirmed: what the server last answered (GET /picks on load, every answer after a change);
+  // from disk, the inlined picks, which only the pending commands can change. queue: the changes not yet
+  // answered, in order ({ pick, unpick }); a failed one leaves the queue. What is shown (picked) is
+  // always confirmed with the queue replayed, recomputed after every answer and every failure, so a
+  // failure can never leave a card in a state the server does not have.
+  const base = new Set(data.picks || []);
+  let confirmed = new Set(base);
+  const queue = [];
+  const picked = new Set(base);
+  function replay(conf, ops) {
+    const s = new Set(conf);
+    for (const op of ops) { for (const n of op.pick) s.add(n); for (const n of op.unpick) s.delete(n); }
+    return s;
+  }
+  function recompute() { const s = replay(confirmed, queue); picked.clear(); for (const n of s) picked.add(n); }
+  const cards = new Map(); // no -> { c, nodes: [card element] }
+  let filter = "all";
+
+  if (served) $("mode").innerHTML = "Saved as you go (<code>library/film-picks.json</code>); <code>pnpm film masters</code> makes the picked clips.";
+  else $("mode").innerHTML = "Opened from disk: changes here are not saved. <code>pnpm library</code> (or <code>pnpm film:pick</code>) makes the buttons save directly; until then, copy the commands below.";
+  if (!data.at) $("mode").insertAdjacentHTML("beforeend", " No film selection yet: <code>pnpm film --dry-run</code> writes the lists without a launch.");
+  else $("mode").insertAdjacentText("beforeend", " Lists from the film pass of " + new Date(data.at).toLocaleString() + ".");
+
+  // Build: one section per player, Highlights then Bloopers; the unlisted picks last.
+  const sections = [];
+  groups.forEach((g, gi) => {
+    const s = el("section", "player");
+    s.id = "p" + gi;
+    const h = el("h2", "", g.heading);
+    if (g.sub) h.append(el("span", "sub", g.sub));
+    const cnt = el("span", "count num");
+    h.append(cnt);
+    s.append(h);
+    const gsect = { g, gi, count: cnt, parts: [] };
+    for (const part of g.sections) {
+      const head = el("div", "sect-head");
+      const pc = el("span", "count num"); // the unlisted group's only list: its heading already counts
+      if (part.label) head.append(el("h3", "", part.label), pc);
+      const bulk = el("span", "bulk");
+      const all = el("button", "", "Pick all"), clr = el("button", "", "Clear");
+      all.type = clr.type = "button";
+      const where = g.heading + (part.label ? " · " + part.label : "");
+      all.addEventListener("click", () => bulkChange(part.cards.map((c) => c.no), true, where));
+      clr.addEventListener("click", () => bulkChange(part.cards.map((c) => c.no), false, where));
+      if (part.cards.length) { bulk.append(all, clr); head.append(bulk); }
+      s.append(head);
+      const grid = el("div", "grid");
+      for (const c of part.cards) grid.append(cardNode(c, part.label));
+      const none = el("p", "none", part.cards.length ? "" : "None in this list.");
+      s.append(grid, none);
+      gsect.parts.push({ part, count: pc, grid, none });
+    }
+    sections.push(gsect);
+    $("main").append(s);
+  });
+  if (!groups.length) $("main").append(el("p", "none", "Nothing to show: no film selection and no picks yet."));
+
+  function cardNode(c, label) {
+    const card = el("article", "card");
+    card.dataset.no = c.no;
+    const shot = el("div", "shot");
+    const v = el("video");
+    v.muted = true; v.playsInline = true; v.preload = "metadata"; v.tabIndex = -1; v.loop = true;
+    v.dataset.src = c.file + "#t=1.2"; // a frame past the fade-in; hover plays from the start
+    v.addEventListener("error", () => { if (!shot.querySelector(".missing")) shot.append(el("div", "missing", "clip file not found")); });
+    shot.append(v, el("span", "badge", "FILM"), el("span", "len num", mss(c.seconds)));
+    shot.addEventListener("mouseenter", () => preview(v, true));
+    shot.addEventListener("mouseleave", () => preview(v, false));
+    shot.addEventListener("click", () => openClip(c));
+    const info = el("div", "info");
+    const top = el("div", "top num");
+    if (c.rank) top.append(el("span", "rank", "#" + c.rank));
+    if (c.score !== undefined) top.append(el("span", "", (c.rank ? "film " : "score ") + c.score.toFixed(1)));
+    if (c.who) top.append(el("span", "", c.who));
+    top.append(el("span", "no", "clip " + c.no));
+    const facts = el("div", "facts");
+    if (c.blooper) facts.append(el("span", "kind", c.blooper), " · ");
+    facts.append(c.map + (c.stretch ? " · " + c.stretch : ""));
+    info.append(top, el("div", "ttl", c.title), facts);
+    const tog = el("button", "tog");
+    tog.type = "button";
+    tog.addEventListener("click", () => toggle(c.no));
+    card.append(shot, info, tog);
+    const ent = cards.get(c.no) || { c, nodes: [] };
+    ent.nodes.push(card); cards.set(c.no, ent);
+    return card;
+  }
+
+  // Videos load only near the viewport: about 110 clips at once would queue every request.
+  const io = "IntersectionObserver" in window ? new IntersectionObserver((xs) => {
+    for (const x of xs) if (x.isIntersecting) { const v = x.target.querySelector("video"); if (!v.src) v.src = v.dataset.src; io.unobserve(x.target); }
+  }, { rootMargin: "600px 0px" }) : null;
+  for (const { nodes } of cards.values()) for (const n of nodes) io ? io.observe(n) : (n.querySelector("video").src = n.querySelector("video").dataset.src);
+
+  function preview(v, on) {
+    if (!v.src) v.src = v.dataset.src;
+    if (on) { v.muted = true; v.currentTime = 0; v.play().catch(() => {}); }
+    else if (!v.dataset.sound) v.pause();
+  }
+
+  // Drawing: every card's state, the counts, the filter.
+  function draw() {
+    let total = 0, on = 0, secs = 0;
+    for (const [no, { c, nodes }] of cards) {
+      total++;
+      const p = picked.has(no);
+      if (p) { on++; secs += c.seconds; }
+      for (const n of nodes) {
+        n.classList.toggle("on", p);
+        n.hidden = filter === "on" ? !p : filter === "off" ? p : false;
+        const t = n.querySelector("button.tog");
+        t.replaceChildren(el("span", "ic", p ? "✓" : "+"), p ? "In the film" : "Add to film");
+        if (!served && p !== base.has(no)) t.append(el("span", "unsaved", "· not saved"));
+        t.setAttribute("aria-pressed", String(p));
+        t.setAttribute("aria-label", (p ? "In the film: " : "Not in the film: ") + "clip " + no + ", " + c.title + ". Space toggles, P plays");
+      }
+    }
+    // Picks with no card here (picked in another tab or by pnpm pick, in none of the lists): counted, and
+    // a notice to reload; never an automatic reload, which would lose the place mid-selection.
+    const unseen = [...picked].filter((n) => !cards.has(n)).length;
+    $("totals").replaceChildren(el("b", "", String(on)), " picked" + (unseen ? " (+" + unseen + " not shown)" : "") + " of " + total + " · ", el("b", "", mss(secs)), " picked length");
+    $("unseen").hidden = !unseen;
+    $("unseen-text").textContent = unseen + " picked clip" + (unseen === 1 ? "" : "s") + " not shown here: reload";
+    const jump = $("jump");
+    jump.replaceChildren();
+    for (const s of sections) {
+      const nos = s.g.sections.flatMap((p) => p.cards.map((c) => c.no));
+      const n = nos.filter((x) => picked.has(x)).length;
+      s.count.textContent = n + " of " + nos.length + " picked";
+      for (const p of s.parts) {
+        const pn = p.part.cards.filter((c) => picked.has(c.no)).length;
+        p.count.textContent = pn + " of " + p.part.cards.length;
+        const visible = p.part.cards.some((c) => filter === "all" || (filter === "on") === picked.has(c.no));
+        p.none.textContent = !p.part.cards.length ? "None in this list." : visible ? "" : filter === "on" ? "None picked here." : "All picked here.";
+      }
+      const a = el("a");
+      a.href = "#p" + s.gi;
+      a.append(s.g.unlisted ? "Picked, not listed" : s.g.heading, el("span", "count num", n + "/" + nos.length));
+      jump.append(a);
+    }
+    if (dlgNo !== null) drawDialog();
+    drawPending();
+  }
+
+  // Saving. Served: one request per change, one at a time, in order (/pick or /unpick for one clip,
+  // /picks for more). An answer becomes the confirmed picks; a failure drops its change. Either way the
+  // change leaves the queue and what is shown is recomputed. From disk nothing is sent: the queue is the
+  // list of changes the pending commands carry.
+  let chain = Promise.resolve(), answered = false;
+  function change(pick, unpick) {
+    const op = { pick, unpick };
+    queue.push(op);
+    showError(""); // a new change: the last failure has been seen
+    recompute(); draw();
+    if (!served) return;
+    chain = chain.then(async () => {
+      try {
+        const single = pick.length + unpick.length === 1;
+        const url = single ? (pick.length ? "/pick/" + pick[0] : "/unpick/" + unpick[0]) : "/picks";
+        const r = await fetch(url, { method: "POST", ...(single ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify({ pick, unpick }) }) });
+        if (!r.ok) throw new Error((await r.text().catch(() => "")) || String(r.status));
+        const b = await r.json();
+        if (!Array.isArray(b.picks)) throw new Error("the server's answer had no picks");
+        confirmed = new Set(b.picks); answered = true;
+      } catch (e) {
+        showError(e instanceof TypeError ? "The server did not answer: that change was not saved. Is pnpm library still running?" : "Not saved: " + e.message);
+      } finally { queue.splice(queue.indexOf(op), 1); recompute(); draw(); }
+    });
+  }
+  function showError(t) { $("err").hidden = !t; $("err").textContent = t; }
+
+  function toggle(no) {
+    const was = picked.has(no);
+    change(was ? [] : [no], was ? [no] : []);
+  }
+
+  // Bulk: Pick all / Clear of one list, one request; an Undo for 10 s puts back what it changed.
+  let undoTimer = 0;
+  function bulkChange(nos, on, where, isUndo) {
+    const diff = [...new Set(nos)].filter((n) => picked.has(n) !== on);
+    if (!diff.length) { if (!isUndo) toast((on ? "All already picked in " : "None picked in ") + where + ".", null); return; }
+    on ? change(diff, []) : change([], diff);
+    if (isUndo) { toast("Undone.", null); return; }
+    toast((on ? "Picked " : "Cleared ") + diff.length + " clip" + (diff.length === 1 ? "" : "s") + " in " + where + ".", () => bulkChange(diff, !on, where, true));
+  }
+  let undoFn = null;
+  function toast(text, undo) {
+    clearTimeout(undoTimer);
+    undoFn = undo;
+    $("toast-text").textContent = text;
+    $("undo").hidden = !undo;
+    $("toast").hidden = false;
+    undoTimer = setTimeout(() => { $("toast").hidden = true; undoFn = null; }, undo ? 10000 : 3000);
+  }
+  $("reload").addEventListener("click", () => location.reload());
+  $("undo").addEventListener("click", () => { const f = undoFn; $("toast").hidden = true; undoFn = null; if (f) f(); });
+
+  // From disk: what differs from the inlined picks, as the two commands to copy.
+  function drawPending() {
+    if (served) return;
+    const add = [...picked].filter((n) => !base.has(n)).sort((a, b) => a - b);
+    const drop = [...base].filter((n) => !picked.has(n)).sort((a, b) => a - b);
+    $("pending").hidden = !add.length && !drop.length;
+    $("pending-what").replaceChildren("Not saved: ", el("b", "", add.length + " to pick, " + drop.length + " to unpick"), ". Run these in the repo (or start pnpm library and toggle again):");
+    for (const [id, cmd, list] of [["cmd-pick", "pnpm pick ", add], ["cmd-unpick", "pnpm unpick ", drop]]) {
+      $(id).hidden = !list.length;
+      $(id).style.display = list.length ? "" : "none";
+      $(id).querySelector("code").textContent = cmd + list.join(" ");
+    }
+  }
+  for (const id of ["cmd-pick", "cmd-unpick"]) {
+    const b = $(id).querySelector("button");
+    b.addEventListener("click", () => {
+      const t = $(id).querySelector("code").textContent;
+      const done = () => { b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1500); };
+      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(t).then(done, () => fallbackCopy(t, done));
+      else fallbackCopy(t, done);
+    });
+  }
+  function fallbackCopy(t, done) {
+    const ta = el("textarea"); ta.value = t; document.body.append(ta); ta.select();
+    try { document.execCommand("copy"); done(); } catch {} ta.remove();
+  }
+
+  // Enlarged: the clip with sound and controls, its toggle, a link to it in the library.
+  const dlg = $("dlg"), dv = $("dlg-video");
+  let dlgNo = null;
+  function openClip(c) {
+    for (const v of document.querySelectorAll(".shot video")) v.pause();
+    dlgNo = c.no;
+    dv.src = c.file; dv.muted = false;
+    $("dlg-lib").href = "index.html#clip=" + c.no;
+    drawDialog();
+    dlg.showModal();
+    dv.play().catch(() => {});
+  }
+  function drawDialog() {
+    const { c } = cards.get(dlgNo);
+    const p = picked.has(dlgNo);
+    dlg.classList.toggle("on", p);
+    $("dlg-title").textContent = "Clip " + c.no + " · " + c.title + " · " + c.map + (c.blooper ? " · " + c.blooper : "");
+    $("dlg-tog").replaceChildren(el("span", "ic", p ? "✓" : "+"), p ? "In the film" : "Add to film");
+    $("dlg-tog").setAttribute("aria-pressed", String(p));
+  }
+  $("dlg-tog").addEventListener("click", () => toggle(dlgNo));
+  $("dlg-close").addEventListener("click", () => dlg.close());
+  dlg.addEventListener("close", () => {
+    dv.pause(); dv.removeAttribute("src"); dv.load();
+    const n = dlgNo; dlgNo = null;
+    const card = n !== null && cards.get(n).nodes[0];
+    if (card) card.querySelector("button.tog").focus({ preventScroll: true });
+  });
+
+  // Keys on a card's toggle: Space / Enter toggle (the button's own), arrows move to the nearest card
+  // that way, P plays or pauses it inline with sound.
+  function visibleToggles() { return [...document.querySelectorAll(".card:not([hidden]) button.tog")]; }
+  function move(from, key) {
+    const all = visibleToggles();
+    const i = all.indexOf(from);
+    if (i < 0) return;
+    let to;
+    if (key === "ArrowRight") to = all[i + 1];
+    else if (key === "ArrowLeft") to = all[i - 1];
+    else {
+      const r = from.getBoundingClientRect(), cx = r.left + r.width / 2;
+      const down = key === "ArrowDown";
+      let best = null, bestD = Infinity;
+      for (const t of all) {
+        const q = t.getBoundingClientRect();
+        const dy = down ? q.top - r.top : r.top - q.top;
+        if (dy < 4) continue;
+        const d = dy * 4 + Math.abs(q.left + q.width / 2 - cx);
+        if (d < bestD) { bestD = d; best = t; }
+      }
+      to = best;
+    }
+    if (to) { to.focus(); to.closest(".card").scrollIntoView({ block: "nearest" }); }
+  }
+  // A card's toggle: the footer button inside a card (the enlarged view's toggle is not one).
+  const cardToggle = (t) => t instanceof HTMLButtonElement && t.classList.contains("tog") && !!t.closest(".card");
+  document.addEventListener("keydown", (e) => {
+    if (e.altKey || e.ctrlKey || e.metaKey || dlg.open) return;
+    const t = e.target;
+    if (!cardToggle(t)) {
+      // Nothing focused (the page itself): Down or Right starts at the first card shown. Every other
+      // control (filter, Pick all, Undo, Copy, links) keeps its own keys.
+      if ((t === document.body || t === document.documentElement || !t) && (e.key === "ArrowDown" || e.key === "ArrowRight")) {
+        const f = visibleToggles()[0];
+        if (f) { e.preventDefault(); f.focus(); }
+      }
+      return;
+    }
+    if (e.key.startsWith("Arrow")) { e.preventDefault(); move(t, e.key); return; }
+    if (e.key === "p" || e.key === "P") {
+      e.preventDefault();
+      const v = t.closest(".card").querySelector("video");
+      if (!v.src) v.src = v.dataset.src;
+      if (v.paused) { for (const o of document.querySelectorAll(".shot video")) if (o !== v) { o.pause(); delete o.dataset.sound; } v.muted = false; v.dataset.sound = "1"; v.play().catch(() => {}); }
+      else { v.pause(); delete v.dataset.sound; }
+    }
+  });
+  // Focus leaving a card stops what P started there.
+  document.addEventListener("focusout", (e) => {
+    const t = e.target;
+    if (!cardToggle(t)) return;
+    const v = t.closest(".card").querySelector("video");
+    if (v && v.dataset.sound) { v.pause(); v.muted = true; delete v.dataset.sound; }
+  });
+
+  for (const b of document.querySelectorAll(".seg button")) b.addEventListener("click", () => {
+    filter = b.dataset.f;
+    for (const o of document.querySelectorAll(".seg button")) o.setAttribute("aria-pressed", String(o === b));
+    draw();
+  });
+
+  draw();
+  // Served, the server's picks win over the inlined ones (a pnpm pick, or the library page, may have changed them).
+  // Changes made meanwhile replay on top; an answer to one of them is newer than this and wins.
+  if (served) fetch("/picks", { cache: "no-store" }).then((r) => r.ok ? r.json() : null).then((b) => {
+    if (!b || !Array.isArray(b.picks) || answered) return;
+    confirmed = new Set(b.picks);
+    recompute(); draw();
+  }).catch(() => showError("The server did not answer: the picks shown are the ones from when this page was written."));
+</script>
+</body>
+</html>

@@ -29,8 +29,9 @@ alt): per player his top 20 highlights scoring 40 or more
 (`scoring.film.json`, `film.minScore`; fewer or none is fine) and top 5
 bloopers across all demos on disk. A film pass never settles a demo.
 Report the clips made per player, by name, with clip numbers,
-highlights and bloopers apart. Peder then ticks "Film" on the clips he
-wants (`library/film-picks.json`); "lag masters" (or similar) means
+highlights and bloopers apart. Peder then picks the clips he wants on
+the film picker (`pnpm film:pick`, `library/film.html`; saved in
+`library/film-picks.json`); "lag masters" (or similar) means
 `pnpm film masters`, under the same launch rules: it re-captures only
 the picked clips, an explicit naming as the re-render rule below asks.
 

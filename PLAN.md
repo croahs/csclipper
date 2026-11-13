@@ -193,8 +193,8 @@ of its own: the library is the record, so more demos later only add
 what newly enters a top list. A friend is named outside `.env` only by
 a hash of his SteamID64.
 
-You tick "Film" on the clips you want in the edit (the library page,
-§7); `pnpm film masters` then makes an edit-grade file of each for
+You pick the clips you want in the edit on the film picker (§7), or
+with the "Film" box on the library page; `pnpm film masters` then makes an edit-grade file of each for
 DaVinci Resolve: a new capture of the whole moment at real speed with 2
 s handles, near-lossless (capture CRF 8), the capture's own video
 stream and its sound as PCM in a `.mov`, one folder per player. The
@@ -660,7 +660,25 @@ entries looks as it did. Every clip has a "Film" checkbox in its action
 row (served; from disk the `pnpm pick <no>` command to copy), saved in
 `library/film-picks.json` the way stars are saved, and a "Film picks"
 row under Starred counts and filters them; `pnpm film masters` makes
-the ticked clips. A knife multi-kill is the feat "Knife 2k+".
+the picked clips. A knife multi-kill is the feat "Knife 2k+".
+Film picker (decided 2026-11-13, "give me gui for selecting and
+unselecting film clips"): `library/film.html`, a page of its own for
+going through the film clips, in the library page's look, written with
+it, linked from its sidebar. Per roster player ("Me" first) his
+selected highlights, then bloopers, in rank order, as cards (the clip,
+rank, film score, title, map, length, a blooper's kind); then every
+picked clip in none of those lists ("Picked, not in the current
+lists"), so no pick is hidden. The lists come from
+`library/film-selection.json`, a snapshot each `pnpm film` pass writes
+(the dry run too): display data, never read back by a run, so film mode
+still keeps no record of its own. A card's footer is one toggle, its
+state shown by text, icon and fill; hover previews muted, a click
+enlarges with sound; Tab, Space/Enter, arrows and P work the cards; a
+sticky bar holds the totals (picked of shown, summed length), the
+All / Picked / Not picked filter and per-player counts; "Pick all" and
+"Clear" per list, undoable for 10 s. Served, each change saves at once
+(`POST /pick`, `/unpick`, `/picks` for a bulk change); from disk the
+changes collect into `pnpm pick` / `pnpm unpick` commands to copy.
 Death map (decided 2026-11-10): `pnpm deathmap` writes
 `library/deaths.html`, a second static page in the same visual
 language with its data inlined (every `<` escaped), opened from disk,

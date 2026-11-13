@@ -24,6 +24,7 @@ pnpm clip --rerender <no|id> [--lead <s>] [--timeout <s>] [--dry-run]
 pnpm deaths "<demo.dem>" [--timeout <s>] [--dry-run]
 pnpm victims "<demo.dem>" [--timeout <s>] [--dry-run]
 pnpm library [--port <n>]
+pnpm film:pick [--port <n>]    (pnpm library under the film picker's name; open /film.html)
 pnpm deathmap
 pnpm drop <no>...
 pnpm share <no> [--max-mb <n>] [--raw-audio]
@@ -31,7 +32,7 @@ pnpm vertical <no> [--shift <percent>]
 pnpm cut <no> <from> <to>      (seconds as the clip plays: 4.5 or 0:04.5)
 pnpm fav <no>...               (star clips; pnpm's own star / unstar star npm packages)
 pnpm unfav <no>...
-pnpm pick <no>...              (tick the Film box: pnpm film masters makes these)
+pnpm pick <no>...              (pick for the film, as the film picker does: pnpm film masters makes these)
 pnpm unpick <no>...
 pnpm week [<yyyy-Www>] [--top <n>] [--seconds <n>] [--music <file>] [--no-music] [--dry-run] [--json]
 pnpm music [--check]           (the default tracks of music.json into music/, sha256-checked)
@@ -110,13 +111,22 @@ player's highlights from his own cache and skips bloopers (counted);
 per player a ranked table (rank, film score, demo, title, held with its
 clip number, or would render / to render; deleted ones unranked as
 passed over), then his bloopers; the end report lists the clips made
-per player, bloopers apart. Tested in `test/film.test.ts`,
-`test/film-select.test.ts` and `test/film-bloopers.test.ts`.
+per player, bloopers apart. At the end of every pass, the dry run
+included, `runBatch` writes `library/film-selection.json`
+(`src/library/film-selection.ts`, temp then rename): `{ version: 1, at,
+players: [{ name, me, highlights: [{ no, score, title, stretch? }],
+bloopers: [{ no, score, title, type }] }] }`, roster order, rank order,
+film scores, only clips the library holds (held before the run, or
+published under the selected id during it), no SteamID or povKey. It is
+display data for the film picker (Stars and filters below), never read
+by a run: the no-record rule above still holds. Tested in
+`test/film.test.ts`, `test/film-select.test.ts`,
+`test/film-bloopers.test.ts` and `test/film-picker.test.ts`.
 
 **Masters** (`src/film/masters.ts`, through `pnpm film masters`).
 `pnpm film masters [--dry-run]` makes an edit-grade file of every clip
-ticked "Film" on the library page (`library/film-picks.json`, Stars and
-filters below) at `library/film/masters/<player>/<no>-<slug>.mov`, the
+picked for the film (`library/film-picks.json`, Stars and filters
+below) at `library/film/masters/<player>/<no>-<slug>.mov`, the
 player folder file-safe: a friend's from the name on his newest clip,
 "Me"'s from the main POV's in-demo name in the parse of his newest
 clip's demo. The raw capture of a published clip is gone by design, so
@@ -332,8 +342,14 @@ library` serves `POST /star/<no>`, `POST /unstar/<no>` (answer
 clip's action row, what `pnpm film masters` makes) are kept exactly the
 same way in `library/film-picks.json` (`{ version: 1, picks: [...] }`,
 `changePicks`): `pnpm pick <no>...` / `pnpm unpick <no>...`, `POST
-/pick/<no>`, `POST /unpick/<no>` (answer `{ picks }`) and `GET /picks`
-served; opened from disk the row shows the command to copy. The sidebar's
+/pick/<no>`, `POST /unpick/<no>` (answer `{ picks }`), `POST /picks`
+(body `{ pick?: number[], unpick?: number[] }`, at most 64 KiB counted
+in bytes, all or nothing: `changePicksBulk` refuses the whole request
+with 404 for a number the index does not hold, 400 for anything else
+malformed, and writes the final set once; an empty body changes
+nothing; anything thrown answers 500; answer `{ picks }`;
+`src/library/picks-route.ts`) and `GET /picks` served; opened
+from disk the row shows the command to copy. The sidebar's
 "Film picks" row, under Starred, counts and filters them; `picks` is in
 the inlined data only when a clip in the index is picked. `featsOf` and `weaponsOf` (the game's
 names for grenade and fire kills labelled: `hegrenade` "HE grenade",
@@ -631,7 +647,8 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `src/library/page.html`, `page.ts` | the library page template and its writer |
 | `src/film/` | `bloopers.ts` the blooper detector, its settings, the overlap pick and the blooper id; `track.ts` the position/view track, its cache and the parse a blooper pass uses (`parseAnyPov`); `select.ts` the film selection (top N per player); `masters.ts` `pnpm film masters` (plan, key, span, unit, mux) |
 | `state/<demo sha256>/pov-<povKey>/`, `moments.film.json`, `bloopers-track.json.gz` | a film player's parse and moments caches (or `absent.json` when he is not in the demo); every POV's film-weighted moments beside its `moments.json`; the demo's blooper track |
-| `library/film-picks.json`, `library/film/masters/` | the clips ticked Film; their masters, one folder per player |
+| `src/library/film.html`, `film-page.ts`, `film-selection.ts` | the film picker's template, its writer (called by `writeLibraryPage`), the selection snapshot |
+| `library/film-picks.json`, `library/film-selection.json`, `library/film.html`, `library/film/masters/` | the clips picked for the film; the last film pass's lists (display data); the film picker; the masters, one folder per player |
 | `src/library/stars.ts`, `facets.ts`, `hash.ts`, `match-date.ts` | the stars and film-picks files; the feat, weapon and player filters' derivation (blooper kinds as feats); the `#clip=<no>&t=<s>` parser (its source is inlined into the page); the one rule that dates a clip's match (page, `pnpm week`, death map) |
 | `src/share/` | derived copies of a library clip, none of them in `index.json`: `index.ts` share, `vertical.ts`, `cut.ts`, `caption.ts` |
 | `src/week/` | `pnpm week`, the fragmovie: `index.ts` ISO weeks, selection, plan, key and render; `edit.ts` shots and their layout on the beat grid; `beats.ts` the beat analysis; `music.ts` the manifest, downloads, track choice and the analysis cache |
@@ -949,7 +966,40 @@ re-made. Only a guard refusal gives
   bar when open, and one output line for what Share, Vertical and Save
   cut made (from disk: their commands); the player's width leaves room
   for both (`--below`, set by `fit()`). `#clip=<no>[&t=<s>]` selects a
-  clip (PLAN.md §7); "Death map" shows when the data has `hasDeathMap`.
+  clip (PLAN.md §7); "Death map" shows when the data has `hasDeathMap`;
+  "Film picker" links to `film.html`.
+- **Film picker.** `src/library/film.html` (committed) with its data
+  inlined the same way (`/*__FILM__*/{}`), written to `library/film.html`
+  by `writeLibraryPage` (`src/library/film-page.ts`) after the library
+  page (`libraryThenFilm`: a picker failure is one logged line and never
+  stops the library page), so every command that rewrites the library
+  page rewrites it. A `film-selection.json` whose shape does not check
+  out (`parseFilmSelection`) counts as no snapshot. Data (`filmPageData`): per
+  player of `library/film-selection.json` a group (the main account's
+  headed "Me", its name beside it), Highlights then Bloopers, each card
+  the index entry's file, title without the "<player> · " prefix and the
+  map, map, length, and the snapshot's rank and film score (a blooper's
+  kind label from `BLOOPER_FEATS`); clips the index no longer holds
+  left out; then "Picked, not in the current lists": every pick in no
+  list, with its library score and player. No snapshot: only that group.
+  Cards load their video near the viewport (`preload="metadata"`, a
+  frame 1.2 s in, past the fade); hover plays muted from the start; a
+  click opens an in-page dialog with sound and controls, its own toggle
+  and a link to `index.html#clip=<no>`. The footer is one toggle button
+  ("+ Add to film" / filled "✓ In the film" with a FILM badge on the
+  clip); Tab reaches each toggle, Space/Enter toggle, arrows move to the
+  nearest card that way, P plays or pauses that card with sound. Served,
+  it reads `GET /picks` on load and saves each change at once, in order
+  (`/pick`, `/unpick`, `/picks` for Pick all / Clear). What it shows is
+  the server's last answer with the changes still in flight replayed on
+  top; a failed change drops out (a line under the bar says so), so a
+  card never shows a state the server does not have. A pick with no
+  card on the page (made in another tab or by `pnpm pick`) counts as
+  "(+N not shown)" with a "not shown here: reload" notice and a Reload
+  button; the page never reloads itself. From disk, the changes collect into a pending bar
+  with the `pnpm pick` / `pnpm unpick` commands to copy. Totals count
+  every card on the page, whatever the filter. Dark only, like the
+  library page; one column under 720 px.
 - **Stretched aspect** is wired end to end (`captureSize` sets the game
   window, post scales); it has been checked in post only, no game capture
   at 1440x1080 yet.
