@@ -194,7 +194,7 @@ what newly enters a top list. A friend is named outside `.env` only by
 a hash of his SteamID64.
 
 You pick the clips you want in the edit on the film picker (§7), or
-with the "Film" box on the library page; `pnpm film masters` then makes an edit-grade file of each for
+with the film button under the library page's player; `pnpm film masters` then makes an edit-grade file of each for
 DaVinci Resolve: a new capture of the whole moment at real speed with 2
 s handles, near-lossless (capture CRF 8), the capture's own video
 stream and its sound as PCM in a `.mov`, one folder per player. The
@@ -656,10 +656,15 @@ feats (Teamkill, Own grenade / fall, Own grenade, survived, Spray, no kill,
 Behind, no kill).
 When any clip is a friend's, a "Player" category lists "Me" and each
 friend under the name on his newest clip. A library without film
-entries looks as it did. Every clip has a "Film" checkbox in its action
-row (served; from disk the `pnpm pick <no>` command to copy), saved in
-`library/film-picks.json` the way stars are saved, and a "Film picks"
-row under Starred counts and filters them; `pnpm film masters` makes
+entries looks as it did. The action row under the player starts with a
+film toggle ("+ Add to film" / "✓ In the film", filled when picked;
+2026-11-13, "Legg noe gui in her så kan jeg velge fra det vanlige
+avspillingsstedet"), and `f` toggles the playing clip, so he can step
+arrow, f, arrow, f. Served it saves at once; from disk the changes
+collect in a bottom bar as `pnpm pick` / `pnpm unpick` commands to
+copy. Picks are saved in `library/film-picks.json` the way stars are
+saved; the clip list marks picked clips and counts them in its header,
+and a "Film picks" row under Starred counts and filters them; `pnpm film masters` makes
 the picked clips. A knife multi-kill is the feat "Knife 2k+".
 Film picker (decided 2026-11-13, "give me gui for selecting and
 unselecting film clips"): `library/film.html`, a page of its own for

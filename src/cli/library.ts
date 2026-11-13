@@ -13,7 +13,7 @@
 //                      vertical file, or its cut of that name (a name pnpm cut gives it) selected
 //   POST /star/<no>, /unstar/<no>  as pnpm fav / unfav <no>; answers { stars }, then the page is rewritten
 //   GET  /stars        { stars }: the current starred clip numbers
-//   POST /pick/<no>, /unpick/<no>  as pnpm pick / unpick <no> (the "Film" box, library/film-picks.json);
+//   POST /pick/<no>, /unpick/<no>  as pnpm pick / unpick <no> (the film button, library/film-picks.json);
 //                      answers { picks }, then the page is rewritten
 //   POST /picks        body {"pick": [<no>...], "unpick": [<no>...]} (either may be absent): the film
 //                      picker's bulk change, all or nothing (a number the index does not hold refuses

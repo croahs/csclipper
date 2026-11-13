@@ -157,6 +157,12 @@ of the library page). Every player's clips are there as cards; hover to
 preview, click a clip to watch it with sound, click the bar under it to
 put it in the film or take it out. It saves as you click.
 
+On the library page itself you can do the same while you watch: press
+**F**, or the **Add to film** button under the player, to put the
+playing clip in the film (or take it out). Clips in the film have an
+orange mark in the list. Opened without `pnpm library` running, the
+page shows the commands to copy instead.
+
 ## Every time after that
 
 Play. Click **Watch demo** in the FACEIT room. Log in with the second

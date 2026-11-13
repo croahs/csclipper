@@ -92,8 +92,8 @@ setting (`config.json`) are in
 4. Run `pnpm film:pick` and open the film picker,
    http://127.0.0.1:8765/film.html: each player's selected highlights
    and bloopers as cards, a toggle under each to pick it for the edit,
-   saved as you go. (The **Film** box under each clip on the library
-   page does the same, one clip at a time.)
+   saved as you go. (Or, watching clips on the library page, press
+   **F** or the **Add to film** button under the player.)
 5. Run `pnpm film masters` (CS2 closed again): an edit-grade `.mov` of
    each picked clip lands in `library/film/masters/<player>/`, ready for
    DaVinci Resolve.

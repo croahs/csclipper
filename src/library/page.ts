@@ -11,7 +11,7 @@ import { BLOOPER_FEATS, FEATS, featsOf, playersOf, weaponsOf } from "./facets.ts
 import { parseClipHash } from "./hash.ts";
 import { readIndex, type ClipEntry } from "./index.ts";
 import { readPicks, readStars } from "./stars.ts";
-import { writeFilmPage } from "./film-page.ts";
+import { pickStoreSource, writeFilmPage } from "./film-page.ts";
 import { readFilmSelection } from "./film-selection.ts";
 import { matchDateOf, readMatchDates } from "./match-date.ts";
 
@@ -25,7 +25,7 @@ export const PAGE = path.join(LIBRARY_DIR, "index.html");
  * The data the page inlines, all but generatedAt. Film entries add to it only where they occur: a
  * clip's `player` (its povKey) and the page's `players` list (playersOf) when an entry has a player,
  * the blooper feat labels when an entry is a blooper, whose score is its own (shown and sorted by).
- * A library with neither gives exactly the data it always did. Film picks (the "Film" box) the same
+ * A library with neither gives exactly the data it always did. Film picks (the film button) the same
  * way: `picks` only when a clip in the index is picked.
  */
 export function pageData(entries: ClipEntry[], registry: Record<string, DemoRecord>, dates: Record<string, number>, starList: number[], o: { running?: boolean; hasDeathMap?: boolean; picks?: number[] } = {}) {
@@ -57,7 +57,7 @@ export function writeLibraryPage(o: { running?: boolean } = {}): string {
   const data = pageData(entries, readRegistry(), readMatchDates(), readStars(), { running: o.running, hasDeathMap, picks });
   // Every "<" escaped, so no title can end or reinterpret the script element.
   const json = JSON.stringify({ generatedAt: new Date().toISOString(), ...data }).replaceAll("<", "\\u003c");
-  const html = readFileSync(TEMPLATE, "utf8").replace("/*__CLIPS__*/[]", () => json).replace("/*__HASH__*/null", () => hashParserSource());
+  const html = readFileSync(TEMPLATE, "utf8").replace("/*__CLIPS__*/[]", () => json).replace("/*__HASH__*/null", () => hashParserSource()).replace("/*__PICKSTORE__*/null", () => pickStoreSource());
   mkdirSync(LIBRARY_DIR, { recursive: true });
   return libraryThenFilm(() => {
     const tmp = `${PAGE}.${process.pid}.${Date.now()}.tmp`;

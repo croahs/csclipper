@@ -338,8 +338,7 @@ page writer leaves them out, so `pnpm drop` does not touch the file. The
 file has no lock: the server and the CLI each read-modify-write it in
 microseconds, and two stars in the same instant can lose one. `pnpm
 library` serves `POST /star/<no>`, `POST /unstar/<no>` (answer
-`{ stars }`) and `GET /stars`. Film picks (the "Film" checkbox in each
-clip's action row, what `pnpm film masters` makes) are kept exactly the
+`{ stars }`) and `GET /stars`. Film picks (what `pnpm film masters` makes) are kept exactly the
 same way in `library/film-picks.json` (`{ version: 1, picks: [...] }`,
 `changePicks`): `pnpm pick <no>...` / `pnpm unpick <no>...`, `POST
 /pick/<no>`, `POST /unpick/<no>` (answer `{ picks }`), `POST /picks`
@@ -967,7 +966,21 @@ re-made. Only a guard refusal gives
   cut made (from disk: their commands); the player's width leaves room
   for both (`--below`, set by `fit()`). `#clip=<no>[&t=<s>]` selects a
   clip (PLAN.md §7); "Death map" shows when the data has `hasDeathMap`;
-  "Film picker" links to `film.html`.
+  "Film picker" links to `film.html`. The action row starts with the
+  film toggle ("+ Add to film" / filled "✓ In the film", `aria-pressed`),
+  and `f` toggles the playing clip (not in the search field or the
+  sort; the page's other keys: arrows or j / k step, `s` stars and
+  Delete deletes when served, `i` / `o` / Escape in the trim bar).
+  Picked clips carry a film mark before their number in the list, whose
+  header counts "N in the film"; the sidebar's "Film picks" row counts
+  and filters them, all live. Served, a toggle saves at once; from disk
+  the changes collect in a bottom bar as `pnpm pick` / `pnpm unpick`
+  commands to copy (a clip toggled twice drops out), with a link to
+  http://127.0.0.1:8765/. Both pages hold the picks through one shared
+  store, `src/library/pick-store.js`: plain browser JavaScript the
+  writers inline in place of `/*__PICKSTORE__*/null` (the server's
+  last answer with the changes in flight replayed; `GET /picks` on
+  load), run as that same text by `test/film-picker.test.ts`.
 - **Film picker.** `src/library/film.html` (committed) with its data
   inlined the same way (`/*__FILM__*/{}`), written to `library/film.html`
   by `writeLibraryPage` (`src/library/film-page.ts`) after the library

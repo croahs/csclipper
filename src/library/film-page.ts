@@ -12,6 +12,9 @@ import type { FilmSelectionFile } from "./film-selection.ts";
 import type { ClipEntry } from "./index.ts";
 
 const TEMPLATE = path.join(import.meta.dirname, "film.html");
+const PICK_STORE = path.join(import.meta.dirname, "pick-store.js");
+/** The film-picks store both pages run (pick-store.js), as the text each template's PICKSTORE placeholder takes. */
+export const pickStoreSource = () => { const t = readFileSync(PICK_STORE, "utf8"); return t.slice(t.indexOf("(function createPickStore")).trim(); }; // the expression, without the file comment
 export const FILM_PAGE = path.join(LIBRARY_DIR, "film.html");
 const BLOOPER_LABELS: Record<string, string> = Object.fromEntries(BLOOPER_FEATS);
 
@@ -69,7 +72,7 @@ export function writeFilmPage(entries: ClipEntry[], picks: number[], selection: 
   const data = filmPageData(selection, entries, picks);
   // Every "<" escaped, so no title can end or reinterpret the script element.
   const json = JSON.stringify({ generatedAt: new Date().toISOString(), ...data }).replaceAll("<", "\\u003c");
-  const html = readFileSync(TEMPLATE, "utf8").replace("/*__FILM__*/{}", () => json);
+  const html = readFileSync(TEMPLATE, "utf8").replace("/*__FILM__*/{}", () => json).replace("/*__PICKSTORE__*/null", () => pickStoreSource());
   mkdirSync(LIBRARY_DIR, { recursive: true });
   const tmp = `${FILM_PAGE}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmp, html);

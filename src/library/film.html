@@ -183,21 +183,11 @@
   const served = location.protocol === "http:" && /^(127\.0\.0\.1|localhost)$/.test(location.hostname);
   const mss = (s) => { const t = Math.round(s); return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"); };
 
-  // Picks. confirmed: what the server last answered (GET /picks on load, every answer after a change);
-  // from disk, the inlined picks, which only the pending commands can change. queue: the changes not yet
-  // answered, in order ({ pick, unpick }); a failed one leaves the queue. What is shown (picked) is
-  // always confirmed with the queue replayed, recomputed after every answer and every failure, so a
-  // failure can never leave a card in a state the server does not have.
-  const base = new Set(data.picks || []);
-  let confirmed = new Set(base);
-  const queue = [];
-  const picked = new Set(base);
-  function replay(conf, ops) {
-    const s = new Set(conf);
-    for (const op of ops) { for (const n of op.pick) s.add(n); for (const n of op.unpick) s.delete(n); }
-    return s;
-  }
-  function recompute() { const s = replay(confirmed, queue); picked.clear(); for (const n of s) picked.add(n); }
+  // Picks: the store both pages share (src/library/pick-store.js, inlined by the writer): the server's
+  // last answer with the changes in flight replayed; from disk, the inlined picks plus the pending list.
+  const createPickStore = /*__PICKSTORE__*/null;
+  const store = createPickStore({ served, initial: data.picks || [], onChange: () => draw(), onError: (t) => showError(t) });
+  const picked = store.all();
   const cards = new Map(); // no -> { c, nodes: [card element] }
   let filter = "all";
 
@@ -295,7 +285,7 @@
         n.hidden = filter === "on" ? !p : filter === "off" ? p : false;
         const t = n.querySelector("button.tog");
         t.replaceChildren(el("span", "ic", p ? "✓" : "+"), p ? "In the film" : "Add to film");
-        if (!served && p !== base.has(no)) t.append(el("span", "unsaved", "· not saved"));
+        if (store.unsaved(no)) t.append(el("span", "unsaved", "· not saved"));
         t.setAttribute("aria-pressed", String(p));
         t.setAttribute("aria-label", (p ? "In the film: " : "Not in the film: ") + "clip " + no + ", " + c.title + ". Space toggles, P plays");
       }
@@ -327,44 +317,16 @@
     drawPending();
   }
 
-  // Saving. Served: one request per change, one at a time, in order (/pick or /unpick for one clip,
-  // /picks for more). An answer becomes the confirmed picks; a failure drops its change. Either way the
-  // change leaves the queue and what is shown is recomputed. From disk nothing is sent: the queue is the
-  // list of changes the pending commands carry.
-  let chain = Promise.resolve(), answered = false;
-  function change(pick, unpick) {
-    const op = { pick, unpick };
-    queue.push(op);
-    showError(""); // a new change: the last failure has been seen
-    recompute(); draw();
-    if (!served) return;
-    chain = chain.then(async () => {
-      try {
-        const single = pick.length + unpick.length === 1;
-        const url = single ? (pick.length ? "/pick/" + pick[0] : "/unpick/" + unpick[0]) : "/picks";
-        const r = await fetch(url, { method: "POST", ...(single ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify({ pick, unpick }) }) });
-        if (!r.ok) throw new Error((await r.text().catch(() => "")) || String(r.status));
-        const b = await r.json();
-        if (!Array.isArray(b.picks)) throw new Error("the server's answer had no picks");
-        confirmed = new Set(b.picks); answered = true;
-      } catch (e) {
-        showError(e instanceof TypeError ? "The server did not answer: that change was not saved. Is pnpm library still running?" : "Not saved: " + e.message);
-      } finally { queue.splice(queue.indexOf(op), 1); recompute(); draw(); }
-    });
-  }
   function showError(t) { $("err").hidden = !t; $("err").textContent = t; }
 
-  function toggle(no) {
-    const was = picked.has(no);
-    change(was ? [] : [no], was ? [no] : []);
-  }
+  const toggle = (no) => store.toggle(no);
 
   // Bulk: Pick all / Clear of one list, one request; an Undo for 10 s puts back what it changed.
   let undoTimer = 0;
   function bulkChange(nos, on, where, isUndo) {
     const diff = [...new Set(nos)].filter((n) => picked.has(n) !== on);
     if (!diff.length) { if (!isUndo) toast((on ? "All already picked in " : "None picked in ") + where + ".", null); return; }
-    on ? change(diff, []) : change([], diff);
+    on ? store.change(diff, []) : store.change([], diff);
     if (isUndo) { toast("Undone.", null); return; }
     toast((on ? "Picked " : "Cleared ") + diff.length + " clip" + (diff.length === 1 ? "" : "s") + " in " + where + ".", () => bulkChange(diff, !on, where, true));
   }
@@ -383,8 +345,7 @@
   // From disk: what differs from the inlined picks, as the two commands to copy.
   function drawPending() {
     if (served) return;
-    const add = [...picked].filter((n) => !base.has(n)).sort((a, b) => a - b);
-    const drop = [...base].filter((n) => !picked.has(n)).sort((a, b) => a - b);
+    const { pick: add, unpick: drop } = store.pending();
     $("pending").hidden = !add.length && !drop.length;
     $("pending-what").replaceChildren("Not saved: ", el("b", "", add.length + " to pick, " + drop.length + " to unpick"), ". Run these in the repo (or start pnpm library and toggle again):");
     for (const [id, cmd, list] of [["cmd-pick", "pnpm pick ", add], ["cmd-unpick", "pnpm unpick ", drop]]) {
@@ -500,12 +461,7 @@
 
   draw();
   // Served, the server's picks win over the inlined ones (a pnpm pick, or the library page, may have changed them).
-  // Changes made meanwhile replay on top; an answer to one of them is newer than this and wins.
-  if (served) fetch("/picks", { cache: "no-store" }).then((r) => r.ok ? r.json() : null).then((b) => {
-    if (!b || !Array.isArray(b.picks) || answered) return;
-    confirmed = new Set(b.picks);
-    recompute(); draw();
-  }).catch(() => showError("The server did not answer: the picks shown are the ones from when this page was written."));
+  store.load();
 </script>
 </body>
 </html>

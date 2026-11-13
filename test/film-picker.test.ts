@@ -10,7 +10,7 @@ import type { AddressInfo } from "node:net";
 import { PassThrough } from "node:stream";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { cardTitle, filmPageData } from "../src/library/film-page.ts";
+import { cardTitle, filmPageData, pickStoreSource } from "../src/library/film-page.ts";
 import { filmSelection, parseFilmSelection, readFilmSelection, writeFilmSelection, type SelectionDraft } from "../src/library/film-selection.ts";
 import { libraryThenFilm } from "../src/library/page.ts";
 import { postPicks, readBody } from "../src/library/picks-route.ts";
@@ -207,4 +207,56 @@ test("POST /picks (postPicks): a picks file that cannot be written answers 500 a
     server.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// The film-picks store both pages run (src/library/pick-store.js), evaluated from the very text the writers inline.
+type Store = { has(n: number): boolean; toggle(n: number): Promise<unknown>; change(p: number[], u: number[]): Promise<unknown>; pending(): { pick: number[]; unpick: number[] }; commands(): string[]; unsaved(n: number): boolean; load(): Promise<unknown> };
+const createPickStore = new Function(`return ${pickStoreSource()};`)() as (o: { served: boolean; initial: number[]; fetch?: unknown; onChange?: () => void; onError?: (t: string) => void }) => Store;
+
+test("pick store, served: a failed change drops out and what is shown follows the server's last answer", async () => {
+  let server = new Set<number>([1]);
+  let calls = 0;
+  const fakeFetch = async (url: string) => {
+    calls++;
+    if (calls > 1) throw new TypeError("aborted"); // the second and third requests never reach the server
+    const m = /^\/(un)?pick\/(\d+)$/.exec(url)!;
+    m[1] ? server.delete(Number(m[2])) : server.add(Number(m[2]));
+    return { ok: true, json: async () => ({ picks: [...server] }), text: async () => "" };
+  };
+  const errors: string[] = [];
+  const s = createPickStore({ served: true, initial: [1], fetch: fakeFetch, onError: (t) => { if (t) errors.push(t); } });
+  s.toggle(5); // pick: saved
+  assert.equal(s.has(5), true);
+  s.toggle(5); // unpick: fails
+  assert.equal(s.has(5), false);
+  const last = s.toggle(5); // pick: fails
+  await last;
+  assert.equal(s.has(5), true, "the server has 5 picked, and so does the page");
+  assert.equal(errors.length, 2);
+  assert.deepEqual(s.pending(), { pick: [], unpick: [] });
+  server = new Set();
+});
+
+test("pick store, from disk: changes collect as commands; a clip toggled twice drops out", () => {
+  const s = createPickStore({ served: false, initial: [3, 4] });
+  s.toggle(7); s.toggle(3); s.toggle(9); s.toggle(9);
+  assert.deepEqual(s.pending(), { pick: [7], unpick: [3] });
+  assert.deepEqual(s.commands(), ["pnpm pick 7", "pnpm unpick 3"]);
+  assert.equal(s.unsaved(7), true);
+  assert.equal(s.unsaved(4), false);
+  s.toggle(7); s.toggle(3);
+  assert.deepEqual(s.commands(), []);
+});
+
+test("the library page template: the film toggle replaces the Film checkbox, with the shared store", () => {
+  const html = readFileSync(path.join(import.meta.dirname, "..", "src", "library", "page.html"), "utf8");
+  assert.ok(html.includes("const createPickStore = /*__PICKSTORE__*/null;"));
+  assert.ok(html.includes('el("button", "filmtog")'));
+  assert.ok(html.includes("act.append(filmControl(c), starControl(c), exportGroup(c));"), "the film toggle is the first control in the row");
+  assert.doesNotMatch(html, /label\.film|el\("label", "film"\)|box\.type = "checkbox"/);
+  assert.ok(html.includes('id="pending"') && html.includes('href="http://127.0.0.1:8765/"'));
+  assert.ok(html.includes('e.key === "f"'));
+  const picker = readFileSync(path.join(import.meta.dirname, "..", "src", "library", "film.html"), "utf8");
+  assert.ok(picker.includes("const createPickStore = /*__PICKSTORE__*/null;"));
+  assert.doesNotMatch(pickStoreSource(), /__PICKSTORE__|\bimport\b|\brequire\(/);
 });

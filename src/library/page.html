@@ -82,10 +82,36 @@
   /* Star: a quiet control under the player and at the end of each list row */
   .act button.star[aria-pressed="true"] { color: var(--accent); border-color: rgba(240, 166, 58, 0.45); }
   .act .grp .sg { font-size: 13px; }
-  /* Film: a checkbox in the same row (pnpm film masters makes edit-grade files of the ticked clips) */
-  .act label.film { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; padding: 4px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
-  .act label.film:has(input:checked) { border-color: rgba(240, 166, 58, 0.45); color: var(--accent); }
-  .act label.film input { margin: 0; accent-color: var(--accent); cursor: pointer; }
+  /* Film: the first control in the row, the primary one (pnpm film masters makes edit-grade files of the
+     picked clips). Not picked: an outlined "+ Add to film"; picked: filled in the accent with a check, as
+     the film picker's card footer. */
+  .act button.filmtog { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13px; padding: 4px 12px 4px 9px; border-color: rgba(240, 166, 58, 0.45); color: var(--text); }
+  .act button.filmtog .ic { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid currentColor; font-size: 11px; line-height: 1; }
+  .act button.filmtog:hover { background: #23272c; }
+  /* :not(.star) outranks the row's generic pressed-button tint below */
+  .act button.filmtog[aria-pressed="true"]:not(.star) { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .act button.filmtog[aria-pressed="true"]:not(.star):hover { background: #f4b45a; }
+  .act button.filmtog[aria-pressed="true"] .ic { background: var(--accent-ink); color: var(--accent); border-color: var(--accent-ink); }
+  .act button.filmtog .unsaved { font-weight: 400; font-size: 11px; opacity: 0.85; }
+  /* The list's film mark: a filled accent tag before the clip number */
+  ol.rows .fmark { display: inline-block; width: 7px; height: 7px; border-radius: 2px; background: var(--accent); margin-right: 4px; vertical-align: 1px; }
+  .list-head .fcount { color: var(--accent); }
+  /* Bottom dock: a film save that failed; from disk, the film changes as commands to copy */
+  .dock { position: fixed; right: 300px; left: 244px; bottom: 12px; z-index: 5; display: grid; gap: 8px; justify-items: center; pointer-events: none; }
+  @media (max-width: 1180px) { .dock { right: 12px; left: 232px; } }
+  @media (max-width: 720px) { .dock { left: 8px; right: 8px; bottom: 8px; } }
+  .dock > * { pointer-events: auto; width: min(720px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5); font-size: 12px; }
+  .dock [hidden] { display: none !important; }
+  .dock .perr { color: #f0b3a8; border-color: #6b3a33; }
+  .dock .pending { border-color: rgba(240, 166, 58, 0.45); display: grid; gap: 6px; }
+  .pending .what { color: var(--muted); }
+  .pending .what b { color: var(--accent); }
+  .pending .cmd { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .pending .cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 4px 8px; background: var(--bg); border-radius: 4px; color: var(--text); }
+  .pending .cmd button { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 10px; cursor: pointer; font-size: 12px; }
+  .pending .how { color: var(--muted); }
+  .pending .how a { color: var(--text); }
+  body.has-pending ol.rows { padding-bottom: 150px; }
   /* Share and Delete / the commands for them, under the player */
   .act { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin-left: auto; white-space: nowrap; }
   .act .grp { display: inline-flex; align-items: center; gap: 8px; }
@@ -149,7 +175,7 @@
   /* One line per clip: number, title (truncated), score and length. */
   ol.rows li.row { display: grid; grid-template-columns: minmax(0, 1fr) 22px; align-items: center; }
   ol.rows li button.pick {
-    display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 8px; align-items: baseline;
+    display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 8px; align-items: baseline;
     width: 100%; text-align: left; background: none; border: 0; border-radius: var(--radius); padding: 3px 6px; cursor: pointer; color: var(--text);
     font-size: 13px; line-height: 1.35;
   }
@@ -226,6 +252,16 @@
   </section>
 </div>
 
+<div class="dock">
+  <div class="perr" id="perr" role="alert" hidden></div>
+  <div class="pending" id="pending" hidden>
+    <div class="what" id="pending-what"></div>
+    <div class="cmd" id="cmd-pick"><code></code><button type="button">Copy</button></div>
+    <div class="cmd" id="cmd-unpick"><code></code><button type="button">Copy</button></div>
+    <div class="how">Open the library through <code>pnpm library</code> (<a href="http://127.0.0.1:8765/">http://127.0.0.1:8765/</a>) and the film button saves directly.</div>
+  </div>
+</div>
+
 <script type="application/json" id="clips">/*__CLIPS__*/[]</script>
 <script>
   "use strict";
@@ -260,8 +296,14 @@
 
   // Stars: clip numbers. Inlined when the page was written; served, refreshed from the server on load.
   const starred = new Set(data.stars || []);
-  // Film picks (the "Film" box): clip numbers, the same way (absent from the data when none is picked).
-  const picked = new Set(data.picks || []);
+  // Served by pnpm library (http) the page can delete, star and save film picks; opened from disk it cannot.
+  const served = location.protocol === "http:" && /^(127\.0\.0\.1|localhost)$/.test(location.hostname);
+  // Film picks: the store the film picker shares (src/library/pick-store.js, inlined by page.ts): the
+  // server's last answer with the changes in flight replayed; from disk, the inlined picks plus the
+  // changes made here, which the pending bar lists as commands. Absent from the data when none is picked.
+  const createPickStore = /*__PICKSTORE__*/null;
+  const pickStore = createPickStore({ served, initial: data.picks || [], onChange: () => pickChanged(), onError: (t) => { $("perr").hidden = !t; $("perr").textContent = t; } });
+  const picked = pickStore.all();
   const FEATS = data.featLabels || [];
   const WEAPONS_SHOWN = 6; // the rest behind "More"
 
@@ -297,7 +339,7 @@
     const sort = $("sort").value;
     return clips
       .filter((c) => (!state.kind || c.kind === state.kind) && (!state.player || playerOf(c) === state.player) && (!state.map || c.map === state.map) && (!state.match || c.match === state.match))
-      .filter((c) => (!state.star || starred.has(c.no)) && (!state.pick || picked.has(c.no)) && (!state.feat || (c.feats || []).includes(state.feat)) && (!state.weapon || (c.weapons || []).includes(state.weapon)))
+      .filter((c) => (!state.star || starred.has(c.no)) && (!state.pick || picked.has(c.no) || c.id === state.current) /* the playing clip stays listed when it is taken out of the film: it leaves with the next step, and a failed save changes nothing */ && (!state.feat || (c.feats || []).includes(state.feat)) && (!state.weapon || (c.weapons || []).includes(state.weapon)))
       .filter((c) => !q || (num ? c.no === Number(num[2]) : c.title.toLowerCase().includes(q)))
       .sort((a, b) => sort === "no" ? (a.no || 0) - (b.no || 0)
         : sort === "match" ? dateOf(b).localeCompare(dateOf(a)) || (a.round || 0) - (b.round || 0)
@@ -324,7 +366,7 @@
     text.append(el("div", "facts num", facts.join("  /  ")));
     const act = el("span", "act");
     act.id = "act";
-    act.append(starControl(c), filmControl(c), exportGroup(c));
+    act.append(filmControl(c), starControl(c), exportGroup(c));
     if (served) {
       const del = el("button", "danger", "Delete clip " + c.no);
       del.type = "button";
@@ -375,7 +417,8 @@
     const maps = [...new Set(clips.map((c) => c.map))].sort();
     facet($("maps"), maps.map((m) => [m, mapName(m), clips.filter((c) => c.map === m).length]), "map");
     facet($("matches"), matchList.map((m) => [m.key, m.date ? (m.dateFrom === "added" ? "added " + day(m.date) : day(m.date)) : "date unknown", m.n, mapName(m.map)]), "match");
-    $("count").textContent = list.length === clips.length ? clips.length + " clips" : list.length + " of " + clips.length + " clips";
+    $("count").replaceChildren(list.length === clips.length ? clips.length + " clips" : list.length + " of " + clips.length + " clips",
+      el("span", "fcount", " · " + clips.filter((c) => picked.has(c.no)).length + " in the film"));
 
     const rows = $("rows");
     rows.replaceChildren();
@@ -396,7 +439,10 @@
       const b = el("button", "pick");
       b.type = "button";
       b.dataset.id = c.id;
-      b.append(el("span", "n num", String(c.no ?? "")), el("span", "t", c.title),
+      const n = el("span", "n num");
+      if (picked.has(c.no)) { const m = el("span", "fmark"); m.setAttribute("role", "img"); m.setAttribute("aria-label", "In the film"); m.title = "In the film"; n.append(m); }
+      n.append(String(c.no ?? ""));
+      b.append(n, el("span", "t", c.title),
         el("span", "m num", (c.score !== undefined ? c.score.toFixed(0) + "  " : "") + c.seconds.toFixed(0) + " s"));
       b.addEventListener("click", () => play(c, true));
       const on = starred.has(c.no);
@@ -422,8 +468,6 @@
     play(keep || list[0] || null, false);
   }
 
-  // Served by pnpm library (http) the page can delete; opened from disk it cannot.
-  const served = location.protocol === "http:" && /^(127\.0\.0\.1|localhost)$/.test(location.hostname);
   async function remove(c) {
     if (!c || !confirm("Delete clip " + c.no + "?\n" + c.title + "\n\nThe file goes to library/trash and the moment is never made again.")) return;
     const r = await fetch("/delete/" + c.no, { method: "POST" }).catch((e) => ({ ok: false, statusText: String(e) }));
@@ -700,40 +744,42 @@
     const again = fromRow ? document.querySelector('#rows button.rstar[data-id="' + c.id + '"]') : document.querySelector("#act .star");
     if (again) again.focus({ preventScroll: true });
   }
-  // Film: served, a checkbox through POST /pick/<no> or /unpick/<no> (library/film-picks.json, the page
-  // rewritten); from disk, the pnpm pick / unpick command to copy. pnpm film masters makes the ticked ones.
+  // Film: one toggle, the first control in the row (and the f key). Served it saves through POST
+  // /pick/<no> or /unpick/<no> at once; from disk the change is collected in the pending bar as the
+  // pnpm pick / unpick commands to copy. pnpm film masters makes the picked clips.
   function filmControl(c) {
     const on = picked.has(c.no);
-    if (!served) {
-      const cmd = (on ? "pnpm unpick " : "pnpm pick ") + c.no;
-      const grp = el("span", "grp film");
-      grp.append(el("span", "sg", on ? "Film ✓" : "Film"), el("code", "", cmd), copyButton("Copy", cmd));
-      return grp;
-    }
-    const label = el("label", "film");
-    const box = el("input");
-    box.type = "checkbox";
-    box.checked = on;
-    box.addEventListener("change", () => togglePick(c, box));
-    label.title = "Film: pnpm film masters makes an edit-grade file of every ticked clip";
-    label.append(box, "Film");
-    return label;
+    const b = el("button", "filmtog");
+    b.type = "button";
+    b.append(el("span", "ic", on ? "✓" : "+"), on ? "In the film" : "Add to film");
+    if (pickStore.unsaved(c.no)) b.append(el("span", "unsaved", "· not saved"));
+    b.setAttribute("aria-pressed", String(on));
+    b.title = (on ? "In the film: f takes it out" : "Not in the film: f adds it") + " (pnpm film masters makes the picked clips)";
+    b.addEventListener("click", () => pickStore.toggle(c.no));
+    return b;
   }
-  let pickBusy = false, pickChanges = 0;
-  async function togglePick(c, box) {
-    if (!served || pickBusy) { box.checked = picked.has(c.no); return; }
-    pickBusy = true; pickChanges++;
-    const on = picked.has(c.no);
-    try {
-      const r = await fetch("/" + (on ? "unpick" : "pick") + "/" + c.no, { method: "POST" });
-      if (!r.ok) { alert((on ? "Not unpicked: " : "Not picked: ") + ((await r.text().catch(() => "")) || r.status)); box.checked = on; return; }
-      const body = await r.json();
-      picked.clear();
-      for (const n of body.picks || []) picked.add(n);
-    } catch (e) { alert("Not changed: " + e); box.checked = on; return; } finally { pickBusy = false; }
+  // Every change, and every answer: the button, the list's marks and count, the sidebar's Film picks
+  // count (render), and the pending bar; focus stays on the film button when it had it.
+  function pickChanged() {
+    const hadFocus = document.activeElement && document.activeElement.classList.contains("filmtog");
     render();
-    const again = document.querySelector("#act label.film input");
-    if (again) again.focus({ preventScroll: true });
+    if (hadFocus) { const b = document.querySelector("#act .filmtog"); if (b) b.focus({ preventScroll: true }); }
+    drawPending();
+  }
+  function drawPending() {
+    const cmds = pickStore.pending();
+    const any = cmds.pick.length + cmds.unpick.length > 0;
+    $("pending").hidden = !any;
+    document.body.classList.toggle("has-pending", any);
+    $("pending-what").replaceChildren("Film changes not saved: ", el("b", "", cmds.pick.length + " to pick, " + cmds.unpick.length + " to unpick"), ". Run these in the repo:");
+    for (const [id, cmd, list] of [["cmd-pick", "pnpm pick ", cmds.pick], ["cmd-unpick", "pnpm unpick ", cmds.unpick]]) {
+      $(id).hidden = !list.length;
+      $(id).querySelector("code").textContent = cmd + list.join(" ");
+    }
+  }
+  for (const id of ["cmd-pick", "cmd-unpick"]) {
+    const b = $(id).querySelector("button");
+    b.addEventListener("click", () => copyText($(id).querySelector("code").textContent).then(() => { b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1500); }, () => { b.textContent = "Copy failed"; }));
   }
   setInterval(() => { if (document.querySelector("#out .busy")) drawOut(); }, 1000);
 
@@ -756,6 +802,12 @@
     const arrows = !(e.target instanceof HTMLVideoElement);
     if (e.key === "Delete" && served) { e.preventDefault(); remove(clips.find((c) => c.id === state.current)); return; }
     if (e.key === "s" && served) { e.preventDefault(); toggleStar(clips.find((c) => c.id === state.current)); return; }
+    // f: the playing clip in or out of the film (not while typing: inputs and the select return above).
+    if ((e.key === "f" || e.key === "F") && !e.shiftKey) {
+      const c = clips.find((x) => x.id === state.current);
+      if (c && c.no !== undefined && !(e.target instanceof HTMLTextAreaElement) && !e.target.isContentEditable) { e.preventDefault(); if (!e.repeat) pickStore.toggle(c.no); }
+      return;
+    }
     if ((arrows && e.key === "ArrowRight") || e.key === "j") { e.preventDefault(); step(1); }
     else if ((arrows && e.key === "ArrowLeft") || e.key === "k") { e.preventDefault(); step(-1); }
   });
@@ -797,12 +849,8 @@
     for (const n of b.stars) starred.add(n);
     render();
   }).catch(() => {});
-  if (served) fetch("/picks", { cache: "no-store" }).then((r) => r.ok ? r.json() : null).then((b) => {
-    if (!b || !Array.isArray(b.picks) || pickChanges) return;
-    picked.clear();
-    for (const n of b.picks) picked.add(n);
-    render();
-  }).catch(() => {});
+  // Served, the server's picks win over the inlined ones (a pnpm pick or the film picker may have changed them).
+  pickStore.load();
 </script>
 </body>
 </html>
