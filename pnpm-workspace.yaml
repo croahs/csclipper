@@ -3,3 +3,10 @@ allowBuilds:
   esbuild: false
   # protobufjs's postinstall only warns about version schemes of its dependents.
   protobufjs: false
+minimumReleaseAgeExclude:
+  - '@laihoe/demoparser2-win32-x64-msvc@0.42.2'
+overrides:
+  # The Windows parser binary alone is ahead of the main package (0.42.0, the newest published):
+  # 0.42.2 decodes CS2 build 14197's fixed8 fields and survives an invalid UTF-8 networkid
+  # (docs/spikes.md, "Parser 0.42.2"). Remove when @laihoe/demoparser2 itself reaches 0.42.2.
+  "@laihoe/demoparser2-win32-x64-msvc": 0.42.2

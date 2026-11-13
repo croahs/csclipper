@@ -1114,3 +1114,36 @@ end-of-match scoreboard for all of its 11 s. Fixed in `planTakes`
   (no attempt spent, the demo stays open) and the next `pnpm go` gives it
   its own launch: a match-ending kill with both a highlight and a
   kills-reel take costs a second launch, in the next run.
+
+## Parser 0.42.2 for CS2 build 14197 (2026-11-13)
+
+**Passed.** Demos recorded after the CS2 update of 2026-11-11 (header
+`patch_version` 14197) did not parse: `parseEvent` and `parseTicks`
+threw `EntityNotFound` (one demo `ClassNotFound`) at the first entity
+packet, while `parseHeader`, `listGameEvents` and `parsePlayerInfo`
+worked. Three demos in the store were on that build and none parsed;
+the failing matchmaking demo was complete and byte-equal to the copy the
+game wrote to `replays/`.
+
+- **Cause.** Build 14197's send tables use a `fixed8` encoder for 8-bit
+  fields; demoparser2 0.42.0 reads them as varints and loses the entity
+  stream (upstream LaihoE/demoparser issue 374, fixed by PR 375).
+  Separately, three older demos failed with `MalformedMessage`: one
+  `player_disconnect` event each with a `networkid` that is not valid
+  UTF-8 (upstream issue 367).
+- **Fix.** `@laihoe/demoparser2-win32-x64-msvc` 0.42.2 (npm, published
+  2026-11-12) while `@laihoe/demoparser2` itself is still 0.42.0, whose
+  loader requires the platform package without a version check. Pinned
+  in `pnpm-workspace.yaml` → `overrides`; pnpm added the package to
+  `minimumReleaseAgeExclude` by itself because it was a day old.
+- **Checked.** With the 0.42.2 binary all six failing demos return
+  rounds and deaths (the matchmaking demo: 29 `round_end`, 231
+  `player_death`). On 12 demos that already parsed (every 30th file of
+  the store) nine events and a `parseTicks` sample hash the same under
+  0.42.0 and 0.42.2.
+- **Cache keys.** `DEMOPARSER_VERSION` reads the main package and still
+  says 0.42.0, so every cached parse stays valid; the demos that failed
+  had no cache and are parsed with the new binary.
+- **Open.** Which upstream commit the published 0.42.2 binary was built
+  from was not established. Drop the override when the main package
+  reaches 0.42.2.
