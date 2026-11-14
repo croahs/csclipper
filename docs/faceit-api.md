@@ -17,7 +17,7 @@ endpoint (below).
 
 | Step | Request | Fields read | Fixture | Live |
 |---|---|---|---|---|
-| Player | `GET https://open.faceit.com/data/v4/players?game=cs2&game_player_id=<STEAM_ID64>` | `player_id` (string). 404 = no FACEIT CS2 account for that SteamID | `player.json` | yes |
+| Player | `GET https://open.faceit.com/data/v4/players?game=cs2&game_player_id=<STEAM_ID64>` | `player_id` (string); `nickname` (string, optional, `pnpm friends` only). 404 = no FACEIT CS2 account for that SteamID | `player.json` | yes |
 | History | `GET https://open.faceit.com/data/v4/players/<player_id>/history?game=cs2&offset=<n>&limit=20` | `items[]` (newest first): `match_id` (string), `status` (string, optional; `finished` is taken, `cancelled` / `aborted` skipped, anything else waited on), `finished_at` (unix seconds, optional) | `history.json` | yes |
 | Match | `GET https://open.faceit.com/data/v4/matches/<match_id>` | `demo_url` (array of strings; the first is used). Missing, `null` or empty = demo not uploaded yet | `match.json` | not yet |
 | Download | `POST https://open.faceit.com/download/v2/demos/download` with body `{"resource_url": "<demo_url[0]>"}` | `payload.download_url` (string, a signed URL) | `download-url.json` | 403 `err_f0` without the scope |
