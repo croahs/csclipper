@@ -40,6 +40,7 @@ pnpm trash --empty
 pnpm tidy
 pnpm unsettle <demo sha256 prefix | clip no>...
 pnpm rescore [--dry-run]
+pnpm friends [--last <n>] [--missing]   (the roster's recent FACEIT matches: held, rejected or missing)
 ```
 
 **Reels** (`src/reel/`). `pnpm go` makes two reels for every new demo, in
@@ -563,6 +564,23 @@ rejected by ingest as "incomplete demo" (`demoIncomplete` in
 `src/parse/fileinfo.ts`). Pending items are
 not failures; exit 1 means a source failed or ingest rejected a file, 3
 a fetch launch's cleanup was not verified.
+
+`pnpm friends [--last <n>] [--missing]` (`src/ingest/friends.ts`,
+`src/cli/friends.ts`) answers which of the roster's matches the store
+holds. Read-only, with `FACEIT_API_KEY`: for `STEAM_ID64` and each
+`FILM_STEAM_ID64S` entry it looks up the FACEIT player and lists the last
+`--last` (20, at most 100) CS2 matches, cancelled and aborted ones left
+out, merged by match id (a match played together is one line naming
+everyone; a finished state from any history wins), running ones on top, then newest
+first in local time; `--missing` shows only finished matches not held. A match is **have** when its id is in
+a stored demo's file name (the test `pnpm grab` uses), **REJECTED** when
+it is only in a `demos/rejected/` file name (the first line of its
+`.reason.txt` shown), else **MISSING**, with its room link for "Watch
+demo" / "Download demo" by hand. A player is named by FACEIT nickname,
+else by roster position, never by SteamID; a rejection reason or error is printed
+with the roster SteamID64s and the key redacted. Valve matchmaking is not
+covered: a friend's share codes need that friend's match auth code.
+`test/friends.test.ts`.
 
 `pnpm go` is the one command: drop demos (`.dem`, or `.zip` / `.bz2` /
 `.gz` / `.zst`) into `demos/inbox/`, run it, come back to clips. It

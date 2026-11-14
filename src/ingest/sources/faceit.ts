@@ -23,8 +23,8 @@ export const NO_DOWNLOAD_SCOPE = "FACEIT_API_KEY lacks the Downloads API scope, 
 const MAX_DEMO_BYTES = 2 * 1024 ** 3;
 const HISTORY_PAGE = 20;
 const MAX_PER_RUN = 50;
-const MATCH_ID = /^[A-Za-z0-9-]{1,64}$/; // FACEIT match ids look like 1-<uuid>
-const TERMINAL = new Set(["cancelled", "canceled", "aborted"]); // match states that never produce a demo
+export const MATCH_ID = /^[A-Za-z0-9-]{1,64}$/; // FACEIT match ids look like 1-<uuid>
+export const TERMINAL = new Set(["cancelled", "canceled", "aborted"]); // match states that never produce a demo
 const START = "(start)"; // checkpoint before the oldest match: all of history is new
 export const NO_KEY = "FACEIT_API_KEY is not set in .env: nothing fetched. With a key, pnpm grab looks up the player for STEAM_ID64, lists CS2 matches newer than the last one fetched, and downloads their demos into demos/inbox/.";
 const MAX_HISTORY_PAGES = 10; // how far back (200 matches) a run looks for the last fetched match
@@ -72,11 +72,11 @@ export type FaceitOptions = {
 const NO_DEMO_GIVE_UP_S = 24 * 3600;
 
 // --- the response fields this file relies on (docs/faceit-api.md) ----------------------
-const obj = (v: unknown, what: string): Record<string, unknown> => {
+export const obj = (v: unknown, what: string): Record<string, unknown> => {
   if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error(`FACEIT ${what}: expected an object`);
   return v as Record<string, unknown>;
 };
-const str = (o: Record<string, unknown>, k: string, what: string): string => {
+export const str = (o: Record<string, unknown>, k: string, what: string): string => {
   if (typeof o[k] !== "string" || !o[k]) throw new Error(`FACEIT ${what}: field "${k}" missing or not a string`);
   return o[k] as string;
 };
@@ -106,7 +106,7 @@ function errorCode(body: unknown): string | undefined {
   return Array.isArray(errs) && errs[0] && typeof errs[0] === "object" ? String((errs[0] as { code?: unknown }).code ?? "") || undefined : undefined;
 }
 
-function check(status: number, body: unknown, what: string) {
+export function check(status: number, body: unknown, what: string) {
   if (status === 401 || status === 403) throw new Error(`FACEIT ${what}: HTTP ${status} (API key rejected or lacks access)`);
   if (status !== 200) throw new Error(`FACEIT ${what}: HTTP ${status}`);
   return body;

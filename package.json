@@ -36,7 +36,8 @@
     "music": "tsx src/cli/music.ts",
     "tidy": "tsx src/cli/tidy.ts",
     "unsettle": "tsx src/cli/unsettle.ts",
-    "rescore": "tsx src/cli/rescore.ts"
+    "rescore": "tsx src/cli/rescore.ts",
+    "friends": "tsx src/cli/friends.ts"
   },
   "dependencies": {
     "@laihoe/demoparser2": "^0.42.0",
