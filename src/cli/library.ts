@@ -9,8 +9,9 @@
 //   POST /cut/<no>     body {"from": <s>, "to": <s>}: two numbers, checked as pnpm cut checks them
 //                      (400 otherwise); as pnpm cut <no> <from> <to>, the same way, one encode per
 //                      cut at a time; answers { file, bytes, seconds, from, to, reused }
-//   POST /reveal/<no>[/vertical | /cut/<name>]  opens Explorer with that clip's share file, its
-//                      vertical file, or its cut of that name (a name pnpm cut gives it) selected
+//   POST /reveal/<no>[/vertical | /vr | /cut/<name>]  opens Explorer with that clip's share file,
+//                      its vertical file, its VR copy (found in library/vr/ by the clip number,
+//                      src/share/vr.ts), or its cut of that name (a name pnpm cut gives it) selected
 //   POST /star/<no>, /unstar/<no>  as pnpm fav / unfav <no>; answers { stars }, then the page is rewritten
 //   GET  /stars        { stars }: the current starred clip numbers
 //   POST /pick/<no>, /unpick/<no>  as pnpm pick / unpick <no> (the film button, library/film-picks.json);
@@ -35,6 +36,7 @@ import { postPicks, readBody } from "../library/picks-route.ts";
 import { CUT_DIR, cutSource, CutRefusal, isCutName, planCut, type CutResult } from "../share/cut.ts";
 import { findClip, sharePath, type ShareResult } from "../share/index.ts";
 import { verticalPath, type VerticalResult } from "../share/vertical.ts";
+import { vrPath } from "../share/vr.ts";
 
 const args = process.argv.slice(2);
 const portArg = args.indexOf("--port");
@@ -89,7 +91,7 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       }, (err: Error) => json(400, { error: err.message }));
       return;
     }
-    const rv = /^\/reveal\/(\d+)(?:\/(vertical)|\/cut\/([^/]+))?$/.exec(url.pathname);
+    const rv = /^\/reveal\/(\d+)(?:\/(vertical|vr)|\/cut\/([^/]+))?$/.exec(url.pathname);
     if (rv) {
       const e = findClip(Number(rv[1]));
       let name: string | undefined;
@@ -97,7 +99,7 @@ function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       // A cut is named, never pathed: only a name pnpm cut could have given this clip, inside library/cuts/.
       if (name !== undefined && (!e || !isCutName(e, name))) return send(400, "not a cut of this clip");
       const kind = name !== undefined ? "cut" : rv[2] ?? "share";
-      const file = e && (kind === "cut" ? path.join(CUT_DIR, name!) : kind === "vertical" ? verticalPath(e) : sharePath(e));
+      const file = e && (kind === "cut" ? path.join(CUT_DIR, name!) : kind === "vertical" ? verticalPath(e) : kind === "vr" ? vrPath(Number(rv[1])) : sharePath(e));
       if (!file || !existsSync(file)) return send(404, `no ${kind} file for clip ${rv[1]}`);
       // explorer.exe wants /select,"<path>" as one verbatim argument; it exits 1 even when it worked.
       spawn("explorer.exe", [`/select,"${file}"`], { detached: true, stdio: "ignore", windowsVerbatimArguments: true }).on("error", () => {}).unref();

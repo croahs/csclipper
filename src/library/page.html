@@ -96,6 +96,8 @@
   /* The list's film mark: a filled accent tag before the clip number */
   ol.rows .fmark { display: inline-block; width: 7px; height: 7px; border-radius: 2px; background: var(--accent); margin-right: 4px; vertical-align: 1px; }
   .list-head .fcount { color: var(--accent); }
+  /* The list's VR mark: the clip has a side-by-side copy in library/vr/; outlined, so it reads apart from the film mark */
+  ol.rows .vmark { display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: 0.04em; line-height: 1; padding: 2px 3px; margin-right: 6px; border: 1px solid var(--muted); border-radius: 3px; color: var(--text); vertical-align: 1px; }
   /* Bottom dock: a film save that failed; from disk, the film changes as commands to copy */
   .dock { position: fixed; right: 300px; left: 244px; bottom: 12px; z-index: 5; display: grid; gap: 8px; justify-items: center; pointer-events: none; }
   @media (max-width: 1180px) { .dock { right: 12px; left: 232px; } }
@@ -126,7 +128,7 @@
   .act .seg button:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
   .act .seg button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
   .act button[aria-pressed="true"]:not(.star) { background: var(--accent-tint); border-color: rgba(240, 166, 58, 0.45); position: relative; }
-  /* What Share, Vertical and Save cut made (or, from disk, their commands): one line under the title */
+  /* What Share, Vertical and Save cut made (or, from disk, their commands), and a VR copy: one line under the title */
   .out { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 16px; }
   .out:empty { display: none; }
   .out .act { margin-left: 0; }
@@ -218,7 +220,7 @@
         <option value="no">Clip number</option>
       </select>
     </label>
-    <div class="group"><div class="facet" id="starred"></div><div class="facet" id="picked"></div></div>
+    <div class="group"><div class="facet" id="starred"></div><div class="facet" id="picked"></div><div class="facet" id="vrs"></div></div>
     <div class="group"><h2>Kind</h2><div class="facet" id="kinds"></div></div>
     <div class="group" id="players-g" hidden><h2>Player</h2><div class="facet" id="players"></div></div>
     <div class="group" id="feats-g"><h2>Feats</h2><div class="facet" id="feats"></div></div>
@@ -289,10 +291,14 @@
 
   // State. Controls are reset on every load: a browser restoring an old filter
   // must not leave the page looking empty.
-  const state = { kind: null, player: null, map: null, match: null, star: null, pick: null, feat: null, weapon: null, moreWeapons: false, current: null };
+  const state = { kind: null, player: null, map: null, match: null, star: null, pick: null, vr: null, feat: null, weapon: null, moreWeapons: false, current: null };
   $("find").value = ""; $("sort").value = "score";
   // Every filter off and Find empty; the sort is the caller's.
-  function clearFilters() { state.kind = state.player = state.map = state.match = state.star = state.pick = state.feat = state.weapon = null; state.moreWeapons = false; $("find").value = ""; }
+  function clearFilters() { state.kind = state.player = state.map = state.match = state.star = state.pick = state.vr = state.feat = state.weapon = null; state.moreWeapons = false; $("find").value = ""; }
+  // VR copies (library/vr/, made by spikes/vr-clips.ts): clip number -> file name, as the page was
+  // written. Absent from the data when no clip has one.
+  const VR = data.vr || {};
+  const vrFile = (c) => c.no !== undefined ? VR[c.no] : undefined;
 
   // Stars: clip numbers. Inlined when the page was written; served, refreshed from the server on load.
   const starred = new Set(data.stars || []);
@@ -339,7 +345,7 @@
     const sort = $("sort").value;
     return clips
       .filter((c) => (!state.kind || c.kind === state.kind) && (!state.player || playerOf(c) === state.player) && (!state.map || c.map === state.map) && (!state.match || c.match === state.match))
-      .filter((c) => (!state.star || starred.has(c.no)) && (!state.pick || picked.has(c.no) || c.id === state.current) /* the playing clip stays listed when it is taken out of the film: it leaves with the next step, and a failed save changes nothing */ && (!state.feat || (c.feats || []).includes(state.feat)) && (!state.weapon || (c.weapons || []).includes(state.weapon)))
+      .filter((c) => (!state.star || starred.has(c.no)) && (!state.pick || picked.has(c.no) || c.id === state.current) /* the playing clip stays listed when it is taken out of the film: it leaves with the next step, and a failed save changes nothing */ && (!state.vr || vrFile(c)) && (!state.feat || (c.feats || []).includes(state.feat)) && (!state.weapon || (c.weapons || []).includes(state.weapon)))
       .filter((c) => !q || (num ? c.no === Number(num[2]) : c.title.toLowerCase().includes(q)))
       .sort((a, b) => sort === "no" ? (a.no || 0) - (b.no || 0)
         : sort === "match" ? dateOf(b).localeCompare(dateOf(a)) || (a.round || 0) - (b.round || 0)
@@ -395,6 +401,9 @@
     const kindCount = (k) => clips.filter((c) => c.kind === k).length;
     facet($("starred"), [[true, "★ Starred", clips.filter((c) => starred.has(c.no)).length]], "star");
     facet($("picked"), [[true, "Film picks", clips.filter((c) => picked.has(c.no)).length]], "pick");
+    // No row when no clip has a VR copy (kept while its filter is on, as a player's row is).
+    const vrCount = clips.filter((c) => vrFile(c)).length;
+    facet($("vrs"), vrCount || state.vr ? [[true, "VR", vrCount]] : [], "vr");
     facet($("kinds"), KINDS.filter(([k]) => k !== "blooper" || kindCount(k)).map(([k, label]) => [k, label, kindCount(k)]), "kind");
     facet($("players"), PLAYERS.map((p) => [p.key, p.name, clips.filter((c) => playerOf(c) === p.key).length]).filter((p) => p[2] > 0 || state.player === p[0]), "player");
     $("players-g").hidden = !PLAYERS.length;
@@ -442,8 +451,10 @@
       const n = el("span", "n num");
       if (picked.has(c.no)) { const m = el("span", "fmark"); m.setAttribute("role", "img"); m.setAttribute("aria-label", "In the film"); m.title = "In the film"; n.append(m); }
       n.append(String(c.no ?? ""));
-      b.append(n, el("span", "t", c.title),
-        el("span", "m num", (c.score !== undefined ? c.score.toFixed(0) + "  " : "") + c.seconds.toFixed(0) + " s"));
+      const meta = el("span", "m num");
+      if (vrFile(c)) { const v = el("span", "vmark", "VR"); v.title = "Has a VR copy (library/vr/)"; meta.append(v); }
+      meta.append((c.score !== undefined ? c.score.toFixed(0) + "  " : "") + c.seconds.toFixed(0) + " s");
+      b.append(n, el("span", "t", c.title), meta);
       b.addEventListener("click", () => play(c, true));
       const on = starred.has(c.no);
       let s;
@@ -572,6 +583,16 @@
           if (kind === "share") line.append(copyButton("Copy caption", r.caption));
           line.append(revealButton("/reveal/" + c.no + (kind === "share" ? "" : kind === "vertical" ? "/vertical" : "/cut/" + encodeURIComponent(name))));
         }
+        out.append(line);
+      }
+      // A VR copy, when the page was written with one: served, Show in folder; from disk, its path to copy.
+      // The side-by-side file is not played here.
+      const vf = vrFile(c);
+      if (vf) {
+        const line = el("span", "act");
+        line.append(el("span", "what", "VR copy"));
+        if (served) line.append(el("span", "note", vf), revealButton("/reveal/" + c.no + "/vr"));
+        else line.append(el("code", "", "vr/" + vf), copyButton("Copy", "vr/" + vf));
         out.append(line);
       }
     }

@@ -7,6 +7,7 @@ import path from "node:path";
 import { LIBRARY_DIR } from "../config.ts";
 import { readRegistry, type DemoRecord } from "../ingest/index.ts";
 import { shareCaption } from "../share/caption.ts";
+import { readVrFiles } from "../share/vr.ts";
 import { BLOOPER_FEATS, FEATS, featsOf, playersOf, weaponsOf } from "./facets.ts";
 import { parseClipHash } from "./hash.ts";
 import { readIndex, type ClipEntry } from "./index.ts";
@@ -26,9 +27,10 @@ export const PAGE = path.join(LIBRARY_DIR, "index.html");
  * clip's `player` (its povKey) and the page's `players` list (playersOf) when an entry has a player,
  * the blooper feat labels when an entry is a blooper, whose score is its own (shown and sorted by).
  * A library with neither gives exactly the data it always did. Film picks (the film button) the same
- * way: `picks` only when a clip in the index is picked.
+ * way: `picks` only when a clip in the index is picked, and VR copies (library/vr/, src/share/vr.ts):
+ * `vr` (clip number -> file name) only when a clip in the index has one.
  */
-export function pageData(entries: ClipEntry[], registry: Record<string, DemoRecord>, dates: Record<string, number>, starList: number[], o: { running?: boolean; hasDeathMap?: boolean; picks?: number[] } = {}) {
+export function pageData(entries: ClipEntry[], registry: Record<string, DemoRecord>, dates: Record<string, number>, starList: number[], o: { running?: boolean; hasDeathMap?: boolean; picks?: number[]; vr?: Record<number, string> } = {}) {
   const clips = entries.map((c) => {
     const m = (c.moment ?? {}) as { rank?: number; score?: number; kills?: number; flags?: string[]; clutch?: { vs: number; won: boolean }; weapons?: string[] };
     // The match: its demo, dated by the one rule pnpm week also uses (match-date.ts).
@@ -45,16 +47,17 @@ export function pageData(entries: ClipEntry[], registry: Record<string, DemoReco
   const nos = new Set(clips.map((c) => c.no));
   const stars = starList.filter((n) => nos.has(n));
   const picks = (o.picks ?? []).filter((n) => nos.has(n));
+  const vr: Record<number, string> = Object.fromEntries(Object.entries(o.vr ?? {}).filter(([n]) => nos.has(Number(n))));
   const players = playersOf(entries);
   const featLabels = entries.some((c) => c.blooper) ? [...FEATS, ...BLOOPER_FEATS] : FEATS;
-  return { running: !!o.running, hasDeathMap: !!o.hasDeathMap, clips, stars, featLabels, ...(players.length ? { players } : {}), ...(picks.length ? { picks } : {}) };
+  return { running: !!o.running, hasDeathMap: !!o.hasDeathMap, clips, stars, featLabels, ...(players.length ? { players } : {}), ...(picks.length ? { picks } : {}), ...(Object.keys(vr).length ? { vr } : {}) };
 }
 
 /** running: a pnpm go run is still adding clips (the page says so). Writes the film picker (film.html) too. */
 export function writeLibraryPage(o: { running?: boolean } = {}): string {
   const hasDeathMap = existsSync(path.join(LIBRARY_DIR, "deaths.html")); // pnpm deathmap has written it: the sidebar links to it
   const entries = Object.values(readIndex().clips), picks = readPicks();
-  const data = pageData(entries, readRegistry(), readMatchDates(), readStars(), { running: o.running, hasDeathMap, picks });
+  const data = pageData(entries, readRegistry(), readMatchDates(), readStars(), { running: o.running, hasDeathMap, picks, vr: readVrFiles() });
   // Every "<" escaped, so no title can end or reinterpret the script element.
   const json = JSON.stringify({ generatedAt: new Date().toISOString(), ...data }).replaceAll("<", "\\u003c");
   const html = readFileSync(TEMPLATE, "utf8").replace("/*__CLIPS__*/[]", () => json).replace("/*__HASH__*/null", () => hashParserSource()).replace("/*__PICKSTORE__*/null", () => pickStoreSource());

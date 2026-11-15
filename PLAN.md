@@ -666,6 +666,12 @@ copy. Picks are saved in `library/film-picks.json` the way stars are
 saved; the clip list marks picked clips and counts them in its header,
 and a "Film picks" row under Starred counts and filters them; `pnpm film masters` makes
 the picked clips. A knife multi-kill is the feat "Knife 2k+".
+VR copies (2026-11-15, "with a VR tag"): a clip with a side-by-side copy
+in `library/vr/` (made by `spikes/vr-clips.ts`, found by its clip number
+in the folder, never in `index.json`) gets a "VR" mark in the list, a
+"VR" filter row beside Starred and Film picks, and the file on the line
+under the title (served "Show in folder" through `/reveal/<no>/vr`, from
+disk its path to copy); the page does not play it.
 Film picker (decided 2026-11-13, "give me gui for selecting and
 unselecting film clips"): `library/film.html`, a page of its own for
 going through the film clips, in the library page's look, written with
@@ -777,7 +783,7 @@ croclipper/
   src/deathmap/ the death map page
   demos/inbox/  you drop demos here
   state/        per-demo parse + moments (gitignored)
-  library/      output mp4s + index, and the derived folders share/, vertical/, cuts/, montage/ (gitignored)
+  library/      output mp4s + index, and the derived folders share/, vertical/, cuts/, vr/, montage/ (gitignored)
   docs/spikes.md  results of M0, with the exact commands that worked
   AGENTS.md     operating rules; CLAUDE.md one-line adapter
 ```

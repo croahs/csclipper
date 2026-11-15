@@ -309,6 +309,25 @@ mostly outside the centre column. `pnpm library` runs it for `POST
 /vertical/<no>` (answer `{ file, bytes, seconds, caption }`) and
 reveals it for `POST /reveal/<no>/vertical`.
 
+**VR copies** (`src/share/vr.ts`). `library/vr/<no>-<slug>_sbs.mp4`
+holds stereo side-by-side copies (left eye | right eye) of library
+highlights for a VR headset, made by `spikes/vr-clips.ts`, a spike
+script, not a pnpm command (docs/spikes.md, "VR copies of ten library
+clips", has the commands and measurements; it rewrites the library page
+after a run that made a file). Nothing about them is in `index.json`:
+`readVrFiles` lists the folder and `vrFiles` (pure, tested in
+`test/vr.test.ts`) maps names matching `<no>-*_sbs.mp4` to their clip
+number, the last by name when a number has several; a missing folder is
+none. The page writer inlines `vr` (clip number -> file name) only when
+a clip in the index has a copy. The page marks those rows "VR", adds a
+"VR" row with its count beside Starred and Film picks (absent when no
+clip has one) that filters the list, and shows the file on the output
+line under the title: served with "Show in folder" (`POST
+/reveal/<no>/vr`, the file found from the clip number, 404 when it has
+none), from disk as `vr/<file>` to copy. The page never plays it.
+`pnpm drop` leaves the VR copy alone, as it does share, vertical and
+cut copies; the page then no longer lists it.
+
 **Cuts** (`src/share/cut.ts`, `src/cli/cut.ts`; PLAN.md §6 has the
 rules). `pnpm cut <no> <from> <to>` writes
 `library/cuts/<no>-<slug>_<from>-<to>.mp4` (tenths, `_0045-0120`) and
@@ -668,6 +687,7 @@ the spectated player (docs/spikes.md, M0.2 open items).
 | `library/film-picks.json`, `library/film-selection.json`, `library/film.html`, `library/film/masters/` | the clips picked for the film; the last film pass's lists (display data); the film picker; the masters, one folder per player |
 | `src/library/stars.ts`, `facets.ts`, `hash.ts`, `match-date.ts` | the stars and film-picks files; the feat, weapon and player filters' derivation (blooper kinds as feats); the `#clip=<no>&t=<s>` parser (its source is inlined into the page); the one rule that dates a clip's match (page, `pnpm week`, death map) |
 | `src/share/` | derived copies of a library clip, none of them in `index.json`: `index.ts` share, `vertical.ts`, `cut.ts`, `caption.ts` |
+| `library/vr/`, `src/share/vr.ts`, `spikes/vr-clips.ts` | VR copies (side-by-side stereo, `<no>-<slug>_sbs.mp4`); their reader for the page and the reveal route; the spike script that makes them |
 | `src/week/` | `pnpm week`, the fragmovie: `index.ts` ISO weeks, selection, plan, key and render; `edit.ts` shots and their layout on the beat grid; `beats.ts` the beat analysis; `music.ts` the manifest, downloads, track choice and the analysis cache |
 | `music.json` | the default tracks for `pnpm week` (tracked): file, url, sha256, BPM, title, artist, licence, credit |
 | `music/` | the tracks (`pnpm music` fetches the defaults; any audio file dropped here works) and their `<file>.beats.json` caches; gitignored, music is never committed |
