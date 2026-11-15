@@ -1147,3 +1147,159 @@ game wrote to `replays/`.
 - **Open.** Which upstream commit the published 0.42.2 binary was built
   from was not established. Drop the override when the main package
   reaches 0.42.2.
+
+## VR spike: a left and a right eye from one launch (2026-11-15)
+
+**Open: not judged in the headset yet.** The question was whether a
+first-person moment can be recorded once per eye for stereo 3D on a flat
+screen in a VR headset. One launch, four takes of the same ticks, through
+the controller's `render()` unchanged (HLAE 2.192.8, CS2 PatchVersion
+1.41.9.7, 1920×1080@60, full HUD):
+
+```
+pnpm exec tsx spikes/vr-stereo.ts demos/store/<sha>.dem 72387 72707
+```
+
+`spikes/vr-stereo.ts` appends three lines to the look cfg: a
+`mirv_script_load` of a generated mirv-script and two `mirv_streams
+settings add ffmpeg` entries. The script's `mirv.events.cViewRenderSetupView`
+handler returns the game's own view shifted 1.7 units (half of 6.4 cm)
+along its right vector, and counts takes by the demo tick
+(`mirv.getDemoTick()`) dropping below the record start.
+
+- **A shifted take per eye works.** Takes 0 (left) and 1 (right) show
+  parallax in the right direction: a near crate edge sits about 15 px
+  further right in the left eye than in the centre view, the viewmodel
+  60–120 px. The hook runs while spectating in-eye with TrueView forced.
+- **Both eyes inside one frame failed.** Take 3 added two `normal`
+  streams whose `beforeCommands` set the eye (`croclip_eye L` / `R`, a
+  command the script registers) and whose `afterCommands` reset it. Both
+  streams recorded (HLAE reported 1083 frames, 3 × 361), but `eyeL.mp4`,
+  `eyeR.mp4` and the screen capture are the same centre view (PSNR
+  48 dB). Whether the view hook does not run per stream pass or the
+  commands run too late was not established.
+- **Two playbacks are not identical.** Takes 0 and 2 (both left) match
+  in timing (best PSNR at a frame offset of 0) and in geometry, but
+  particles differ: fire, sparks and tracers are drawn differently each
+  playback (PSNR 26 dB over the span). In stereo each eye therefore gets
+  its own particles.
+- **Smoke.** The span passes the edge of a smoke. With the camera shifted
+  the smoke is drawn very differently per eye: a haze over the whole
+  frame in one eye and a clear view in the centre take at the same frame,
+  and after the death one eye fully inside it.
+- **The controller with extra streams.** It reported `ok` and a verified
+  cleanup, but take 3's validation failed as expected ("HLAE finished
+  1083 frames for take 3, expected 360.0"): `FINISHED_RE` counts frames
+  over all streams. A build that records more than the screen stream
+  must change that check.
+- **Output.** Takes 0 and 1 packed side by side with take 0's sound:
+  `spikes/out/vr-stereo-<stamp>/cs-3d-test_sbs.mp4` (3840×1080@60,
+  H.264; decodes cleanly). Not played in SteamVR Media Player by anyone.
+- **Crosshair (second launch, same day).** Peder watched the first file:
+  the screen mode works, the crosshair is disorienting (it sits at the
+  same place in both eyes, so at infinite depth, over nearer things).
+  `--pair --no-crosshair` records two takes with four commands scheduled
+  after the first `spec_player` (`cl_show_observer_crosshair 0`,
+  `crosshair 0`, `cl_crosshairusealpha 1`, `cl_crosshairalpha 0`): no
+  crosshair in either take, checked on frames 150 and 220. Which of the
+  four does it was not isolated. `spikes/vr-crosshair.ts` then draws a
+  stand-in crosshair per eye, shifted by the disparity of what is aimed
+  at: per frame the per-eye shift that best matches an 80×48 patch around
+  the two eyes' aim points, a median over 11 frames, then a 7-frame mean
+  (0–59 px over this span, median 2.6). Limits: it is not the player's
+  own crosshair, it stays on after the death, and the shift jumps where
+  the centre is smoke or a flat surface. Files
+  `cs-3d-no-crosshair_sbs.mp4` and `cs-3d-depth-crosshair_sbs.mp4` in the
+  second `spikes/out/vr-stereo-<stamp>/`; neither judged in the headset.
+- **Peder's verdict on the crosshair:** no crosshair is best.
+- **Not tested.** A depth stream for a synthesised second eye, flattening
+  the viewmodel.
+
+## VR180 spike: stereo 180° from cube faces (2026-11-15)
+
+**Open: not judged in the headset yet.** One launch, eleven takes of the
+same ticks in a 1080×1080 window, through `render()` unchanged (166 s,
+cleanup verified; HLAE 2.192.8, CS2 PatchVersion 1.41.9.7):
+
+```
+pnpm exec tsx spikes/vr180.ts demos/store/<sha>.dem 72387 72707
+pnpm exec tsx spikes/vr180-post.ts spikes/out/vr180-<stamp>
+```
+
+- **Capture.** The mirv-script's `cViewRenderSetupView` handler returns,
+  per take, the game's view moved 1.7 units to one eye (along the
+  player's roll-0 right vector, the same point for all of that eye's
+  faces) and turned to one cube face: front, right, left, up, down, the
+  cube oriented with the player's view, pitch included. The engine
+  honours pitch past ±89° and roll (`rZ`). HUD and viewmodel are off
+  (`cl_drawhud 0`, `r_drawviewmodel 0`, scheduled after the first
+  `spec_player`): both are drawn relative to the view and would be in
+  every face. CS2 took the square window.
+- **Field of view.** In a square window the script's `fov` is read as a
+  4:3 fov: 108 gives 2·atan(tan 54° · 3/4) = 91.8°. With the faces
+  cropped to the centre 90° at that value the seams join; at 100° and
+  more they do not. A calibration take (45° to the right) scanned with
+  v360 and PSNR peaked at 114°, which is wrong; the scan was dropped.
+- **Stitch.** Per eye the five faces as a 3×2 cubemap (back black) through
+  FFmpeg `v360=input=c3x2:output=hequirect`, default face rotations, then
+  the eyes side by side: `cs-vr180_180x180_3dh.mp4`, 4096×2048@60 H.264
+  (2048×2048 per eye, the hardware H.264 decode limit of this PC's GPU).
+  On frames 150 and 220 geometry, sky and smoke are continuous over the
+  seams.
+- **Sharpness.** 1024 px per 90° is about 11 px per degree; the headset
+  resolves roughly 19–24. A sharper file needs faces larger than the
+  1920×1200 desktop (not tested whether the game can render them) and
+  HEVC, whose playback in SteamVR Media Player is unknown.
+- **Expected defects, not looked for frame by frame.** Particles differ
+  per playback (above), so they can break at a seam and differ between
+  the eyes; the first person turns the whole 180° picture with every
+  flick; no HUD, crosshair, killfeed or weapon.
+- **Peder's verdict (in the headset):** not good. The seams are very
+  visible in particles, things in the air look wrong, and his own rifle
+  is missing. VR180 is dropped.
+
+## VR copies of ten library clips (2026-11-15)
+
+Peder's verdict on the flat-screen stereo test was that it works, best
+without a crosshair, and he ordered VR copies of the ten best clips. Of
+210 main-account highlights 93 still had their demo in the store, so the
+ten are the highest-scored of those: clips 257, 214, 251, 228, 146, 258,
+185, 359, 169, 221 (nine demos, ten launches, one of them a repeat of
+clip 169).
+
+```
+pnpm exec tsx spikes/vr-clips.ts <no>...
+pnpm exec tsx spikes/vr-clips.ts <no>... --repost spikes/out/vr-clips-<stamp>
+```
+
+`spikes/vr-clips.ts` records, per demo in one `render()` call, each clip
+over its own span as left eye, a reset take, right eye, with the game's
+crosshair off, stacks the eyes side by side and cuts them with the
+library's own `segments()` / `postGraph()` and the clip's own action
+windows (the speed-1 entries of the entry's `render.segments`). Output:
+`library/vr/<no>-<slug>_sbs.mp4`, 3840×1080@60, H.264 CRF 18; the
+library clip and `index.json` are not touched.
+
+- **A seek back keeps the HUD's end state.** Without the reset take the
+  right eye of clip 169 carried the round-won panel and a blank round
+  clock from its first frame: the state at the clip's end, where the
+  left take stopped. A 64-tick take over the start of the clip's round,
+  between the eyes, puts it back. Round 1 starts too early for that
+  (tick 66 in clip 257's demo); its reset take sat in the freeze time
+  (ticks 360–424) and the HUD came out right there too.
+- **Encoder.** `post()` encodes with `config.json` → `encoder`, which was
+  `x265`; the first file came out HEVC. The run encodes with libx264
+  itself, since HEVC playback in SteamVR Media Player is not established.
+- **Frame counts.** The two eyes of clip 214 were 3363 and 3362 frames;
+  up to 3 frames' difference is accepted and the shorter eye sets the
+  length. Its file was made from the captures with `--repost`, without
+  another launch.
+- **Checked.** All ten decode cleanly, are within 0.02 s of their
+  library clip's length, and show the same clock, score, player cards
+  and killfeed in both eyes at 20 % and 70 % of the clip. None was
+  watched in the headset by the agent.
+- **Limits.** `aspect: "stretched"` would fail the size check (the run
+  assumes native captures). A clip that runs past the match end is
+  refused (its second eye would record the end-of-match screen). The
+  particle and smoke differences between the eyes (above) apply to every
+  clip.
