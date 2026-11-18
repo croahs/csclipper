@@ -26,7 +26,8 @@ into `.env` → `FILM_STEAM_ID64S` (never into a tracked file, a commit
 or a report), the demos into `demos/inbox/`, then `pnpm film`, under
 the same launch rules (one render launch per demo, CS2 closed, the
 alt): per player his top 20 highlights scoring 40 or more
-(`scoring.film.json`, `film.minScore`; fewer or none is fine) and top 5
+(scored by `scoring.film.json`; the bound is `film.minScore` in
+`config.json`; fewer or none is fine) and top 5
 bloopers across all demos on disk. A film pass never settles a demo.
 Report the clips made per player, by name, with clip numbers,
 highlights and bloopers apart. Peder then picks the clips he wants on
