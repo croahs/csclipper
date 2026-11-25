@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFil
 import { tmpdir } from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
-import { ingest, readRegistry } from "../src/ingest/index.ts";
+import { ingest, parseZipListing, readRegistry } from "../src/ingest/index.ts";
 import { demoBytes, demoWithFullPacket, truncatedDemo } from "./demo-bytes.ts";
 import { demoIncomplete } from "../src/parse/fileinfo.ts";
 
@@ -145,4 +145,25 @@ test("with keepOriginals, a bare demo that was fixed is kept in ingested/ exactl
   assert.equal(r.fixed.length, 1);
   assert.deepEqual(ls("store"), [`${sha(demoWithFullPacket(["userinfo"], false))}.dem`]);
   assert.deepEqual(readFileSync(path.join(root, "demos", "ingested", "1-bad-1-1.dem")), bad);
+});
+
+test("parseZipListing requires regular files and rejects symlinks or special entries", () => {
+  const valid = [
+    "drwxr-xr-x  0 0      0           0 Oct 25 12:00 sub/",
+    "-rw-r--r--  0 0      0        1024 Oct 25 12:00 sub/match.dem",
+    "-rw-r--r--  0 0      0          64 Oct 25 12:00 notes.txt",
+  ].join("\n");
+  assert.deepEqual(parseZipListing(valid), { dems: ["sub/match.dem"], others: true });
+
+  const withSymlink = [
+    "-rw-r--r--  0 0      0        1024 Oct 25 12:00 match.dem",
+    "lrwxrwxrwx  0 0      0          11 Oct 25 12:00 evil.dem -> /etc/passwd",
+  ].join("\n");
+  assert.throws(() => parseZipListing(withSymlink), /non-regular/);
+
+  const withFifo = [
+    "-rw-r--r--  0 0      0        1024 Oct 25 12:00 match.dem",
+    "prw-r--r--  0 0      0           0 Oct 25 12:00 pipe.dem",
+  ].join("\n");
+  assert.throws(() => parseZipListing(withFifo), /non-regular/);
 });

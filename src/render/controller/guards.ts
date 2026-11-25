@@ -8,10 +8,25 @@ import { imageRunning, serviceRunning } from "./processes.ts";
 
 function activeSteamAccountId(): string {
   // ActiveUser is the 32-bit account id of the logged-in Steam user, 0 when nobody is logged in.
-  const out = execFileSync("reg", ["query", "HKCU\\Software\\Valve\\Steam\\ActiveProcess", "/v", "ActiveUser"], { encoding: "utf8", timeout: 15_000 });
+  let out: string;
+  try {
+    out = execFileSync("reg", ["query", "HKCU\\Software\\Valve\\Steam\\ActiveProcess", "/v", "ActiveUser"], { encoding: "utf8", timeout: 15_000 });
+  } catch (e) {
+    throw new Refusal(`refusing: could not read Steam ActiveUser from the registry: ${(e as Error).message}`);
+  }
   const m = out.match(/ActiveUser\s+REG_DWORD\s+0x([0-9a-f]+)/i);
   if (!m) throw new Refusal("refusing: could not read Steam ActiveUser from the registry");
   return BigInt("0x" + m[1]).toString();
+}
+
+function imageStoppedOrThrow(image: string, label: string) {
+  let running: boolean;
+  try {
+    running = imageRunning(image);
+  } catch (e) {
+    throw new Refusal(`refusing: could not tell whether ${label} is running: ${(e as Error).message}`);
+  }
+  if (running) throw new Refusal(`refusing: ${label} is already running`);
 }
 
 /**
@@ -43,8 +58,8 @@ export function guard(ids: Identities) {
   if (have === "0") throw new Refusal("refusing: no Steam user logged in");
   if (have === main || want === main) throw new Refusal("refusing: never render on the main account");
   if (have !== want) throw new Refusal("refusing: logged-in Steam account is not RENDER_STEAM_ID64");
-  if (imageRunning("cs2.exe")) throw new Refusal("refusing: CS2 is already running");
-  if (imageRunning("HLAE.exe")) throw new Refusal("refusing: HLAE is already running");
+  imageStoppedOrThrow("cs2.exe", "CS2");
+  imageStoppedOrThrow("HLAE.exe", "HLAE");
   const faceit = faceitRefusal();
   if (faceit) throw faceit;
 }

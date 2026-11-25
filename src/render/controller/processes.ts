@@ -39,11 +39,23 @@ export function serviceRunning(name: string): boolean {
 // throws, and a snapshot that does not contain this controller is rejected
 // rather than read as "nothing running".
 export function snapshot(): Proc[] {
-  const out = ps("$ErrorActionPreference = 'Stop'; @(Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ pid = $_.ProcessId; ppid = $_.ParentProcessId; name = $_.Name; created = $(if ($_.CreationDate) { $_.CreationDate.ToString('o') } else { '' }) } }) | ConvertTo-Json -Compress");
+  const out = ps("$ErrorActionPreference = 'Stop'; @(Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ pid = $_.ProcessId; ppid = $_.ParentProcessId; name = $_.Name; created = $(if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString('o') } else { '' }) } }) | ConvertTo-Json -Compress");
   const v = out ? JSON.parse(out) : [];
   const list: Proc[] = Array.isArray(v) ? v : [v];
   if (!list.some((x) => x.pid === process.pid)) throw new Error("process snapshot does not contain the controller itself");
   return list;
+}
+
+/**
+ * Chronological comparison of two CreationDate ISO strings. Uses parsed UTC epoch
+ * milliseconds first (safe across DST rollbacks and differing offsets) and falls
+ * back to lexicographical order to preserve sub-millisecond precision on UTC 'o' strings.
+ */
+export function compareCreated(a: string, b: string): number {
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return ta - tb;
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 export const sameProc = (a: Proc, b: Proc) => a.pid === b.pid && a.created === b.created && a.name.toLowerCase() === b.name.toLowerCase();
@@ -63,7 +75,7 @@ export function killExact(p: Proc): "killed" | "gone" {
     `try { $p = [System.Diagnostics.Process]::GetProcessById(${p.pid}) } catch [System.ArgumentException] { 'gone'; exit 0 }`,
     "try { $null = $p.Handle } catch [System.InvalidOperationException] { 'gone'; exit 0 }",
     `$c = Get-CimInstance Win32_Process -Filter 'ProcessId = ${p.pid}'`,
-    `if (-not $c -or $c.Name -ne ${lit(p.name)} -or -not $c.CreationDate -or $c.CreationDate.ToString('o') -ne ${lit(p.created)}) { 'gone'; exit 0 }`,
+    `if (-not $c -or $c.Name -ne ${lit(p.name)} -or -not $c.CreationDate -or $c.CreationDate.ToUniversalTime().ToString('o') -ne ${lit(p.created)}) { 'gone'; exit 0 }`,
     "$p.Kill(); [void]$p.WaitForExit(5000); 'killed'",
   ].join("; "));
   if (out !== "killed" && out !== "gone") throw new Error(`kill ${p.name} pid ${p.pid}: unexpected output ${JSON.stringify(out)}`);
@@ -102,7 +114,7 @@ export class OwnedTree {
       for (const parent of [...this.procs.values()]) {
         if (!isRunning(parent, snap)) continue;
         for (const c of snap.filter((x) => x.ppid === parent.pid)) {
-          if (!this.procs.has(key(c)) && c.created >= parent.created) { this.procs.set(key(c), c); grew = true; }
+          if (!this.procs.has(key(c)) && compareCreated(c.created, parent.created) >= 0) { this.procs.set(key(c), c); grew = true; }
         }
       }
     }
@@ -119,9 +131,9 @@ export class OwnedTree {
   suspects(snap: Proc[]): Proc[] {
     const owned = [...this.procs.values()];
     return snap.filter((c) => !this.procs.has(key(c)) && owned.some((o) => {
-      if (c.ppid !== o.pid || c.created < o.created || isRunning(o, snap)) return false;
+      if (c.ppid !== o.pid || compareCreated(c.created, o.created) < 0 || isRunning(o, snap)) return false;
       const holder = snap.find((x) => x.pid === o.pid);
-      return !holder || holder.created > c.created;
+      return !holder || compareCreated(holder.created, c.created) > 0;
     }));
   }
 

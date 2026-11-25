@@ -14,10 +14,12 @@
 // .part / .tmp / .crdownload) and rename into place when done; such names are
 // ignored. The stable-size wait and the re-checks below catch most writers
 // that do not, but only the rename guarantees the stored bytes match the hash.
-import { execFileSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, writeSync, type Stats } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { closeSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, writeSync, type Stats } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import zlib from "node:zlib";
 import { ROOT, STATE_DIR, loadIngest } from "../config.ts";
 import { sha256File } from "../parse/clip-facts.ts";
@@ -129,17 +131,18 @@ class BoundedFileOut {
   close() { this.flush(); closeSync(this.fd); }
 }
 
-/** Zip members that are demos, within the limits, and whether the zip holds other files too; throws on anything outside the limits. */
-function zipMembers(archive: string): { dems: string[]; others: boolean } {
-  const out = execFileSync(TAR, ["-tvf", archive], { encoding: "utf8", maxBuffer: 1 << 24, timeout: 60_000 });
+/** Parse `tar -tvf` listing: regular files only (no symlinks/FIFOs/devices), within limits. */
+export function parseZipListing(out: string): { dems: string[]; others: boolean } {
   const rows = out.split(/\r?\n/).filter(Boolean).map((l) => {
     const m = l.match(/^(\S+)\s+\d+\s+\S+\s+\S+\s+(\d+)\s+\S+\s+\d+\s+\S+\s+(.+)$/);
     if (!m) throw new Error(`unreadable archive listing line: ${l}`);
-    return { dir: m[1].startsWith("d"), size: Number(m[2]), name: m[3] };
+    return { dir: m[1].startsWith("d"), regular: m[1].startsWith("-"), size: Number(m[2]), name: m[3] };
   });
   if (rows.length > MAX_ARCHIVE_ENTRIES) throw new Error(`archive has ${rows.length} entries (limit ${MAX_ARCHIVE_ENTRIES})`);
   if (rows.reduce((s, r) => s + r.size, 0) > MAX_ARCHIVE_TOTAL) throw new Error("archive unpacks to more than the size limit");
-  const files = rows.filter((r) => !r.dir); // a folder entry is not a file the zip is the only copy of
+  const bad = rows.find((r) => !r.dir && !r.regular);
+  if (bad) throw new Error(`unsupported non-regular archive entry: ${bad.name}`);
+  const files = rows.filter((r) => r.regular); // a folder entry is not a file the zip is the only copy of
   const dems = files.filter((r) => r.name.toLowerCase().endsWith(".dem"));
   if (!dems.length) throw new Error("archive contains no .dem file");
   const names = new Set<string>();
@@ -153,12 +156,58 @@ function zipMembers(archive: string): { dems: string[]; others: boolean } {
   return { dems: [...names], others: dems.length < files.length };
 }
 
+/** Zip members that are demos, within the limits, and whether the zip holds other files too; throws on anything outside the limits. */
+function zipMembers(archive: string): { dems: string[]; others: boolean } {
+  const out = execFileSync(TAR, ["-tvf", archive], { encoding: "utf8", maxBuffer: 1 << 24, timeout: 60_000 });
+  return parseZipListing(out);
+}
+
+/** Transform that aborts a stream as soon as more than `limit` bytes flow through it. */
+function byteLimit(limit: number) {
+  let written = 0;
+  return new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      written += chunk.length;
+      if (written > limit) cb(new Error("unpacks to more than the demo size limit"));
+      else cb(null, chunk);
+    },
+  });
+}
+
+/** Stream one tar/zip member to disk without buffering the whole demo in memory. */
+async function extractTarMember(archive: string, member: string, out: string, limit: number) {
+  const child = spawn(TAR, ["-xOf", archive, "--", member], { stdio: ["ignore", "pipe", "pipe"] });
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => { if (stderr.length < 4096) stderr += chunk; });
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; child.kill(); }, 600_000);
+  const exited = new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (timedOut) reject(new Error(`tar timed out extracting ${member}`));
+      else if (code !== 0) reject(new Error(`tar failed (${code ?? signal}) extracting ${member}: ${stderr.trim()}`));
+      else resolve();
+    });
+  });
+  exited.catch(() => {});
+  try {
+    await pipeline(child.stdout, byteLimit(limit), createWriteStream(out));
+    await exited;
+  } catch (e) {
+    child.kill();
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Unpack one inbox file into .dem files under the work dir (or the file itself for a bare .dem).
  * `others`: the archive holds files that are not demos (a zip with a notes.txt beside the demo),
  * which ingest never unpacks, so such an archive is kept, not deleted.
  */
-function unpack(d: Dirs, file: string): { dems: string[]; others: boolean } {
+async function unpack(d: Dirs, file: string): Promise<{ dems: string[]; others: boolean }> {
   const lower = file.toLowerCase();
   const size = statSync(file).size;
   if (lower.endsWith(".dem")) {
@@ -173,8 +222,8 @@ function unpack(d: Dirs, file: string): { dems: string[]; others: boolean } {
       for (const member of members.dems) {
         const out = scratch(d);
         outs.push(out);
-        // maxBuffer bounds the output whatever the listing claimed; "--" ends the options.
-        writeFileSync(out, execFileSync(TAR, ["-xOf", file, "--", member], { maxBuffer: MAX_DEM_BYTES, timeout: 600_000 }));
+        // byteLimit bounds the output whatever the listing claimed; "--" ends the options.
+        await extractTarMember(file, member, out, MAX_DEM_BYTES);
       }
     } catch (e) {
       for (const o of outs) rmSync(o, { force: true });
@@ -188,8 +237,11 @@ function unpack(d: Dirs, file: string): { dems: string[]; others: boolean } {
     if (lower.endsWith(".bz2")) {
       const w = new BoundedFileOut(out, MAX_DEM_BYTES);
       try { Bunzip.decode(readFileSync(file), w); } finally { w.close(); }
-    } else if (lower.endsWith(".gz")) writeFileSync(out, zlib.gunzipSync(readFileSync(file), { maxOutputLength: MAX_DEM_BYTES }));
-    else writeFileSync(out, zlib.zstdDecompressSync(readFileSync(file), { maxOutputLength: MAX_DEM_BYTES }));
+    } else if (lower.endsWith(".gz")) {
+      await pipeline(createReadStream(file), zlib.createGunzip(), byteLimit(MAX_DEM_BYTES), createWriteStream(out));
+    } else {
+      await pipeline(createReadStream(file), zlib.createZstdDecompress(), byteLimit(MAX_DEM_BYTES), createWriteStream(out));
+    }
   } catch (e) {
     rmSync(out, { force: true }); // our own partial scratch output, not the user's file
     throw e;
@@ -231,7 +283,7 @@ export async function ingest(o: IngestOptions = {}): Promise<IngestReport> {
     if (!s1 || !sameFile(s0, s1)) { report.waiting.push(n); continue; }
     let dems: string[];
     let others: boolean;
-    try { ({ dems, others } = unpack(d, file)); } catch (e) {
+    try { ({ dems, others } = await unpack(d, file)); } catch (e) {
       // A file that changed while being unpacked is still being written: next run.
       if (!existsSync(file) || !sameFile(s1, statSync(file))) { report.waiting.push(n); continue; }
       reject(d, file, (e as Error).message, report);

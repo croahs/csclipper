@@ -8,7 +8,8 @@ import child_process from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { Refusal, STEAMID64_BASE } from "../src/config.ts";
 import { faceitRefusal, guard } from "../src/render/controller/guards.ts";
-import { serviceRunning } from "../src/render/controller/processes.ts";
+import { OwnedTree, compareCreated, killExact, serviceRunning, snapshot } from "../src/render/controller/processes.ts";
+import { regValue } from "../src/steam.ts";
 import { batchRefusal } from "../src/queue/index.ts";
 
 const RENDER = (STEAMID64_BASE + 1234n).toString();
@@ -18,7 +19,7 @@ const sc = (state: string, label = "STATE") => `\nSERVICE_NAME: FACEITService \n
 const tasklist = (running: string[], image: string) =>
   running.includes(image.toLowerCase()) ? `"${image}","1234","Console","1","10,000 K"\r\n` : "INFO: No tasks are running which match the specified criteria.\r\n";
 
-type World = { images?: string[] | Error; service?: string | "missing" | Error; loggedIn?: string; scLabel?: string };
+type World = { images?: string[] | Error; service?: string | "missing" | Error; loggedIn?: string | Error; scLabel?: string };
 /** Fake tasklist / sc / reg for the guard's probes; anything else is an error. */
 function fakeWorld(t: { mock: { method: typeof import("node:test").mock.method; restoreAll: () => void } }, w: World) {
   const images = Array.isArray(w.images) ? w.images.map((i) => i.toLowerCase()) : [];
@@ -29,7 +30,10 @@ function fakeWorld(t: { mock: { method: typeof import("node:test").mock.method; 
       if (w.service instanceof Error) throw w.service;
       return sc(w.service ?? "1  STOPPED", w.scLabel);
     }
-    if (file === "reg") return `\r\nHKEY_CURRENT_USER\Software\Valve\Steam\ActiveProcess\r\n    ActiveUser    REG_DWORD    0x${Number(w.loggedIn ?? 1234).toString(16)}\r\n\r\n`;
+    if (file === "reg") {
+      if (w.loggedIn instanceof Error) throw w.loggedIn;
+      return `\r\nHKEY_CURRENT_USER\\Software\\Valve\\Steam\\ActiveProcess\r\n    ActiveUser    REG_DWORD    0x${Number(w.loggedIn ?? 1234).toString(16)}\r\n\r\n`;
+    }
     throw new Error(`unexpected command in the test: ${file} ${args.join(" ")}`);
   }) as typeof child_process.execFileSync);
   syncBuiltinESMExports();
@@ -111,4 +115,75 @@ test("pnpm go refuses up front under FACEIT anti-cheat, except on a dry run, a r
     restore(); fakeWorld(t, {});
     assert.equal(batchRefusal({}), undefined);
   } finally { restore(); }
+});
+
+test("guard classifies reg and tasklist probe failures as Refusal", (t) => {
+  const restore = fakeWorld(t, { loggedIn: new Error("reg query timed out") });
+  try {
+    assert.throws(() => guard(ids), (e: Error) => e instanceof Refusal && /could not read Steam ActiveUser.*reg query timed out/.test(e.message));
+    restore(); fakeWorld(t, { loggedIn: "1234", images: new Error("tasklist timed out") });
+    assert.throws(() => guard(ids), (e: Error) => e instanceof Refusal && /could not tell whether CS2 is running.*tasklist timed out/.test(e.message));
+  } finally { restore(); }
+});
+
+test("processes: snapshot and killExact format CreationDate in UTC and ordering holds across DST fallback", (t) => {
+  const scripts: string[] = [];
+  t.mock.method(child_process, "execFileSync", ((file: string, args: string[]) => {
+    if (file === "powershell.exe") {
+      scripts.push(args[3]);
+      if (args[3].includes("ConvertTo-Json")) {
+        return JSON.stringify([{ pid: process.pid, ppid: 1, name: "node.exe", created: "2026-10-25T00:59:59.0000000Z" }]);
+      }
+      return "killed";
+    }
+    throw new Error(`unexpected command: ${file}`);
+  }) as typeof child_process.execFileSync);
+  syncBuiltinESMExports();
+  try {
+    const snap = snapshot();
+    assert.equal(snap.length, 1);
+    assert.match(scripts[0], /\.ToUniversalTime\(\)\.ToString\('o'\)/);
+    assert.equal(killExact(snap[0]), "killed");
+    assert.match(scripts[1], /\.ToUniversalTime\(\)\.ToString\('o'\)/);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+
+  // Across autumn DST rollback (02:30+02:00 is 00:30Z; 02:00+01:00 is 01:00Z, 30 min later).
+  const beforeFallback = "2026-10-25T02:30:00.0000000+02:00";
+  const afterFallback = "2026-10-25T02:00:00.0000000+01:00";
+  assert.ok(compareCreated(beforeFallback, afterFallback) < 0);
+  // UTC timestamps order strictly by UTC time and retain sub-millisecond order.
+  const utc1 = "2026-10-25T00:30:00.0000001Z";
+  const utc2 = "2026-10-25T00:30:00.0000002Z";
+  assert.ok(compareCreated(utc1, utc2) < 0);
+
+  const spawnedAt = Date.parse(beforeFallback);
+  const tree = new OwnedTree(200, "HLAE.exe", spawnedAt);
+  const root = { pid: 200, ppid: process.pid, name: "HLAE.exe", created: beforeFallback };
+  const child = { pid: 300, ppid: 200, name: "cs2.exe", created: afterFallback };
+  tree.discover([root, child]);
+  assert.equal(tree.rooted, true);
+  assert.equal(tree.games().length, 1);
+  assert.equal(tree.games()[0].pid, 300);
+
+  // Suspect detection after parent exits across DST fallback: orphan younger than parent, holder younger than orphan.
+  const orphan = { pid: 400, ppid: 200, name: "ffmpeg.exe", created: afterFallback };
+  const holder = { pid: 200, ppid: 1, name: "other.exe", created: "2026-10-25T02:05:00.0000000+01:00" };
+  assert.deepEqual(tree.suspects([orphan, holder]).map((p) => p.pid), [400]);
+});
+
+test("regValue escapes regex metacharacters in the registry value name", (t) => {
+  t.mock.method(child_process, "execFileSync", (() =>
+    "\r\nHKEY_CURRENT_USER\\Test\r\n    aX+b    REG_SZ    wrong\r\n    a.+b    REG_SZ    exact-match\r\n\r\n"
+  ) as unknown as typeof child_process.execFileSync);
+  syncBuiltinESMExports();
+  try {
+    assert.equal(regValue("HKCU\\Test", "a.+b"), "exact-match");
+    assert.equal(regValue("HKCU\\Test", "name(with)[special]"), undefined);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
 });

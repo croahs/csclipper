@@ -4,10 +4,12 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { STEAMID64_BASE } from "./config.ts";
 
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 export function regValue(key: string, name: string): string | undefined {
   try {
     const out = execFileSync("reg", ["query", key, "/v", name], { encoding: "utf8", timeout: 15_000 });
-    return out.match(new RegExp(`${name}\\s+REG_\\w+\\s+(.+)`))?.[1]?.trim();
+    return out.match(new RegExp(`${escapeRegExp(name)}\\s+REG_\\w+\\s+(.+)`))?.[1]?.trim();
   } catch {
     return undefined;
   }
